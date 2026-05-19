@@ -25,12 +25,12 @@
 **⚠️ CRITICAL**: No user story work should begin until this phase is complete.
 
 - [X] T005 Replace the current SQLite-only Prisma schema with PostgreSQL session storage plus Product, ProductVariant, SyncJob, and WebhookEvent models in prisma/schema.prisma
-- [ ] T006 [P] Implement Prisma query helpers for catalog-sync entities in app/lib/db/queries.ts
-- [ ] T007 [P] Add Shopify Admin GraphQL product, collection, and metafield query documents in app/lib/shopify/graphql.ts
-- [ ] T008 [P] Implement webhook verification, topic registration, and event-id persistence helpers in app/lib/shopify/webhooks.ts
-- [ ] T009 [P] Implement product normalization helpers for namespace filtering, single-variant products, large variant lists in app/lib/knowledge-graph/normalization.ts
-- [ ] T010 [P] Implement shared sync-status, retry-policy, and progress-tracking helpers in app/lib/knowledge-graph/sync-status.ts
-- [ ] T011 Create the shared catalog-sync orchestration surface in app/lib/knowledge-graph/ingestion.ts
+- [X] T006 [P] Implement Prisma query helpers for catalog-sync entities in app/lib/db/queries.ts
+- [X] T007 [P] Add Shopify Admin GraphQL product, collection, and metafield query documents in app/lib/shopify/graphql.ts
+- [X] T008 [P] Implement webhook verification, topic registration, and event-id persistence helpers in app/lib/shopify/webhooks.ts
+- [X] T009 [P] Implement product normalization helpers for namespace filtering, single-variant products, large variant lists in app/lib/knowledge-graph/normalization.ts
+- [X] T010 [P] Implement shared sync-status, retry-policy, and progress-tracking helpers in app/lib/knowledge-graph/sync-status.ts
+- [X] T011 Create the shared catalog-sync orchestration surface in app/lib/knowledge-graph/ingestion.ts
 
 **Checkpoint**: Database models, query helpers, GraphQL access, and webhook infrastructure are ready for story implementation.
 
@@ -44,17 +44,17 @@
 
 ### Tests for User Story 1
 
-- [ ] T012 [P] [US1] Add unit tests for active/published filtering and `custom.*` / `cartmind.*` metafield normalization in tests/unit/knowledge-graph/normalization.test.ts
-- [ ] T013 [P] [US1] Add integration tests for full-sync pagination, deduping, and sync-job progress tracking in tests/integration/routes/catalog-sync.test.ts
+- [X] T012 [P] [US1] Add unit tests for active/published filtering and `custom.*` / `cartmind.*` metafield normalization in tests/unit/knowledge-graph/normalization.test.ts
+- [X] T013 [P] [US1] Add integration tests for full-sync pagination, deduping, and sync-job progress tracking in tests/integration/routes/catalog-sync.test.ts
 
 ### Implementation for User Story 1
 
-- [ ] T014 [US1] Implement full-catalog pagination, rate-limit backoff, and shop-scoped deduping in app/lib/knowledge-graph/ingestion.ts
-- [ ] T015 [P] [US1] Implement product and variant upsert flows for full-sync batches in app/lib/db/queries.ts
-- [ ] T016 [P] [US1] Implement product payload normalization for active/published filtering and `custom.*` / `cartmind.*` metafield extraction in app/lib/knowledge-graph/normalization.ts
-- [ ] T017 [US1] Trigger the initial SyncJob after app install or auth completion in app/shopify.server.ts
-- [ ] T018 [US1] Persist SyncJob lifecycle, product counters, and per-product failures during full sync in app/lib/knowledge-graph/ingestion.ts
-- [ ] T019 [US1] Handle partial product failures without aborting the full run in app/lib/knowledge-graph/ingestion.ts and app/lib/db/queries.ts
+- [X] T014 [US1] Implement full-catalog pagination, rate-limit backoff, and shop-scoped deduping in app/lib/knowledge-graph/ingestion.ts
+- [X] T015 [P] [US1] Implement product and variant upsert flows for full-sync batches in app/lib/db/queries.ts
+- [X] T016 [P] [US1] Implement product payload normalization for active/published filtering and `custom.*` / `cartmind.*` metafield extraction in app/lib/knowledge-graph/normalization.ts
+- [X] T017 [US1] Trigger the initial SyncJob after app install or auth completion in app/shopify.server.ts
+- [X] T018 [US1] Persist SyncJob lifecycle, product counters, and per-product failures during full sync in app/lib/knowledge-graph/ingestion.ts
+- [X] T019 [US1] Handle partial product failures without aborting the full run in app/lib/knowledge-graph/ingestion.ts and app/lib/db/queries.ts
 
 **Checkpoint**: A newly installed shop receives a complete initial catalog import that can be validated without webhook traffic.
 
@@ -68,17 +68,17 @@
 
 ### Tests for User Story 2
 
-- [ ] T020 [P] [US2] Add integration tests for webhook HMAC verification and duplicate-event suppression in tests/integration/routes/product-webhooks.test.ts
-- [ ] T021 [P] [US2] Add integration tests for create, update, delete, and update-before-sync reconciliation flows in tests/integration/routes/product-webhooks.test.ts
+- [X] T020 [P] [US2] Add integration tests for webhook HMAC verification and duplicate-event suppression in tests/integration/routes/product-webhooks.test.ts
+- [X] T021 [P] [US2] Add integration tests for create, update, delete, and update-before-sync reconciliation flows in tests/integration/routes/product-webhooks.test.ts
 
 ### Implementation for User Story 2
 
-- [ ] T022 [P] [US2] Add webhook route handlers for product create, update, and delete topics in app/routes/webhooks.products.create.tsx, app/routes/webhooks.products.update.tsx, and app/routes/webhooks.products.delete.tsx
-- [ ] T023 [US2] Implement asynchronous webhook dispatch with immediate HTTP 200 responses in app/routes/webhooks.products.create.tsx, app/routes/webhooks.products.update.tsx, and app/routes/webhooks.products.delete.tsx
-- [ ] T024 [P] [US2] Implement idempotent webhook-event recording and duplicate suppression in app/lib/shopify/webhooks.ts and app/lib/db/queries.ts
-- [ ] T025 [P] [US2] Implement create and update reconciliation, including update-before-sync upsert-on-miss handling, in app/lib/knowledge-graph/ingestion.ts
-- [ ] T026 [US2] Implement soft-delete or inactivation for `PRODUCTS_DELETE` events in app/lib/knowledge-graph/ingestion.ts and app/lib/db/queries.ts
-- [ ] T027 [US2] Register product webhook subscriptions during Shopify app setup in app/shopify.server.ts
+- [X] T022 [P] [US2] Add webhook route handlers for product create, update, and delete topics in app/routes/webhooks.products.create.tsx, app/routes/webhooks.products.update.tsx, and app/routes/webhooks.products.delete.tsx
+- [X] T023 [US2] Implement asynchronous webhook dispatch with immediate HTTP 200 responses in app/routes/webhooks.products.create.tsx, app/routes/webhooks.products.update.tsx, and app/routes/webhooks.products.delete.tsx
+- [X] T024 [P] [US2] Implement idempotent webhook-event recording and duplicate suppression in app/lib/shopify/webhooks.ts and app/lib/db/queries.ts
+- [X] T025 [P] [US2] Implement create and update reconciliation, including update-before-sync upsert-on-miss handling, in app/lib/knowledge-graph/ingestion.ts
+- [X] T026 [US2] Implement soft-delete or inactivation for `PRODUCTS_DELETE` events in app/lib/knowledge-graph/ingestion.ts and app/lib/db/queries.ts
+- [X] T027 [US2] Register product webhook subscriptions during Shopify app setup in app/shopify.server.ts
 
 **Checkpoint**: Product changes flow in from Shopify reliably, safely, and without double-processing.
 
@@ -92,16 +92,16 @@
 
 ### Tests for User Story 3
 
-- [ ] T028 [P] [US3] Add unit tests for retry scheduling and permanent-failure thresholds in tests/unit/knowledge-graph/embeddings.test.ts
-- [ ] T029 [P] [US3] Add unit tests for dominant-color extraction fallback behavior in tests/unit/knowledge-graph/colorways.test.ts
+- [X] T028 [P] [US3] Add unit tests for retry scheduling and permanent-failure thresholds in tests/unit/knowledge-graph/embeddings.test.ts
+- [X] T029 [P] [US3] Add unit tests for dominant-color extraction fallback behavior in tests/unit/knowledge-graph/colorways.test.ts
 
 ### Implementation for User Story 3
 
-- [ ] T030 [P] [US3] Implement embedding generation and 3-attempt retry scheduling in app/lib/knowledge-graph/embeddings.ts
-- [ ] T031 [P] [US3] Implement dominant-color extraction with missing-image fallback handling in app/lib/knowledge-graph/colorways.ts
-- [ ] T032 [US3] Integrate embedding and colorway enrichment into the sync pipeline in app/lib/knowledge-graph/ingestion.ts
-- [ ] T033 [US3] Normalize variant size values and product attribute fields needed by downstream classifiers in app/lib/knowledge-graph/normalization.ts
-- [ ] T034 [US3] Persist permanent-failure state and retry metadata for enrichment failures in app/lib/db/queries.ts and app/lib/knowledge-graph/sync-status.ts
+- [X] T030 [P] [US3] Implement embedding generation and 3-attempt retry scheduling in app/lib/knowledge-graph/embeddings.ts
+- [X] T031 [P] [US3] Implement dominant-color extraction with missing-image fallback handling in app/lib/knowledge-graph/colorways.ts
+- [X] T032 [US3] Integrate embedding and colorway enrichment into the sync pipeline in app/lib/knowledge-graph/ingestion.ts
+- [X] T033 [US3] Normalize variant size values and product attribute fields needed by downstream classifiers in app/lib/knowledge-graph/normalization.ts
+- [X] T034 [US3] Persist permanent-failure state and retry metadata for enrichment failures in app/lib/db/queries.ts and app/lib/knowledge-graph/sync-status.ts
 
 **Checkpoint**: Synced products are enriched and failure handling is visible without requiring the sync pipeline to be rerun manually.
 

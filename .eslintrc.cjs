@@ -76,6 +76,14 @@ module.exports = {
       ],
     },
 
+    // Test files – relax strict typing rules for mocks and stubs
+    {
+      files: ["tests/**/*.{ts,tsx}", "**/*.test.{ts,tsx}", "**/*.spec.{ts,tsx}"],
+      rules: {
+        "@typescript-eslint/no-explicit-any": "off",
+      },
+    },
+
     // Node
     {
       files: [

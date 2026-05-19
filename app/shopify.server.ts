@@ -6,6 +6,7 @@ import {
 } from "@shopify/shopify-app-react-router/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
+import { runCatalogSync } from "./lib/knowledge-graph/ingestion";
 
 type ShopifyAppConfig = Parameters<typeof shopifyApp>[0];
 
@@ -21,6 +22,15 @@ const shopify = shopifyApp({
   authPathPrefix: "/auth",
   sessionStorage: prismaSessionStorage,
   distribution: AppDistribution.AppStore,
+  hooks: {
+    afterAuth: async ({ session, admin }) => {
+      // Trigger the sync job asynchronously from the background
+      runCatalogSync(admin, session.shop).catch(error => {
+        console.error(`[AfterAuth] Failed to run sync for ${session.shop}:`, error);
+      });
+      await shopify.registerWebhooks({ session });
+    },
+  },
   future: {
     expiringOfflineAccessTokens: true,
   },
