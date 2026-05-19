@@ -1,0 +1,1 @@
+export const PRODUCT_SYNC_QUERY = "#graphql\nquery ProductSyncPlaceholder {\n  shop {\n    id\n  }\n}\n";

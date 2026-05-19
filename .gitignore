@@ -15,6 +15,9 @@ database.sqlite
 
 .env
 .env.*
+*.log
+coverage/
+dist/
 
 
 

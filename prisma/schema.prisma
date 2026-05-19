@@ -9,8 +9,27 @@ generator client {
 // enough when changing adapters.
 // See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
 datasource db {
-  provider = "sqlite"
-  url      = "file:dev.sqlite"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ProductStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum SyncJobStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
+enum WebhookProcessingStatus {
+  PENDING
+  PROCESSED
+  FAILED
+  DUPLICATE
 }
 
 model Session {
@@ -31,4 +50,82 @@ model Session {
   emailVerified Boolean?  @default(false)
   refreshToken        String?
   refreshTokenExpires DateTime?
+
+  @@index([shop])
+}
+
+model Product {
+  id               String          @id @default(cuid())
+  shopifyProductId String          @unique
+  shop             String
+  title            String
+  description      String?
+  handle           String
+  vendor           String?
+  productType      String?
+  status           ProductStatus   @default(ACTIVE)
+  tags             String[]
+  disciplineTags   String[]
+  categoryTags     String[]
+  dominantColors   String[]
+  collectionIds    String[]
+  metafields       Json?
+  embedding        Unsupported("vector(1536)")?
+  syncedAt         DateTime?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  variants         ProductVariant[]
+
+  @@index([shop])
+  @@index([status])
+}
+
+model ProductVariant {
+  id               String   @id @default(cuid())
+  shopifyVariantId String   @unique
+  productId        String
+  title            String
+  sku              String?
+  price            Decimal? @db.Decimal(10, 2)
+  compareAtPrice   Decimal? @db.Decimal(10, 2)
+  sizeValue        String?
+  sizeCategory     String?
+  sizeNumeric      Float?
+  inventoryQuantity Int?
+  imageUrl         String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  product          Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+}
+
+model SyncJob {
+  id           String        @id @default(cuid())
+  shop         String
+  status       SyncJobStatus @default(PENDING)
+  totalCount   Int           @default(0)
+  syncedCount  Int           @default(0)
+  failedCount  Int           @default(0)
+  startedAt    DateTime      @default(now())
+  completedAt  DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([shop, status])
+}
+
+model WebhookEvent {
+  id               String                  @id @default(cuid())
+  eventId          String                  @unique
+  shop             String
+  topic            String
+  payload          Json?
+  processingStatus WebhookProcessingStatus @default(PENDING)
+  receivedAt       DateTime                @default(now())
+  processedAt      DateTime?
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+
+  @@index([shop, topic])
 }
