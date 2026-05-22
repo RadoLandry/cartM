@@ -1,6 +1,8 @@
 import {
   Prisma,
   ColorCompatibility,
+  KitDefinitionSource,
+  KitDefinitionStatus,
   SyncJobStatus,
   WebhookProcessingStatus,
   RelationshipType,
@@ -8,6 +10,7 @@ import {
   RelationshipStatus,
   RelationshipOrigin,
   EvidenceType,
+  RequirementMatchMode,
   SizeChartSource,
   SizeConflictSeverity,
   VisualProfileSource,
@@ -983,6 +986,261 @@ export async function getDistinctSizeCategoryTagsForShop(shop: string): Promise<
     distinct: ["sizeCategory"],
   });
   return rows.map((r) => r.sizeCategory as string);
+}
+
+export async function getDistinctDisciplineTagsForShop(shop: string): Promise<string[]> {
+  const rows = await db.product.findMany({
+    where: { shop },
+    select: { disciplineTags: true },
+  });
+
+  const tagSet = new Set<string>();
+  for (const row of rows) {
+    for (const tag of row.disciplineTags) {
+      if (tag) {
+        tagSet.add(tag);
+      }
+    }
+  }
+
+  return Array.from(tagSet).sort();
+}
+
+// ---------------------------------------------------------------------------
+// Kit Completeness Detection — query helpers
+// ---------------------------------------------------------------------------
+
+export interface UpsertKitDefinitionInput {
+  id?: string;
+  shop: string;
+  key: string;
+  label: string;
+  disciplineTag: string;
+  description?: string | null;
+  source?: KitDefinitionSource;
+  status?: KitDefinitionStatus;
+}
+
+export interface UpsertKitRequirementInput {
+  id?: string;
+  kitDefinitionId: string;
+  requirementKey: string;
+  label: string;
+  description?: string | null;
+  isRequired?: boolean;
+  priority?: number;
+  safetyCritical?: boolean;
+  matchMode?: RequirementMatchMode;
+  acceptedCategoryTags?: string[];
+  acceptedShopifyProductIds?: string[];
+  acceptedRelationshipTypes?: RelationshipType[];
+  minQuantity?: number;
+}
+
+export async function upsertKitDefinition(input: UpsertKitDefinitionInput) {
+  const {
+    id,
+    shop,
+    key,
+    label,
+    disciplineTag,
+    description = null,
+    source = KitDefinitionSource.AUTO,
+    status = KitDefinitionStatus.ACTIVE,
+  } = input;
+
+  if (id) {
+    return await db.kitDefinition.update({
+      where: { id },
+      data: {
+        key,
+        label,
+        disciplineTag,
+        description,
+        source,
+        status,
+        updatedAt: new Date(),
+      },
+      include: {
+        requirements: {
+          orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
+        },
+      },
+    });
+  }
+
+  return await db.kitDefinition.upsert({
+    where: {
+      shop_key: {
+        shop,
+        key,
+      },
+    },
+    update: {
+      label,
+      disciplineTag,
+      description,
+      source,
+      status,
+      updatedAt: new Date(),
+    },
+    create: {
+      shop,
+      key,
+      label,
+      disciplineTag,
+      description,
+      source,
+      status,
+    },
+    include: {
+      requirements: {
+        orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
+      },
+    },
+  });
+}
+
+export async function upsertKitRequirement(input: UpsertKitRequirementInput) {
+  const {
+    id,
+    kitDefinitionId,
+    requirementKey,
+    label,
+    description = null,
+    isRequired = true,
+    priority = 100,
+    safetyCritical = false,
+    matchMode = RequirementMatchMode.CATEGORY,
+    acceptedCategoryTags = [],
+    acceptedShopifyProductIds = [],
+    acceptedRelationshipTypes = [],
+    minQuantity = 1,
+  } = input;
+
+  if (id) {
+    return await db.kitRequirement.update({
+      where: { id },
+      data: {
+        requirementKey,
+        label,
+        description,
+        isRequired,
+        priority,
+        safetyCritical,
+        matchMode,
+        acceptedCategoryTags,
+        acceptedShopifyProductIds,
+        acceptedRelationshipTypes,
+        minQuantity,
+        updatedAt: new Date(),
+      },
+    });
+  }
+
+  return await db.kitRequirement.upsert({
+    where: {
+      kitDefinitionId_requirementKey: {
+        kitDefinitionId,
+        requirementKey,
+      },
+    },
+    update: {
+      label,
+      description,
+      isRequired,
+      priority,
+      safetyCritical,
+      matchMode,
+      acceptedCategoryTags,
+      acceptedShopifyProductIds,
+      acceptedRelationshipTypes,
+      minQuantity,
+      updatedAt: new Date(),
+    },
+    create: {
+      kitDefinitionId,
+      requirementKey,
+      label,
+      description,
+      isRequired,
+      priority,
+      safetyCritical,
+      matchMode,
+      acceptedCategoryTags,
+      acceptedShopifyProductIds,
+      acceptedRelationshipTypes,
+      minQuantity,
+    },
+  });
+}
+
+export async function deleteKitRequirement(requirementId: string) {
+  return await db.kitRequirement.delete({
+    where: { id: requirementId },
+  });
+}
+
+export async function archiveKitDefinition(kitId: string) {
+  return await db.kitDefinition.update({
+    where: { id: kitId },
+    data: {
+      status: KitDefinitionStatus.ARCHIVED,
+      updatedAt: new Date(),
+    },
+    include: {
+      requirements: {
+        orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
+      },
+    },
+  });
+}
+
+export async function listKitDefinitionsForShop(shop: string, take = 50) {
+  return await db.kitDefinition.findMany({
+    where: { shop },
+    orderBy: [{ status: "asc" }, { disciplineTag: "asc" }, { label: "asc" }],
+    take,
+    include: {
+      requirements: {
+        orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
+      },
+    },
+  });
+}
+
+export async function listActiveKitDefinitions(shop: string, disciplineTags?: string[]) {
+  return await db.kitDefinition.findMany({
+    where: {
+      shop,
+      status: KitDefinitionStatus.ACTIVE,
+      ...(disciplineTags && disciplineTags.length > 0
+        ? { disciplineTag: { in: disciplineTags } }
+        : {}),
+    },
+    orderBy: [{ disciplineTag: "asc" }, { label: "asc" }],
+    include: {
+      requirements: {
+        orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
+      },
+    },
+  });
+}
+
+export async function listProductsForKitEditor(shop: string, take = 200) {
+  return await db.product.findMany({
+    where: { shop },
+    select: {
+      id: true,
+      shopifyProductId: true,
+      title: true,
+      disciplineTags: true,
+      categoryTags: true,
+      status: true,
+    },
+    orderBy: { updatedAt: "desc" },
+    take,
+  });
 }
 
 // ---------------------------------------------------------------------------

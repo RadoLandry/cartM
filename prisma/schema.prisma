@@ -331,6 +331,25 @@ enum ColorCompatibility {
   AVOID
 }
 
+enum KitDefinitionSource {
+  AUTO
+  MERCHANT
+  HYBRID
+}
+
+enum KitDefinitionStatus {
+  ACTIVE
+  DRAFT
+  ARCHIVED
+}
+
+enum RequirementMatchMode {
+  CATEGORY
+  PRODUCT
+  CATEGORY_OR_PRODUCT
+  PRODUCT_OR_ALTERNATIVE
+}
+
 model ProductVisualProfile {
   id                   String              @id @default(cuid())
   productId            String              @unique
@@ -366,4 +385,43 @@ model ColorCompatibilityRule {
   @@unique([shop, sourceColorwayKey, targetColorwayKey])
   @@index([shop, sourceColorwayKey])
   @@index([shop, targetColorwayKey])
+}
+
+model KitDefinition {
+  id            String              @id @default(cuid())
+  shop          String
+  key           String
+  label         String
+  disciplineTag String
+  description   String?
+  source        KitDefinitionSource @default(AUTO)
+  status        KitDefinitionStatus @default(ACTIVE)
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  requirements  KitRequirement[]
+
+  @@unique([shop, key])
+  @@index([shop, disciplineTag, status])
+}
+
+model KitRequirement {
+  id                        String               @id @default(cuid())
+  kitDefinitionId           String
+  requirementKey            String
+  label                     String
+  description               String?
+  isRequired                Boolean              @default(true)
+  priority                  Int                  @default(100)
+  safetyCritical            Boolean              @default(false)
+  matchMode                 RequirementMatchMode @default(CATEGORY)
+  acceptedCategoryTags      String[]
+  acceptedShopifyProductIds String[]
+  acceptedRelationshipTypes RelationshipType[]
+  minQuantity               Int                  @default(1)
+  createdAt                 DateTime             @default(now())
+  updatedAt                 DateTime             @updatedAt
+  kitDefinition             KitDefinition        @relation(fields: [kitDefinitionId], references: [id], onDelete: Cascade)
+
+  @@unique([kitDefinitionId, requirementKey])
+  @@index([kitDefinitionId, priority])
 }
