@@ -1,9 +1,19 @@
 import { PRODUCT_BY_ID_QUERY, PRODUCTS_QUERY } from "../shopify/graphql";
 import { normalizeProduct, ShopifyProductNode } from "./normalization";
-import { upsertProduct, createSyncJob, getActiveSyncJob, deleteProduct, updateProductClassification, updateProductEmbedding, findProductByShopifyId } from "../db/queries";
+import {
+  upsertProduct,
+  createSyncJob,
+  getActiveSyncJob,
+  deleteProduct,
+  updateProductClassification,
+  updateProductEmbedding,
+  findProductByShopifyId,
+  getProductVisualProfile,
+  upsertProductVisualProfile,
+} from "../db/queries";
 import { SyncTracker } from "./sync-status";
 import { generateProductEmbeddingWithRetry } from "./embeddings";
-import { extractDominantColors } from "./colorways";
+import { extractDominantColors, mapProductToVisualProfile } from "./colorways";
 import { classifyProduct } from "./llm-classifier";
 import {
   generateRelationshipsForShop,
@@ -50,7 +60,39 @@ async function syncProductRecord(shop: string, shopifyProduct: ShopifyProductNod
   const primaryImage = shopifyProduct.images?.nodes?.[0]?.url || shopifyProduct.variants?.nodes?.[0]?.image?.url || null;
   normalized.dominantColors = await extractDominantColors(primaryImage);
 
-  await upsertProduct(shop, normalized);
+  const product = await upsertProduct(shop, normalized);
+  const existingVisualProfile = await getProductVisualProfile(product.id);
+  const derivedVisualProfile = mapProductToVisualProfile(
+    {
+      ...normalized,
+      id: product.id,
+      shop,
+      dominantColors: normalized.dominantColors ?? [],
+    },
+    {
+      overrideColorwayKeys: existingVisualProfile?.overrideColorwayKeys,
+      overrideCollections:
+        (existingVisualProfile?.overrideCollections as {
+          shopifyCollectionId: string;
+          title: string;
+          handle: string;
+        }[] | null | undefined) ?? null,
+    },
+  );
+
+  await upsertProductVisualProfile({
+    productId: product.id,
+    shop,
+    dominantColors: derivedVisualProfile.dominantColors,
+    detectedColorwayKeys: derivedVisualProfile.detectedColorwayKeys,
+    overrideColorwayKeys: derivedVisualProfile.overrideColorwayKeys,
+    detectedCollections: derivedVisualProfile.detectedCollections,
+    overrideCollections: derivedVisualProfile.overrideCollections,
+    visualConfidence: derivedVisualProfile.visualConfidence,
+    reviewStatus: derivedVisualProfile.reviewStatus,
+    source: derivedVisualProfile.source,
+    extractionSummary: derivedVisualProfile.extractionSummary as unknown as Record<string, unknown>,
+  });
 
   const embedText = `${normalized.title} ${normalized.description || ''} ${normalized.tags.join(' ')}`.trim();
   if (embedText.length > 0) {

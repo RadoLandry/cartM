@@ -16,6 +16,8 @@ export const PRODUCT_FRAGMENT = `#graphql
     collections(first: 10) {
       nodes {
         id
+        title
+        handle
       }
     }
   }

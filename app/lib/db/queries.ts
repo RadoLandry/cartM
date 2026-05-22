@@ -1,5 +1,6 @@
 import {
   Prisma,
+  ColorCompatibility,
   SyncJobStatus,
   WebhookProcessingStatus,
   RelationshipType,
@@ -9,6 +10,8 @@ import {
   EvidenceType,
   SizeChartSource,
   SizeConflictSeverity,
+  VisualProfileSource,
+  VisualReviewStatus,
 } from "@prisma/client";
 import db from "../../db.server";
 
@@ -90,7 +93,7 @@ export async function countProductVariantsForShop(shop: string) {
 import { NormalizedProduct } from "../knowledge-graph/normalization";
 
 export async function upsertProduct(shop: string, productData: NormalizedProduct) {
-  const { shopifyProductId, variants, ...rest } = productData;
+  const { shopifyProductId, variants, collectionSummaries: _collectionSummaries, ...rest } = productData;
 
   return await db.$transaction(async (tx: Prisma.TransactionClient) => {
     const product = await tx.product.upsert({
@@ -496,12 +499,268 @@ export async function getActiveRelationshipsForProduct(
   return Array.from(byType.values()).flat();
 }
 
+// ---------------------------------------------------------------------------
+// Colorway & Collection Tracking — query helpers
+// ---------------------------------------------------------------------------
+
+export interface CollectionSummaryRow {
+  shopifyCollectionId: string;
+  title: string;
+  handle: string;
+}
+
+export interface UpsertProductVisualProfileInput {
+  productId: string;
+  shop: string;
+  dominantColors: string[];
+  detectedColorwayKeys: string[];
+  overrideColorwayKeys?: string[];
+  detectedCollections: CollectionSummaryRow[];
+  overrideCollections?: CollectionSummaryRow[] | null;
+  visualConfidence?: number | null;
+  reviewStatus?: VisualReviewStatus;
+  source?: VisualProfileSource;
+  extractionSummary?: Record<string, unknown> | null;
+}
+
+export interface CreateColorCompatibilityRuleInput {
+  shop: string;
+  sourceColorwayKey: string;
+  targetColorwayKey: string;
+  compatibility: ColorCompatibility;
+  source?: VisualProfileSource;
+  rationale?: string | null;
+}
+
+export async function upsertProductVisualProfile(input: UpsertProductVisualProfileInput) {
+  const {
+    productId,
+    shop,
+    dominantColors,
+    detectedColorwayKeys,
+    overrideColorwayKeys = [],
+    detectedCollections,
+    overrideCollections,
+    visualConfidence = null,
+    reviewStatus = VisualReviewStatus.NEEDS_REVIEW,
+    source = VisualProfileSource.AUTO,
+    extractionSummary = null,
+  } = input;
+
+  return await db.productVisualProfile.upsert({
+    where: { productId },
+    update: {
+      shop,
+      dominantColors: dominantColors as unknown as Prisma.InputJsonValue,
+      detectedColorwayKeys,
+      detectedCollections: detectedCollections as unknown as Prisma.InputJsonValue,
+      visualConfidence,
+      extractionSummary: extractionSummary
+        ? (extractionSummary as Prisma.InputJsonValue)
+        : Prisma.JsonNull,
+      updatedAt: new Date(),
+      ...(overrideColorwayKeys.length > 0 ? { overrideColorwayKeys } : {}),
+      ...(overrideCollections !== undefined
+        ? {
+            overrideCollections: overrideCollections
+              ? (overrideCollections as unknown as Prisma.InputJsonValue)
+              : Prisma.JsonNull,
+          }
+        : {}),
+      ...(source !== VisualProfileSource.AUTO ? { source } : {}),
+      ...(reviewStatus !== VisualReviewStatus.NEEDS_REVIEW ? { reviewStatus } : {}),
+    },
+    create: {
+      productId,
+      shop,
+      dominantColors: dominantColors as unknown as Prisma.InputJsonValue,
+      detectedColorwayKeys,
+      overrideColorwayKeys,
+      detectedCollections: detectedCollections as unknown as Prisma.InputJsonValue,
+      overrideCollections: overrideCollections
+        ? (overrideCollections as unknown as Prisma.InputJsonValue)
+        : Prisma.JsonNull,
+      visualConfidence,
+      reviewStatus,
+      source,
+      extractionSummary: extractionSummary
+        ? (extractionSummary as Prisma.InputJsonValue)
+        : Prisma.JsonNull,
+    },
+    include: {
+      product: {
+        select: {
+          shopifyProductId: true,
+          title: true,
+          handle: true,
+        },
+      },
+    },
+  });
+}
+
+export async function getProductVisualProfile(productId: string) {
+  return await db.productVisualProfile.findUnique({
+    where: { productId },
+    include: {
+      product: {
+        select: {
+          id: true,
+          shopifyProductId: true,
+          title: true,
+          handle: true,
+        },
+      },
+    },
+  });
+}
+
+export async function listVisualProfilesForReview(shop: string, take = 50) {
+  return await db.productVisualProfile.findMany({
+    where: { shop },
+    include: {
+      product: {
+        select: {
+          id: true,
+          shopifyProductId: true,
+          title: true,
+          handle: true,
+        },
+      },
+    },
+    orderBy: [
+      { reviewStatus: "asc" },
+      { visualConfidence: "asc" },
+      { updatedAt: "desc" },
+    ],
+    take,
+  });
+}
+
+export async function saveProductVisualOverride(
+  productId: string,
+  overrideColorwayKeys: string[],
+  overrideCollections: CollectionSummaryRow[] | null,
+) {
+  return await db.productVisualProfile.update({
+    where: { productId },
+    data: {
+      overrideColorwayKeys,
+      overrideCollections: overrideCollections
+        ? (overrideCollections as unknown as Prisma.InputJsonValue)
+        : Prisma.JsonNull,
+      reviewStatus: VisualReviewStatus.MERCHANT_REVIEWED,
+      source: VisualProfileSource.HYBRID,
+      updatedAt: new Date(),
+    },
+  });
+}
+
+export async function resetProductVisualOverride(productId: string) {
+  return await db.productVisualProfile.update({
+    where: { productId },
+    data: {
+      overrideColorwayKeys: [],
+      overrideCollections: Prisma.JsonNull,
+      source: VisualProfileSource.AUTO,
+      updatedAt: new Date(),
+    },
+  });
+}
+
+export async function listColorCompatibilityRules(shop: string) {
+  return await db.colorCompatibilityRule.findMany({
+    where: { shop },
+    orderBy: [
+      { sourceColorwayKey: "asc" },
+      { targetColorwayKey: "asc" },
+    ],
+  });
+}
+
+export async function getColorCompatibilityRulesForKeys(
+  shop: string,
+  colorwayKeys: string[],
+) {
+  return await db.colorCompatibilityRule.findMany({
+    where: {
+      shop,
+      OR: [
+        { sourceColorwayKey: { in: colorwayKeys } },
+        { targetColorwayKey: { in: colorwayKeys } },
+      ],
+    },
+  });
+}
+
+export async function createColorCompatibilityRule(input: CreateColorCompatibilityRuleInput) {
+  const {
+    shop,
+    sourceColorwayKey,
+    targetColorwayKey,
+    compatibility,
+    source = VisualProfileSource.MERCHANT,
+    rationale = null,
+  } = input;
+
+  return await db.colorCompatibilityRule.create({
+    data: {
+      shop,
+      sourceColorwayKey,
+      targetColorwayKey,
+      compatibility,
+      source,
+      rationale,
+    },
+  });
+}
+
+export async function deleteColorCompatibilityRule(id: string) {
+  return await db.colorCompatibilityRule.delete({ where: { id } });
+}
+
+export async function getProductsForVisualBackfill(
+  shop: string,
+  take = 100,
+  cursor?: string,
+) {
+  return await db.product.findMany({
+    where: { shop, status: "ACTIVE" },
+    select: {
+      id: true,
+      shop: true,
+      shopifyProductId: true,
+      title: true,
+      handle: true,
+      tags: true,
+      metafields: true,
+      dominantColors: true,
+      collectionIds: true,
+      variants: {
+        select: {
+          title: true,
+          imageUrl: true,
+        },
+      },
+      visualProfile: {
+        select: {
+          overrideColorwayKeys: true,
+          overrideCollections: true,
+        },
+      },
+    },
+    orderBy: { updatedAt: "desc" },
+    take,
+    ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+  });
+}
+
 /**
  * Return all active products for a shop as lightweight snapshots for
  * relationship candidate generation.
  */
 export async function getProductSnapshotsForShop(shop: string) {
-  return await db.product.findMany({
+  const products = await db.product.findMany({
     where: { shop, status: "ACTIVE" },
     select: {
       id: true,
@@ -514,7 +773,45 @@ export async function getProductSnapshotsForShop(shop: string) {
       productType: true,
       vendor: true,
       status: true,
+      visualProfile: {
+        select: {
+          detectedColorwayKeys: true,
+          overrideColorwayKeys: true,
+          detectedCollections: true,
+          overrideCollections: true,
+        },
+      },
     },
+  });
+
+  return products.map((product) => {
+    const detectedCollections = ((product.visualProfile?.detectedCollections as CollectionSummaryRow[] | null) ?? [])
+      .map((collection) => collection.shopifyCollectionId);
+    const overrideCollections = ((product.visualProfile?.overrideCollections as CollectionSummaryRow[] | null) ?? [])
+      .map((collection) => collection.shopifyCollectionId);
+
+    return {
+      id: product.id,
+      shopifyProductId: product.shopifyProductId,
+      title: product.title,
+      disciplineTags: product.disciplineTags,
+      categoryTags: product.categoryTags,
+      collectionIds: product.collectionIds,
+      effectiveCollectionIds: overrideCollections.length > 0
+        ? overrideCollections
+        : detectedCollections.length > 0
+          ? detectedCollections
+          : product.collectionIds,
+      colorwayKeys: product.visualProfile
+        ? product.visualProfile.overrideColorwayKeys.length > 0
+          ? product.visualProfile.overrideColorwayKeys
+          : product.visualProfile.detectedColorwayKeys
+        : [],
+      tags: product.tags,
+      productType: product.productType,
+      vendor: product.vendor,
+      status: product.status,
+    };
   });
 }
 

@@ -13,8 +13,15 @@ export interface NormalizedProduct {
   categoryTags: string[];
   dominantColors?: string[];
   collectionIds: string[];
+  collectionSummaries: NormalizedCollectionSummary[];
   metafields: Record<string, string>;
   variants: NormalizedVariant[];
+}
+
+export interface NormalizedCollectionSummary {
+  shopifyCollectionId: string;
+  title: string;
+  handle: string;
 }
 
 export interface NormalizedVariant {
@@ -61,7 +68,7 @@ export interface ShopifyProductNode {
     nodes: ShopifyMetafieldNode[];
   };
   collections?: {
-    nodes: { id: string }[];
+    nodes: { id: string; title?: string; handle?: string }[];
   };
   variants?: {
     nodes: ShopifyVariantNode[];
@@ -99,6 +106,11 @@ export function normalizeProduct(shopifyProduct: ShopifyProductNode): Normalized
     disciplineTags,
     categoryTags,
     collectionIds: shopifyProduct.collections?.nodes?.map((c) => c.id) || [],
+    collectionSummaries: shopifyProduct.collections?.nodes?.map((collection) => ({
+      shopifyCollectionId: collection.id,
+      title: collection.title || "",
+      handle: collection.handle || "",
+    })) || [],
     metafields,
     variants: shopifyProduct.variants?.nodes?.map(normalizeVariant) || [],
   };

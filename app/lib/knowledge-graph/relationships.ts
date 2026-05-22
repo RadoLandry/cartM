@@ -61,6 +61,8 @@ export interface ProductSnapshot {
   disciplineTags: string[];
   categoryTags: string[];
   collectionIds: string[];
+  effectiveCollectionIds?: string[];
+  colorwayKeys?: string[];
   tags: string[];
   productType: string | null;
   vendor: string | null;
@@ -173,17 +175,41 @@ export function scoreCollectionOverlap(
   a: ProductSnapshot,
   b: ProductSnapshot,
 ): EvidenceContribution | null {
-  if (a.collectionIds.length === 0 || b.collectionIds.length === 0) return null;
+  const collectionsA = a.effectiveCollectionIds ?? a.collectionIds;
+  const collectionsB = b.effectiveCollectionIds ?? b.collectionIds;
+  if (collectionsA.length === 0 || collectionsB.length === 0) return null;
 
-  const sharedCollections = a.collectionIds.filter(c => b.collectionIds.includes(c));
+  const sharedCollections = collectionsA.filter(c => collectionsB.includes(c));
   if (sharedCollections.length === 0) return null;
 
-  const score = sharedCollections.length / Math.min(a.collectionIds.length, b.collectionIds.length);
+  const score = sharedCollections.length / Math.min(collectionsA.length, collectionsB.length);
 
   return {
     evidenceType: EvidenceType.COLLECTION,
     score: Math.min(1.0, score),
     details: { sharedCollections },
+  };
+}
+
+export function scoreColorwayOverlap(
+  a: ProductSnapshot,
+  b: ProductSnapshot,
+): EvidenceContribution | null {
+  const colorwaysA = a.colorwayKeys ?? [];
+  const colorwaysB = b.colorwayKeys ?? [];
+  if (colorwaysA.length === 0 || colorwaysB.length === 0) {
+    return null;
+  }
+
+  const sharedColorways = colorwaysA.filter((colorway) => colorwaysB.includes(colorway));
+  if (sharedColorways.length === 0) {
+    return null;
+  }
+
+  return {
+    evidenceType: EvidenceType.COLORWAY,
+    score: Math.min(1, sharedColorways.length / Math.min(colorwaysA.length, colorwaysB.length)),
+    details: { sharedColorways },
   };
 }
 
@@ -230,6 +256,7 @@ export function scoreCatalogMetadata(
 const EVIDENCE_WEIGHTS: Record<EvidenceType, number> = {
   [EvidenceType.TAXONOMY]: 0.35,
   [EvidenceType.COLLECTION]: 0.25,
+  [EvidenceType.COLORWAY]: 0.2,
   [EvidenceType.EMBEDDING]: 0.20,
   [EvidenceType.CATALOG_METADATA]: 0.15,
   [EvidenceType.MERCHANT_RULE]: 1.0, // merchant evidence always dominates
@@ -280,6 +307,9 @@ export function generateCandidatesFromCatalog(
     const collection = scoreCollectionOverlap(source, peer);
     if (collection) contributions.push(collection);
 
+    const colorway = scoreColorwayOverlap(source, peer);
+    if (colorway) contributions.push(colorway);
+
     const catalog = scoreCatalogMetadata(source, peer);
     if (catalog) contributions.push(catalog);
 
@@ -322,6 +352,7 @@ function inferRelationshipType(
 ): RelationshipType {
   const hasCollection = contributions.some(c => c.evidenceType === EvidenceType.COLLECTION);
   const hasTaxonomy = contributions.some(c => c.evidenceType === EvidenceType.TAXONOMY);
+  const hasColorway = contributions.some(c => c.evidenceType === EvidenceType.COLORWAY);
 
   if (hasCollection) {
     // If they share taxonomy too, it's likely alternatives or same-collection
@@ -329,6 +360,10 @@ function inferRelationshipType(
       return RelationshipType.SAME_COLLECTION;
     }
     return RelationshipType.SAME_COLLECTION;
+  }
+
+  if (hasColorway && hasTaxonomy) {
+    return RelationshipType.ALTERNATIVES;
   }
 
   if (hasTaxonomy) {

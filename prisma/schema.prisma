@@ -52,6 +52,7 @@ model Product {
   createdAt        DateTime               @default(now())
   updatedAt        DateTime               @updatedAt
   variants         ProductVariant[]
+  visualProfile    ProductVisualProfile?
 
   @@index([shop])
   @@index([status])
@@ -158,6 +159,7 @@ enum RelationshipOrigin {
 enum EvidenceType {
   TAXONOMY
   COLLECTION
+  COLORWAY
   EMBEDDING
   MERCHANT_RULE
   COPURCHASE
@@ -304,4 +306,64 @@ model CustomerProfile {
   @@unique([shop, shopifyCustomerId])
   @@unique([shop, sessionId])
   @@index([shop])
+}
+
+// ---------------------------------------------------------------------------
+// Colorway & Collection Tracking
+// ---------------------------------------------------------------------------
+
+enum VisualProfileSource {
+  AUTO
+  MERCHANT
+  HYBRID
+}
+
+enum VisualReviewStatus {
+  NEEDS_REVIEW
+  AUTO_APPROVED
+  MERCHANT_REVIEWED
+}
+
+enum ColorCompatibility {
+  MATCHING
+  COMPLEMENTARY
+  NEUTRAL
+  AVOID
+}
+
+model ProductVisualProfile {
+  id                   String              @id @default(cuid())
+  productId            String              @unique
+  shop                 String
+  dominantColors       Json
+  detectedColorwayKeys String[]
+  overrideColorwayKeys String[]
+  detectedCollections  Json
+  overrideCollections  Json?
+  visualConfidence     Float?
+  reviewStatus         VisualReviewStatus  @default(NEEDS_REVIEW)
+  source               VisualProfileSource @default(AUTO)
+  extractionSummary    Json?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+  product              Product             @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([shop, reviewStatus])
+  @@index([shop, visualConfidence])
+}
+
+model ColorCompatibilityRule {
+  id                String              @id @default(cuid())
+  shop              String
+  sourceColorwayKey String
+  targetColorwayKey String
+  compatibility     ColorCompatibility
+  source            VisualProfileSource @default(MERCHANT)
+  rationale         String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@unique([shop, sourceColorwayKey, targetColorwayKey])
+  @@index([shop, sourceColorwayKey])
+  @@index([shop, targetColorwayKey])
 }

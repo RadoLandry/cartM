@@ -5,6 +5,12 @@ import {
   getLowConfidenceProducts,
   getProductsWithTaxonomy,
   applyMerchantTaxonomyOverride,
+  listVisualProfilesForReview,
+  listColorCompatibilityRules,
+  saveProductVisualOverride,
+  resetProductVisualOverride,
+  createColorCompatibilityRule,
+  deleteColorCompatibilityRule,
   getSizeChartsForShop,
   getCrossSizeMappingsForShop,
   getDistinctSizeCategoryTagsForShop,
@@ -16,7 +22,15 @@ import {
 } from "../lib/db/queries";
 import { CONFIDENCE_THRESHOLD } from "../lib/knowledge-graph/llm-classifier";
 import { DISCIPLINES, CATEGORIES } from "../lib/knowledge-graph/taxonomy";
+import {
+  normalizeColorToken,
+  resolveEffectiveVisualProfile,
+  type CollectionSummary,
+  type ColorCompatibilityRuleRow,
+  type VisualAdminRow,
+} from "../lib/knowledge-graph/colorways";
 import { z } from "zod";
+import { ColorCompatibility } from "@prisma/client";
 
 import {
   Page,
@@ -74,6 +88,8 @@ type LoaderData = {
   lowConfidenceProducts: TaxonomyProduct[];
   allProducts: TaxonomyProduct[];
   lowConfidenceCount: number;
+  visualProfiles: VisualAdminRow[];
+  compatibilityRules: ColorCompatibilityRuleRow[];
   sizeCharts: SizeChartRow[];
   crossSizeMappings: CrossSizeMappingRow[];
   categoryTags: string[];
@@ -86,13 +102,59 @@ type LoaderData = {
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
 
-  const [lowConfidenceProducts, allProducts, rawSizeCharts, rawCrossMappings, categoryTags] = await Promise.all([
+  const [lowConfidenceProducts, allProducts, rawVisualProfiles, rawCompatibilityRules, rawSizeCharts, rawCrossMappings, categoryTags] = await Promise.all([
     getLowConfidenceProducts(session.shop, CONFIDENCE_THRESHOLD, 50),
     getProductsWithTaxonomy(session.shop, 50),
+    listVisualProfilesForReview(session.shop, 50),
+    listColorCompatibilityRules(session.shop),
     getSizeChartsForShop(session.shop),
     getCrossSizeMappingsForShop(session.shop),
     getDistinctSizeCategoryTagsForShop(session.shop),
   ]);
+
+  const visualProfiles: VisualAdminRow[] = rawVisualProfiles.map((profile) => {
+    const effective = resolveEffectiveVisualProfile({
+      productId: profile.productId,
+      dominantColors: (profile.dominantColors as string[]) ?? [],
+      detectedColorwayKeys: profile.detectedColorwayKeys,
+      overrideColorwayKeys: profile.overrideColorwayKeys,
+      detectedCollections: ((profile.detectedCollections as unknown as CollectionSummary[]) ?? []),
+      overrideCollections: ((profile.overrideCollections as unknown as CollectionSummary[] | null) ?? null),
+      visualConfidence: profile.visualConfidence,
+      reviewStatus: profile.reviewStatus,
+      source: profile.source,
+      extractionSummary: {
+        tokenMatches: [],
+        paletteSource: ((profile.extractionSummary as { paletteSource?: "image" | "fallback" | "none" } | null)?.paletteSource) ?? "none",
+        notes: ((profile.extractionSummary as { notes?: string[] } | null)?.notes) ?? [],
+      },
+    });
+
+    return {
+      id: profile.id,
+      productId: profile.productId,
+      shopifyProductId: profile.product.shopifyProductId,
+      title: profile.product.title,
+      handle: profile.product.handle,
+      dominantColors: (profile.dominantColors as string[]) ?? [],
+      detectedColorwayKeys: profile.detectedColorwayKeys,
+      effectiveColorwayKeys: effective.colorwayKeys,
+      detectedCollections: (profile.detectedCollections as unknown as CollectionSummary[]) ?? [],
+      effectiveCollections: effective.collections,
+      visualConfidence: profile.visualConfidence,
+      reviewStatus: profile.reviewStatus,
+      source: profile.source,
+    };
+  });
+
+  const compatibilityRules: ColorCompatibilityRuleRow[] = rawCompatibilityRules.map((rule) => ({
+    id: rule.id,
+    sourceColorwayKey: rule.sourceColorwayKey,
+    targetColorwayKey: rule.targetColorwayKey,
+    compatibility: rule.compatibility,
+    source: rule.source,
+    rationale: rule.rationale,
+  }));
 
   const sizeCharts: SizeChartRow[] = rawSizeCharts.map((c) => ({
     id: c.id,
@@ -117,6 +179,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     lowConfidenceProducts,
     allProducts,
     lowConfidenceCount: lowConfidenceProducts.length,
+    visualProfiles,
+    compatibilityRules,
     sizeCharts,
     crossSizeMappings,
     categoryTags,
@@ -162,6 +226,44 @@ const DeleteMappingSchema = z.object({
   mappingId: z.string().min(1),
 });
 
+const SaveVisualOverrideSchema = z.object({
+  productId: z.string().min(1),
+  overrideColorways: z.string().default(""),
+  overrideCollections: z.string().default(""),
+});
+
+const ResetVisualOverrideSchema = z.object({
+  productId: z.string().min(1),
+});
+
+const SaveCompatibilityRuleSchema = z.object({
+  sourceColorwayKey: z.string().min(1),
+  targetColorwayKey: z.string().min(1),
+  compatibility: z.nativeEnum(ColorCompatibility),
+  rationale: z.string().optional(),
+});
+
+const DeleteCompatibilityRuleSchema = z.object({
+  ruleId: z.string().min(1),
+});
+
+function parseCollectionOverrides(rawValue: string): CollectionSummary[] | null {
+  const values = rawValue
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  if (values.length === 0) {
+    return null;
+  }
+
+  return values.map((value) => ({
+    shopifyCollectionId: `manual:${normalizeColorToken(value)}`,
+    title: value,
+    handle: normalizeColorToken(value),
+  }));
+}
+
 // ---------------------------------------------------------------------------
 // Action
 // ---------------------------------------------------------------------------
@@ -200,6 +302,69 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       categoryTags,
     );
 
+    return { ok: true };
+  }
+
+  if (intent === "save-visual-override") {
+    const raw = {
+      productId: formData.get("productId"),
+      overrideColorways: String(formData.get("overrideColorways") ?? ""),
+      overrideCollections: String(formData.get("overrideCollections") ?? ""),
+    };
+    const parsed = SaveVisualOverrideSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, error: parsed.error.message };
+
+    const overrideColorwayKeys = parsed.data.overrideColorways
+      .split(",")
+      .map((value) => normalizeColorToken(value))
+      .filter(Boolean);
+    const overrideCollections = parseCollectionOverrides(parsed.data.overrideCollections);
+
+    await saveProductVisualOverride(parsed.data.productId, overrideColorwayKeys, overrideCollections);
+    return { ok: true };
+  }
+
+  if (intent === "reset-visual-override") {
+    const raw = { productId: formData.get("productId") };
+    const parsed = ResetVisualOverrideSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, error: parsed.error.message };
+    await resetProductVisualOverride(parsed.data.productId);
+    return { ok: true };
+  }
+
+  if (intent === "save-compatibility-rule") {
+    const raw = {
+      sourceColorwayKey: normalizeColorToken(String(formData.get("sourceColorwayKey") ?? "")),
+      targetColorwayKey: normalizeColorToken(String(formData.get("targetColorwayKey") ?? "")),
+      compatibility: formData.get("compatibility"),
+      rationale: String(formData.get("rationale") ?? ""),
+    };
+    const parsed = SaveCompatibilityRuleSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, error: parsed.error.message };
+
+    try {
+      await createColorCompatibilityRule({
+        shop: session.shop,
+        sourceColorwayKey: parsed.data.sourceColorwayKey,
+        targetColorwayKey: parsed.data.targetColorwayKey,
+        compatibility: parsed.data.compatibility,
+        rationale: parsed.data.rationale || null,
+      });
+    } catch (err: unknown) {
+      if (typeof err === "object" && err !== null && "code" in err && (err as { code: string }).code === "P2002") {
+        return { ok: false, error: "duplicate" };
+      }
+      throw err;
+    }
+
+    return { ok: true };
+  }
+
+  if (intent === "delete-compatibility-rule") {
+    const raw = { ruleId: formData.get("ruleId") };
+    const parsed = DeleteCompatibilityRuleSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, error: parsed.error.message };
+    await deleteColorCompatibilityRule(parsed.data.ruleId);
     return { ok: true };
   }
 
@@ -461,6 +626,231 @@ function SizeChartsTab({
   );
 }
 
+function renderBadgeList(values: string[]) {
+  if (values.length === 0) {
+    return <Text tone="subdued" as="span">—</Text>;
+  }
+
+  return (
+    <InlineStack gap="100">
+      {values.map((value) => (
+        <Badge key={value}>{value}</Badge>
+      ))}
+    </InlineStack>
+  );
+}
+
+function renderCollectionList(collections: CollectionSummary[]) {
+  if (collections.length === 0) {
+    return <Text tone="subdued" as="span">—</Text>;
+  }
+
+  return (
+    <InlineStack gap="100">
+      {collections.map((collection) => (
+        <Badge key={collection.shopifyCollectionId} tone="info">
+          {collection.title || collection.handle}
+        </Badge>
+      ))}
+    </InlineStack>
+  );
+}
+
+function ColorwaysTab({
+  visualProfiles,
+  compatibilityRules,
+}: {
+  visualProfiles: VisualAdminRow[];
+  compatibilityRules: ColorCompatibilityRuleRow[];
+}) {
+  const fetcher = useFetcher();
+  const [editingProductId, setEditingProductId] = useState<string | null>(null);
+  const [overrideColorways, setOverrideColorways] = useState("");
+  const [overrideCollections, setOverrideCollections] = useState("");
+  const [sourceColorwayKey, setSourceColorwayKey] = useState("");
+  const [targetColorwayKey, setTargetColorwayKey] = useState("");
+  const [compatibility, setCompatibility] = useState<ColorCompatibility>(ColorCompatibility.MATCHING);
+  const [rationale, setRationale] = useState("");
+
+  const selectedProfile = visualProfiles.find((profile) => profile.productId === editingProductId) ?? null;
+
+  const productRows = visualProfiles.map((profile) => [
+    profile.title,
+    renderBadgeList(profile.detectedColorwayKeys),
+    renderBadgeList(profile.effectiveColorwayKeys),
+    renderCollectionList(profile.effectiveCollections),
+    profile.visualConfidence === null ? "—" : `${Math.round(profile.visualConfidence * 100)}%`,
+    <Badge key={profile.id} tone={profile.reviewStatus === "MERCHANT_REVIEWED" ? "success" : profile.reviewStatus === "AUTO_APPROVED" ? "info" : "warning"}>
+      {profile.reviewStatus}
+    </Badge>,
+    <InlineStack key={`actions-${profile.id}`} gap="200">
+      <Button
+        size="slim"
+        onClick={() => {
+          setEditingProductId(profile.productId);
+          setOverrideColorways(profile.effectiveColorwayKeys.join(", "));
+          setOverrideCollections(profile.effectiveCollections.map((collection) => collection.title || collection.handle).join(", "));
+        }}
+      >
+        Edit
+      </Button>
+      <Button
+        size="slim"
+        onClick={() => fetcher.submit({ intent: "reset-visual-override", productId: profile.productId }, { method: "post" })}
+      >
+        Reset
+      </Button>
+    </InlineStack>,
+  ]);
+
+  const ruleRows = compatibilityRules.map((rule) => [
+    rule.sourceColorwayKey,
+    rule.targetColorwayKey,
+    rule.compatibility,
+    rule.rationale || "—",
+    <Button
+      key={`rule-${rule.id}`}
+      size="slim"
+      tone="critical"
+      onClick={() => fetcher.submit({ intent: "delete-compatibility-rule", ruleId: rule.id }, { method: "post" })}
+    >
+      Delete
+    </Button>,
+  ]);
+
+  return (
+    <BlockStack gap="400">
+      <Card>
+        <BlockStack gap="300">
+          <Text variant="headingMd" as="h2">Colorway Review</Text>
+          {visualProfiles.length === 0 ? (
+            <EmptyState
+              heading="No visual profiles yet"
+              image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
+            >
+              <p>Run a sync or colorway backfill to generate product visual profiles.</p>
+            </EmptyState>
+          ) : (
+            <DataTable
+              columnContentTypes={["text", "text", "text", "text", "numeric", "text", "text"]}
+              headings={["Product", "Detected", "Effective", "Collections", "Confidence", "Review", "Actions"]}
+              rows={productRows}
+            />
+          )}
+        </BlockStack>
+      </Card>
+
+      {selectedProfile && (
+        <Card>
+          <BlockStack gap="300">
+            <Text variant="headingMd" as="h2">Override Visual Profile</Text>
+            <Text as="p" tone="subdued">{selectedProfile.title}</Text>
+            <TextField
+              label="Override colorways"
+              value={overrideColorways}
+              onChange={setOverrideColorways}
+              autoComplete="off"
+              helpText="Comma-separated normalized colorway labels. Leave blank to keep detected values."
+            />
+            <TextField
+              label="Override collections"
+              value={overrideCollections}
+              onChange={setOverrideCollections}
+              autoComplete="off"
+              helpText="Comma-separated collection names or handles."
+            />
+            <InlineStack gap="200">
+              <Button
+                variant="primary"
+                onClick={() => {
+                  fetcher.submit(
+                    {
+                      intent: "save-visual-override",
+                      productId: selectedProfile.productId,
+                      overrideColorways,
+                      overrideCollections,
+                    },
+                    { method: "post" },
+                  );
+                  setEditingProductId(null);
+                }}
+              >
+                Save override
+              </Button>
+              <Button onClick={() => setEditingProductId(null)}>Cancel</Button>
+            </InlineStack>
+          </BlockStack>
+        </Card>
+      )}
+
+      <Card>
+        <BlockStack gap="300">
+          <Text variant="headingMd" as="h2">Compatibility Rules</Text>
+          {compatibilityRules.length === 0 ? (
+            <Text as="p" tone="subdued">No compatibility rules defined yet.</Text>
+          ) : (
+            <DataTable
+              columnContentTypes={["text", "text", "text", "text", "text"]}
+              headings={["Source", "Target", "Compatibility", "Rationale", "Actions"]}
+              rows={ruleRows}
+            />
+          )}
+        </BlockStack>
+      </Card>
+
+      <Card>
+        <BlockStack gap="300">
+          <Text variant="headingMd" as="h2">Add Compatibility Rule</Text>
+          <TextField
+            label="Source colorway"
+            value={sourceColorwayKey}
+            onChange={setSourceColorwayKey}
+            autoComplete="off"
+          />
+          <TextField
+            label="Target colorway"
+            value={targetColorwayKey}
+            onChange={setTargetColorwayKey}
+            autoComplete="off"
+          />
+          <Select
+            label="Compatibility"
+            options={Object.values(ColorCompatibility).map((value) => ({ label: value, value }))}
+            value={compatibility}
+            onChange={(value) => setCompatibility(value as ColorCompatibility)}
+          />
+          <TextField
+            label="Rationale"
+            value={rationale}
+            onChange={setRationale}
+            autoComplete="off"
+          />
+          <Button
+            variant="primary"
+            onClick={() => {
+              fetcher.submit(
+                {
+                  intent: "save-compatibility-rule",
+                  sourceColorwayKey,
+                  targetColorwayKey,
+                  compatibility,
+                  rationale,
+                },
+                { method: "post" },
+              );
+              setSourceColorwayKey("");
+              setTargetColorwayKey("");
+              setRationale("");
+            }}
+          >
+            Save rule
+          </Button>
+        </BlockStack>
+      </Card>
+    </BlockStack>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Component helpers
 // ---------------------------------------------------------------------------
@@ -541,7 +931,16 @@ function OverrideForm({
 // ---------------------------------------------------------------------------
 
 export default function KnowledgeGraphPage() {
-  const { lowConfidenceProducts, allProducts, lowConfidenceCount, sizeCharts, crossSizeMappings, categoryTags } =
+  const {
+    lowConfidenceProducts,
+    allProducts,
+    lowConfidenceCount,
+    visualProfiles,
+    compatibilityRules,
+    sizeCharts,
+    crossSizeMappings,
+    categoryTags,
+  } =
     useLoaderData<LoaderData>();
 
   const [selectedTab, setSelectedTab] = useState(0);
@@ -555,6 +954,10 @@ export default function KnowledgeGraphPage() {
     {
       id: "all-products",
       content: "All Products",
+    },
+    {
+      id: "colorways",
+      content: `Colorways (${visualProfiles.length})`,
     },
     {
       id: "size-charts",
@@ -618,8 +1021,8 @@ export default function KnowledgeGraphPage() {
   return (
     <Frame>
     <Page
-      title="Knowledge Graph — Taxonomy"
-      subtitle="Review and override AI-generated product discipline and category classifications."
+      title="Knowledge Graph"
+      subtitle="Review taxonomy, colorway, and sizing intelligence from one admin surface."
     >
       <Layout>
         {lowConfidenceCount > 0 && selectedTab < 2 && (
@@ -645,6 +1048,11 @@ export default function KnowledgeGraphPage() {
               onSelect={setSelectedTab}
             >
               {selectedTab === 2 ? (
+                <ColorwaysTab
+                  visualProfiles={visualProfiles}
+                  compatibilityRules={compatibilityRules}
+                />
+              ) : selectedTab === 3 ? (
                 <SizeChartsTab
                   sizeCharts={sizeCharts}
                   crossSizeMappings={crossSizeMappings}
