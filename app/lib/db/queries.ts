@@ -1,4 +1,13 @@
-import { Prisma, SyncJobStatus, WebhookProcessingStatus } from "@prisma/client";
+import {
+  Prisma,
+  SyncJobStatus,
+  WebhookProcessingStatus,
+  RelationshipType,
+  RelationshipDirectionality,
+  RelationshipStatus,
+  RelationshipOrigin,
+  EvidenceType,
+} from "@prisma/client";
 import db from "../../db.server";
 
 export async function createSyncJob(shop: string) {
@@ -132,6 +141,17 @@ export async function upsertProduct(shop: string, productData: NormalizedProduct
 export async function deleteProduct(shopifyProductId: string) {
   return await db.product.deleteMany({
     where: { shopifyProductId },
+  });
+}
+
+/**
+ * Find a product's internal record by its Shopify GID.
+ * Returns null if not found.
+ */
+export async function findProductByShopifyId(shopifyProductId: string) {
+  return await db.product.findUnique({
+    where: { shopifyProductId },
+    select: { id: true, shop: true, status: true },
   });
 }
 
@@ -297,3 +317,231 @@ export async function getProductsWithTaxonomy(
     ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
   });
 }
+
+// ---------------------------------------------------------------------------
+// Product Relationship Mapping — persistence helpers
+// ---------------------------------------------------------------------------
+
+export interface RelationshipCandidate {
+  shop: string;
+  sourceProductId: string;
+  targetProductId: string;
+  relationshipType: RelationshipType;
+  directionality: RelationshipDirectionality;
+  strength: number;
+  origin: RelationshipOrigin;
+  evidenceSummary?: Record<string, unknown>;
+}
+
+export interface EvidenceInput {
+  evidenceType: EvidenceType;
+  score: number;
+  details?: Record<string, unknown>;
+}
+
+/**
+ * Upsert a candidate relationship and replace its evidence rows.
+ * Merchant-authored ACTIVE or REJECTED records are never overwritten by
+ * AUTO candidates — auto candidates only touch records with origin AUTO and
+ * status CANDIDATE or INACTIVE (unless no record exists yet).
+ */
+export async function upsertCandidateRelationship(
+  candidate: RelationshipCandidate,
+  evidence: EvidenceInput[],
+) {
+  const { shop, sourceProductId, targetProductId, relationshipType } = candidate;
+
+  return await db.$transaction(async (tx: Prisma.TransactionClient) => {
+    // Check for a merchant-authored record that takes precedence
+    const existing = await tx.productRelationship.findFirst({
+      where: { shop, sourceProductId, targetProductId, relationshipType },
+      select: { id: true, origin: true, status: true },
+    });
+
+    if (
+      existing &&
+      existing.origin === RelationshipOrigin.MERCHANT &&
+      (existing.status === RelationshipStatus.ACTIVE || existing.status === RelationshipStatus.REJECTED)
+    ) {
+      // Merchant decision wins — do not overwrite
+      return null;
+    }
+
+    const rel = await tx.productRelationship.upsert({
+      where: {
+        shop_sourceProductId_targetProductId_relationshipType: {
+          shop,
+          sourceProductId,
+          targetProductId,
+          relationshipType,
+        },
+      },
+      update: {
+        directionality: candidate.directionality,
+        strength: candidate.strength,
+        origin: candidate.origin,
+        evidenceSummary: candidate.evidenceSummary
+          ? (candidate.evidenceSummary as Prisma.InputJsonValue)
+          : Prisma.JsonNull,
+        status: RelationshipStatus.CANDIDATE,
+        invalidatedAt: null,
+        updatedAt: new Date(),
+      },
+      create: {
+        shop,
+        sourceProductId,
+        targetProductId,
+        relationshipType,
+        directionality: candidate.directionality,
+        strength: candidate.strength,
+        origin: candidate.origin,
+        status: RelationshipStatus.CANDIDATE,
+        evidenceSummary: candidate.evidenceSummary
+          ? (candidate.evidenceSummary as Prisma.InputJsonValue)
+          : Prisma.JsonNull,
+      },
+    });
+
+    // Replace evidence rows for this relationship
+    if (evidence.length > 0) {
+      await tx.relationshipEvidence.deleteMany({ where: { productRelationshipId: rel.id } });
+      await tx.relationshipEvidence.createMany({
+        data: evidence.map(e => ({
+          productRelationshipId: rel.id,
+          evidenceType: e.evidenceType,
+          score: e.score,
+          details: e.details ? (e.details as Prisma.InputJsonValue) : Prisma.JsonNull,
+        })),
+      });
+    }
+
+    return rel;
+  });
+}
+
+/**
+ * Mark all AUTO relationships for a product (source OR target) as INACTIVE
+ * when the product is deleted or deactivated.
+ */
+export async function invalidateRelationshipsForProduct(
+  shop: string,
+  internalProductId: string,
+): Promise<void> {
+  await db.productRelationship.updateMany({
+    where: {
+      shop,
+      origin: RelationshipOrigin.AUTO,
+      status: { in: [RelationshipStatus.CANDIDATE, RelationshipStatus.ACTIVE] },
+      OR: [
+        { sourceProductId: internalProductId },
+        { targetProductId: internalProductId },
+      ],
+    },
+    data: {
+      status: RelationshipStatus.INACTIVE,
+      invalidatedAt: new Date(),
+      updatedAt: new Date(),
+    },
+  });
+}
+
+/**
+ * Fetch all ACTIVE relationships for a product (as source or target).
+ * Used by downstream cart-intelligence consumers.
+ */
+export async function getActiveRelationshipsForProduct(
+  shop: string,
+  internalProductId: string,
+  types?: RelationshipType[],
+  limitPerType = 10,
+) {
+  const where: Prisma.ProductRelationshipWhereInput = {
+    shop,
+    status: RelationshipStatus.ACTIVE,
+    invalidatedAt: null,
+    OR: [
+      { sourceProductId: internalProductId },
+      { targetProductId: internalProductId },
+    ],
+    ...(types && types.length > 0 ? { relationshipType: { in: types } } : {}),
+  };
+
+  const rows = await db.productRelationship.findMany({
+    where,
+    orderBy: [{ relationshipType: "asc" }, { strength: "desc" }],
+    select: {
+      id: true,
+      sourceProductId: true,
+      targetProductId: true,
+      relationshipType: true,
+      directionality: true,
+      strength: true,
+      origin: true,
+      status: true,
+    },
+  });
+
+  // Cap per type
+  const byType = new Map<RelationshipType, typeof rows>();
+  for (const row of rows) {
+    const group = byType.get(row.relationshipType) ?? [];
+    if (group.length < limitPerType) {
+      group.push(row);
+      byType.set(row.relationshipType, group);
+    }
+  }
+
+  return Array.from(byType.values()).flat();
+}
+
+/**
+ * Return all active products for a shop as lightweight snapshots for
+ * relationship candidate generation.
+ */
+export async function getProductSnapshotsForShop(shop: string) {
+  return await db.product.findMany({
+    where: { shop, status: "ACTIVE" },
+    select: {
+      id: true,
+      shopifyProductId: true,
+      title: true,
+      disciplineTags: true,
+      categoryTags: true,
+      collectionIds: true,
+      tags: true,
+      productType: true,
+      vendor: true,
+      status: true,
+    },
+  });
+}
+
+/**
+ * Return all candidate (non-rejected) relationships for a shop, used in the
+ * admin review surface (US2 — partial loader used by T015).
+ */
+export async function getCandidateRelationships(
+  shop: string,
+  take = 50,
+  cursor?: string,
+) {
+  return await db.productRelationship.findMany({
+    where: { shop, status: RelationshipStatus.CANDIDATE },
+    orderBy: [{ strength: "desc" }, { createdAt: "desc" }],
+    select: {
+      id: true,
+      sourceProductId: true,
+      targetProductId: true,
+      relationshipType: true,
+      directionality: true,
+      strength: true,
+      origin: true,
+      status: true,
+      evidenceSummary: true,
+      createdAt: true,
+    },
+    take,
+    ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+  });
+}
+

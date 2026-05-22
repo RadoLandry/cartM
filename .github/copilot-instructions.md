@@ -1,5 +1,5 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-file: specs/002-discipline-taxonomy/plan.md
+file: specs/004-product-relationship-mapping/plan.md
 <!-- SPECKIT END -->

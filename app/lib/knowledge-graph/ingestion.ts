@@ -1,10 +1,15 @@
 import { PRODUCT_BY_ID_QUERY, PRODUCTS_QUERY } from "../shopify/graphql";
 import { normalizeProduct, ShopifyProductNode } from "./normalization";
-import { upsertProduct, createSyncJob, getActiveSyncJob, deleteProduct, updateProductClassification, updateProductEmbedding } from "../db/queries";
+import { upsertProduct, createSyncJob, getActiveSyncJob, deleteProduct, updateProductClassification, updateProductEmbedding, findProductByShopifyId } from "../db/queries";
 import { SyncTracker } from "./sync-status";
 import { generateProductEmbeddingWithRetry } from "./embeddings";
 import { extractDominantColors } from "./colorways";
 import { classifyProduct } from "./llm-classifier";
+import {
+  generateRelationshipsForShop,
+  regenerateRelationshipsForProduct,
+  invalidateRelationshipsForDeletedProduct,
+} from "./relationships";
 
 type AdminGraphqlClient = {
   graphql: (
@@ -177,6 +182,14 @@ export async function runCatalogSync(admin: AdminGraphqlClient, shop: string): P
     await tracker.complete();
     console.log(`[Ingestion] Finished sync for ${shop}. Job ID: ${job.id}`);
 
+    // Generate relationship candidates for the full refreshed catalog
+    try {
+      await generateRelationshipsForShop(shop);
+      console.log(`[Ingestion] Relationship generation complete for ${shop}.`);
+    } catch (relError) {
+      console.warn(`[Ingestion] Relationship generation failed for ${shop}:`, (relError as Error).message);
+    }
+
   } catch (error) {
     console.error(`[Ingestion] Fatal error during sync for ${shop}:`, error);
     await tracker.fail();
@@ -197,6 +210,16 @@ export async function handleProductWebhook(
     if (!productGid) {
       console.warn(`[Ingestion] Could not resolve deleted product ID for ${shop}`);
       return;
+    }
+
+    // Resolve the internal product id before deleting so we can invalidate its relationships
+    const internal = await findProductByShopifyId(productGid).catch(() => null);
+    if (internal) {
+      try {
+        await invalidateRelationshipsForDeletedProduct(shop, internal.id);
+      } catch (relErr) {
+        console.warn(`[Ingestion] Could not invalidate relationships for deleted product ${productGid}:`, (relErr as Error).message);
+      }
     }
 
     await deleteProduct(productGid);
@@ -226,6 +249,15 @@ export async function handleProductWebhook(
 
   const synced = await syncProductRecord(shop, product);
   if (!synced) {
+    // Product is no longer active — find internal id and invalidate its relationships
+    const internal = await findProductByShopifyId(product.id).catch(() => null);
+    if (internal) {
+      try {
+        await invalidateRelationshipsForDeletedProduct(shop, internal.id);
+      } catch (relErr) {
+        console.warn(`[Ingestion] Could not invalidate relationships for inactive product ${product.id}:`, (relErr as Error).message);
+      }
+    }
     try {
       await deleteProduct(product.id);
     } catch {
@@ -233,6 +265,15 @@ export async function handleProductWebhook(
     }
   } else {
     console.log(`[Ingestion] Synced webhook product ${product.id} for ${shop}`);
+    // Incrementally (re-)generate candidates for this product
+    const internal = await findProductByShopifyId(product.id).catch(() => null);
+    if (internal) {
+      try {
+        await regenerateRelationshipsForProduct(shop, internal.id);
+      } catch (relErr) {
+        console.warn(`[Ingestion] Relationship regeneration failed for ${product.id}:`, (relErr as Error).message);
+      }
+    }
   }
 }
 

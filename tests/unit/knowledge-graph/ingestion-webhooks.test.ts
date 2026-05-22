@@ -6,6 +6,10 @@ vi.mock("../../../app/lib/db/queries", () => ({
   getActiveSyncJob: vi.fn(),
   upsertProduct: vi.fn().mockResolvedValue(undefined),
   updateProductEmbedding: vi.fn().mockResolvedValue(undefined),
+  findProductByShopifyId: vi.fn().mockResolvedValue(null),
+  getProductSnapshotsForShop: vi.fn().mockResolvedValue([]),
+  upsertCandidateRelationship: vi.fn().mockResolvedValue(null),
+  invalidateRelationshipsForProduct: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../../../app/lib/knowledge-graph/embeddings", () => ({

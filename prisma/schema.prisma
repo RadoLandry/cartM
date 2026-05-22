@@ -125,3 +125,97 @@ enum WebhookProcessingStatus {
   FAILED
   DUPLICATE
 }
+
+// ---------------------------------------------------------------------------
+// Product Relationship Mapping
+// ---------------------------------------------------------------------------
+
+enum RelationshipType {
+  COMPLEMENTS
+  UPGRADES
+  ALTERNATIVES
+  CONFLICTS
+  SAME_COLLECTION
+}
+
+enum RelationshipDirectionality {
+  DIRECTIONAL
+  SYMMETRIC
+}
+
+enum RelationshipStatus {
+  CANDIDATE
+  ACTIVE
+  REJECTED
+  INACTIVE
+}
+
+enum RelationshipOrigin {
+  AUTO
+  MERCHANT
+}
+
+enum EvidenceType {
+  TAXONOMY
+  COLLECTION
+  EMBEDDING
+  MERCHANT_RULE
+  COPURCHASE
+  CATALOG_METADATA
+}
+
+enum OverrideAction {
+  CREATE
+  UPDATE
+  REJECT
+  REACTIVATE
+  DISABLE
+}
+
+model ProductRelationship {
+  id               String                    @id @default(cuid())
+  shop             String
+  sourceProductId  String
+  targetProductId  String
+  relationshipType RelationshipType
+  directionality   RelationshipDirectionality
+  strength         Float                     @default(0)
+  status           RelationshipStatus        @default(CANDIDATE)
+  origin           RelationshipOrigin        @default(AUTO)
+  evidenceSummary  Json?
+  reviewedAt       DateTime?
+  invalidatedAt    DateTime?
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
+  evidence         RelationshipEvidence[]
+
+  @@unique([shop, sourceProductId, targetProductId, relationshipType])
+  @@index([shop, status])
+  @@index([shop, sourceProductId])
+  @@index([shop, targetProductId])
+}
+
+model RelationshipEvidence {
+  id                     String              @id @default(cuid())
+  productRelationshipId  String
+  evidenceType           EvidenceType
+  score                  Float               @default(0)
+  details                Json?
+  createdAt              DateTime            @default(now())
+  relationship           ProductRelationship @relation(fields: [productRelationshipId], references: [id], onDelete: Cascade)
+
+  @@index([productRelationshipId])
+}
+
+model RelationshipOverride {
+  id                String         @id @default(cuid())
+  shop              String
+  normalizedPairKey String
+  relationshipType  RelationshipType
+  action            OverrideAction
+  appliedState      Json?
+  createdBy         String?
+  createdAt         DateTime       @default(now())
+
+  @@index([shop, normalizedPairKey, relationshipType])
+}
