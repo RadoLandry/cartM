@@ -40,9 +40,11 @@ model Product {
   productType      String?
   status           ProductStatus          @default(ACTIVE)
   tags             String[]
-  disciplineTags   String[]
-  categoryTags     String[]
-  dominantColors   String[]
+  disciplineTags          String[]
+  categoryTags            String[]
+  classificationConfidence Float?
+  isManuallyClassified     Boolean  @default(false)
+  dominantColors           String[]
   collectionIds    String[]
   metafields       Json?
   embedding        Unsupported("vector")?

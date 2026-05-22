@@ -5,6 +5,7 @@ vi.mock("../../../app/lib/db/queries", () => ({
   deleteProduct: vi.fn().mockResolvedValue(undefined),
   getActiveSyncJob: vi.fn(),
   upsertProduct: vi.fn().mockResolvedValue(undefined),
+  updateProductEmbedding: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../../../app/lib/knowledge-graph/embeddings", () => ({
@@ -15,7 +16,7 @@ vi.mock("../../../app/lib/knowledge-graph/colorways", () => ({
   extractDominantColors: vi.fn().mockResolvedValue(["black"]),
 }));
 
-import { deleteProduct, upsertProduct } from "../../../app/lib/db/queries";
+import { deleteProduct, upsertProduct, updateProductEmbedding } from "../../../app/lib/db/queries";
 import { handleProductWebhook } from "../../../app/lib/knowledge-graph/ingestion";
 
 describe("handleProductWebhook", () => {
@@ -80,6 +81,10 @@ describe("handleProductWebhook", () => {
         shopifyProductId: "gid://shopify/Product/123",
         title: "Boxing Gloves",
       }),
+    );
+    expect(updateProductEmbedding).toHaveBeenCalledWith(
+      "gid://shopify/Product/123",
+      [0.1, 0.2],
     );
   });
 

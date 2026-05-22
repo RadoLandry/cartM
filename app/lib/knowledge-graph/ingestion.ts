@@ -1,9 +1,10 @@
 import { PRODUCT_BY_ID_QUERY, PRODUCTS_QUERY } from "../shopify/graphql";
 import { normalizeProduct, ShopifyProductNode } from "./normalization";
-import { upsertProduct, createSyncJob, getActiveSyncJob, deleteProduct } from "../db/queries";
+import { upsertProduct, createSyncJob, getActiveSyncJob, deleteProduct, updateProductClassification, updateProductEmbedding } from "../db/queries";
 import { SyncTracker } from "./sync-status";
 import { generateProductEmbeddingWithRetry } from "./embeddings";
 import { extractDominantColors } from "./colorways";
+import { classifyProduct } from "./llm-classifier";
 
 type AdminGraphqlClient = {
   graphql: (
@@ -49,10 +50,31 @@ async function syncProductRecord(shop: string, shopifyProduct: ShopifyProductNod
   const embedText = `${normalized.title} ${normalized.description || ''} ${normalized.tags.join(' ')}`.trim();
   if (embedText.length > 0) {
     try {
-      await generateProductEmbeddingWithRetry(embedText, 3);
+      const embedding = await generateProductEmbeddingWithRetry(embedText, 3);
+      await updateProductEmbedding(normalized.shopifyProductId, embedding);
     } catch {
       console.warn(`[Ingestion] Could not generate embeddings for ${shopifyProduct.id}. Continuing...`);
     }
+  }
+
+  // Classify discipline & category via LLM (non-blocking for bulk sync)
+  try {
+    const classification = await classifyProduct({
+      title: normalized.title,
+      description: normalized.description ?? undefined,
+      tags: normalized.tags,
+      productType: normalized.productType ?? undefined,
+      vendor: normalized.vendor ?? undefined,
+      metafields: normalized.metafields,
+    });
+    await updateProductClassification(
+      normalized.shopifyProductId,
+      classification.disciplineTags,
+      classification.categoryTags,
+      classification.classificationConfidence,
+    );
+  } catch (classifyError) {
+    console.warn(`[Ingestion] Classification failed for ${shopifyProduct.id}:`, (classifyError as Error).message);
   }
 
   return true;

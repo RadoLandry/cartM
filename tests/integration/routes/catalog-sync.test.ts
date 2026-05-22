@@ -10,6 +10,7 @@ vi.mock("../../../app/lib/db/queries", () => ({
   completeSyncJob: vi.fn(),
   failSyncJob: vi.fn(),
   upsertProduct: vi.fn(),
+  updateProductEmbedding: vi.fn(),
 }));
 
 describe("Ingestion: runCatalogSync", () => {
@@ -75,6 +76,7 @@ describe("Ingestion: runCatalogSync", () => {
     expect(dbQueries.createSyncJob).toHaveBeenCalledWith("test.myshopify.com");
     expect(mockAdmin.graphql).toHaveBeenCalledTimes(2);
     expect(dbQueries.upsertProduct).toHaveBeenCalledTimes(2); // Only Active products
+    expect(dbQueries.updateProductEmbedding).toHaveBeenCalledTimes(2);
     expect(dbQueries.completeSyncJob).toHaveBeenCalledWith("job_123");
   });
 });
