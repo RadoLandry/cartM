@@ -219,3 +219,89 @@ model RelationshipOverride {
 
   @@index([shop, normalizedPairKey, relationshipType])
 }
+
+// ---------------------------------------------------------------------------
+// Size & Fit Intelligence
+// ---------------------------------------------------------------------------
+
+enum SizeChartSource {
+  AUTO
+  MERCHANT
+}
+
+enum SizeConflictSeverity {
+  WARNING
+  ERROR
+}
+
+/// Per-category size chart mapping body attributes to size labels.
+/// breakpoints is an auto-generated array; overrideBreakpoints is the
+/// merchant-supplied replacement and takes precedence when non-null.
+model SizeChart {
+  id                  String          @id @default(cuid())
+  shop                String
+  categoryTag         String
+  sizeSystem          String
+  breakpoints         Json
+  overrideBreakpoints Json?
+  source              SizeChartSource @default(AUTO)
+  version             Int             @default(1)
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  @@unique([shop, categoryTag, sizeSystem])
+  @@index([shop])
+}
+
+/// Expected size correspondence between two product categories.
+/// Used for deterministic cart conflict detection.
+model CrossSizeMapping {
+  id                  String               @id @default(cuid())
+  shop                String
+  sourceCategoryTag   String
+  sourceSize          String
+  targetCategoryTag   String
+  targetSize          String
+  severityOnMismatch  SizeConflictSeverity @default(WARNING)
+  source              SizeChartSource      @default(AUTO)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  @@unique([shop, sourceCategoryTag, sourceSize, targetCategoryTag])
+  @@index([shop, sourceCategoryTag])
+  @@index([shop, targetCategoryTag])
+}
+
+/// Individual return event used to statistically adjust size chart breakpoints.
+model SizeReturnRecord {
+  id                       String   @id @default(cuid())
+  shop                     String
+  shopifyOrderId           String
+  shopifyProductId         String
+  categoryTag              String
+  returnedSize             String
+  returnReason             String
+  returnedAt               DateTime
+  processedForAdjustment   Boolean  @default(false)
+  createdAt                DateTime @default(now())
+
+  @@index([shop, categoryTag])
+  @@index([shop, processedForAdjustment])
+}
+
+/// Persisted customer size profile.
+/// Used by getSizeRecommendation() for profile-first resolution (source:"profile").
+model CustomerProfile {
+  id                 String   @id @default(cuid())
+  shop               String
+  shopifyCustomerId  String?
+  sessionId          String?
+  /// JSON map of categoryTag → known size label, e.g. { "clothing": "M", "gloves_oz": "14oz" }
+  sizeProfile        Json     @default("{}")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([shop, shopifyCustomerId])
+  @@unique([shop, sessionId])
+  @@index([shop])
+}

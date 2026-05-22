@@ -7,6 +7,8 @@ import {
   RelationshipStatus,
   RelationshipOrigin,
   EvidenceType,
+  SizeChartSource,
+  SizeConflictSeverity,
 } from "@prisma/client";
 import db from "../../db.server";
 
@@ -545,3 +547,237 @@ export async function getCandidateRelationships(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Size & Fit Intelligence — query helpers
+// ---------------------------------------------------------------------------
+
+/** JSON schema for a single size breakpoint stored in SizeChart.breakpoints */
+export interface SizeBreakpointRow {
+  label: string;
+  attributeType: "weightKg" | "chestCm" | "waistCm" | "weightClass" | string;
+  min: number | null;
+  max: number | null;
+  note?: string;
+}
+
+export interface UpsertSizeChartInput {
+  shop: string;
+  categoryTag: string;
+  sizeSystem: string;
+  breakpoints: SizeBreakpointRow[];
+  source?: SizeChartSource;
+}
+
+export interface CreateCrossSizeMappingInput {
+  shop: string;
+  sourceCategoryTag: string;
+  sourceSize: string;
+  targetCategoryTag: string;
+  targetSize: string;
+  severityOnMismatch?: SizeConflictSeverity;
+  source?: SizeChartSource;
+}
+
+export async function getSizeChartForCategory(
+  shop: string,
+  categoryTag: string,
+  sizeSystem: string,
+) {
+  return await db.sizeChart.findUnique({
+    where: { shop_categoryTag_sizeSystem: { shop, categoryTag, sizeSystem } },
+  });
+}
+
+export async function getCrossSizeMappingsForPair(
+  shop: string,
+  catA: string,
+  catB: string,
+) {
+  return await db.crossSizeMapping.findMany({
+    where: {
+      shop,
+      OR: [
+        { sourceCategoryTag: catA, targetCategoryTag: catB },
+        { sourceCategoryTag: catB, targetCategoryTag: catA },
+      ],
+    },
+  });
+}
+
+export async function upsertSizeChart(data: UpsertSizeChartInput) {
+  const { shop, categoryTag, sizeSystem, breakpoints, source = SizeChartSource.AUTO } = data;
+  return await db.sizeChart.upsert({
+    where: { shop_categoryTag_sizeSystem: { shop, categoryTag, sizeSystem } },
+    update: {
+      breakpoints: breakpoints as unknown as Prisma.InputJsonValue,
+      source,
+      version: { increment: 1 },
+      updatedAt: new Date(),
+    },
+    create: {
+      shop,
+      categoryTag,
+      sizeSystem,
+      breakpoints: breakpoints as unknown as Prisma.InputJsonValue,
+      source,
+    },
+  });
+}
+
+export async function saveSizeChartOverride(id: string, overrideBreakpoints: SizeBreakpointRow[]) {
+  return await db.sizeChart.update({
+    where: { id },
+    data: {
+      overrideBreakpoints: overrideBreakpoints as unknown as Prisma.InputJsonValue,
+      source: SizeChartSource.MERCHANT,
+      updatedAt: new Date(),
+    },
+  });
+}
+
+export async function resetSizeChartOverride(id: string) {
+  return await db.sizeChart.update({
+    where: { id },
+    data: {
+      overrideBreakpoints: Prisma.JsonNull,
+      source: SizeChartSource.AUTO,
+      updatedAt: new Date(),
+    },
+  });
+}
+
+export async function createCrossSizeMapping(data: CreateCrossSizeMappingInput) {
+  const {
+    shop,
+    sourceCategoryTag,
+    sourceSize,
+    targetCategoryTag,
+    targetSize,
+    severityOnMismatch = SizeConflictSeverity.WARNING,
+    source = SizeChartSource.AUTO,
+  } = data;
+  return await db.crossSizeMapping.create({
+    data: { shop, sourceCategoryTag, sourceSize, targetCategoryTag, targetSize, severityOnMismatch, source },
+  });
+}
+
+export async function deleteCrossSizeMapping(id: string) {
+  return await db.crossSizeMapping.delete({ where: { id } });
+}
+
+export async function getSizeChartsForShop(shop: string) {
+  return await db.sizeChart.findMany({
+    where: { shop },
+    orderBy: [{ categoryTag: "asc" }, { sizeSystem: "asc" }],
+  });
+}
+
+export async function getCrossSizeMappingsForShop(shop: string) {
+  return await db.crossSizeMapping.findMany({
+    where: { shop },
+    orderBy: [{ sourceCategoryTag: "asc" }, { sourceSize: "asc" }],
+  });
+}
+
+export async function getDistinctSizeCategoryTagsForShop(shop: string): Promise<string[]> {
+  const rows = await db.productVariant.findMany({
+    where: { product: { shop }, sizeCategory: { not: null } },
+    select: { sizeCategory: true },
+    distinct: ["sizeCategory"],
+  });
+  return rows.map((r) => r.sizeCategory as string);
+}
+
+// ---------------------------------------------------------------------------
+// Size Return Records
+// ---------------------------------------------------------------------------
+
+export interface InsertSizeReturnRecordInput {
+  shop: string;
+  shopifyOrderId: string;
+  shopifyProductId: string;
+  categoryTag: string;
+  returnedSize: string;
+  returnReason: string;
+  returnedAt: Date;
+}
+
+export async function insertSizeReturnRecord(data: InsertSizeReturnRecordInput) {
+  return await db.sizeReturnRecord.create({ data });
+}
+
+export async function getUnprocessedReturnsByCategoryForShop(
+  shop: string,
+  categoryTag: string,
+) {
+  return await db.sizeReturnRecord.findMany({
+    where: { shop, categoryTag, processedForAdjustment: false },
+    orderBy: { returnedAt: "asc" },
+  });
+}
+
+export async function markReturnRecordsProcessed(ids: string[]) {
+  return await db.sizeReturnRecord.updateMany({
+    where: { id: { in: ids } },
+    data: { processedForAdjustment: true },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Customer Size Profile (US4 — session persistence)
+// ---------------------------------------------------------------------------
+
+/**
+ * Return the sizeProfile JSON map for a customer or anonymous session.
+ * Priority: shopifyCustomerId > sessionId. Returns {} if no profile found.
+ */
+export async function getSizeProfileForSession(
+  shop: string,
+  shopifyCustomerId?: string,
+  sessionId?: string,
+): Promise<Record<string, string>> {
+  if (!shopifyCustomerId && !sessionId) return {};
+
+  const row = await db.customerProfile.findFirst({
+    where: {
+      shop,
+      ...(shopifyCustomerId
+        ? { shopifyCustomerId }
+        : { sessionId }),
+    },
+    select: { sizeProfile: true },
+  });
+
+  if (!row) return {};
+  return (row.sizeProfile as Record<string, string>) ?? {};
+}
+
+/**
+ * Merge `updates` into the existing sizeProfile for a customer/session.
+ * Creates the row if it doesn't exist yet.
+ */
+export async function updateSizeProfile(
+  shop: string,
+  updates: Record<string, string>,
+  shopifyCustomerId?: string,
+  sessionId?: string,
+): Promise<void> {
+  if (!shopifyCustomerId && !sessionId) return;
+
+  const existing = await getSizeProfileForSession(shop, shopifyCustomerId, sessionId);
+  const merged = { ...existing, ...updates };
+
+  if (shopifyCustomerId) {
+    await db.customerProfile.upsert({
+      where: { shop_shopifyCustomerId: { shop, shopifyCustomerId } },
+      update: { sizeProfile: merged as Prisma.InputJsonValue, updatedAt: new Date() },
+      create: { shop, shopifyCustomerId, sizeProfile: merged as Prisma.InputJsonValue },
+    });
+  } else if (sessionId) {
+    await db.customerProfile.upsert({
+      where: { shop_sessionId: { shop, sessionId } },
+      update: { sizeProfile: merged as Prisma.InputJsonValue, updatedAt: new Date() },
+      create: { shop, sessionId, sizeProfile: merged as Prisma.InputJsonValue },
+    });
+  }
+}

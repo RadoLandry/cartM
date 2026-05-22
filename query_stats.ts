@@ -1,7 +1,15 @@
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 async function main() {
-  const shopsQueryResult = await prisma.$queryRaw<any[]>(`SELECT DISTINCT shop FROM "Session" UNION SELECT DISTINCT shop FROM "Product" UNION SELECT DISTINCT shop FROM "SyncJob" UNION SELECT DISTINCT shop FROM "WebhookEvent"`);
+  const shopsQueryResult = await prisma.$queryRaw<Array<{ shop: string }>>(Prisma.sql`
+    SELECT DISTINCT shop FROM "Session"
+    UNION
+    SELECT DISTINCT shop FROM "Product"
+    UNION
+    SELECT DISTINCT shop FROM "SyncJob"
+    UNION
+    SELECT DISTINCT shop FROM "WebhookEvent"
+  `);
   const shopList = Array.from(new Set(shopsQueryResult.map((s: any) => s.shop)));
   console.log("--- Database Stats per Shop ---");
   for (const shop of shopList) {

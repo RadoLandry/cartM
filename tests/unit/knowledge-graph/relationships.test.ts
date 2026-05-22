@@ -244,8 +244,13 @@ describe("generateCandidatesFromCatalog", () => {
     const peer = makeProduct({ id: "peer", disciplineTags: ["boxing"], categoryTags: ["gloves"], collectionIds: ["col_1"] });
 
     const candidates = generateCandidatesFromCatalog(source, [peer]);
+    const symmetricTypes: RelationshipType[] = [
+      RelationshipType.ALTERNATIVES,
+      RelationshipType.CONFLICTS,
+      RelationshipType.SAME_COLLECTION,
+    ];
     const symmetric = candidates.filter(c =>
-      [RelationshipType.ALTERNATIVES, RelationshipType.CONFLICTS, RelationshipType.SAME_COLLECTION].includes(c.relationshipType),
+      symmetricTypes.includes(c.relationshipType),
     );
     for (const c of symmetric) {
       expect(c.directionality).toBe(RelationshipDirectionality.SYMMETRIC);

@@ -114,7 +114,6 @@ describe("Ingestion: relationship candidate generation after sync [US1]", () => 
       metafields: null,
       classificationConfidence: 0.9,
       isManuallyClassified: false,
-      embedding: null,
       syncedAt: new Date(),
       createdAt: new Date(),
       updatedAt: new Date(),
