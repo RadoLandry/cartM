@@ -68,23 +68,31 @@ function paletteOverlap(a: string[], b: string[]): number {
   return shared.length / Math.min(a.length, b.length);
 }
 
+function colorwayOverlap(a: string[], b: string[]): number {
+  if (a.length === 0 || b.length === 0) {
+    return 0;
+  }
+
+  const shared = a.filter((value) => b.includes(value));
+  return shared.length / Math.min(a.length, b.length);
+}
+
+function getActiveColorwayKeys(item: CartVisualItem): string[] {
+  return item.selectedColorwayKey
+    ? [item.selectedColorwayKey]
+    : item.visualProfile.effectiveColorwayKeys;
+}
+
 function getCompatibilityScore(
   item: CartVisualItem,
   peer: CartVisualItem,
   rules: StyleCompatibilityRule[],
 ): { score: number; reason: StyleReason | null } {
-  const collectionKeysA = item.visualProfile.effectiveCollections.map((collection) => collection.key);
-  const collectionKeysB = peer.visualProfile.effectiveCollections.map((collection) => collection.key);
-  const sharedCollections = collectionKeysA.filter((key) => collectionKeysB.includes(key));
-  if (sharedCollections.length > 0) {
-    return {
-      score: 0.9,
-      reason: reason("same_collection", 0.9, "SYSTEM", "Items belong to the same coordinated collection.", { sharedCollections }),
-    };
-  }
+  const sourceColorwayKeys = getActiveColorwayKeys(item);
+  const targetColorwayKeys = getActiveColorwayKeys(peer);
 
-  for (const sourceColorwayKey of item.visualProfile.effectiveColorwayKeys) {
-    for (const targetColorwayKey of peer.visualProfile.effectiveColorwayKeys) {
+  for (const sourceColorwayKey of sourceColorwayKeys) {
+    for (const targetColorwayKey of targetColorwayKeys) {
       const match = rules.find(
         (rule) =>
           rule.sourceColorwayKey === sourceColorwayKey &&
@@ -116,6 +124,16 @@ function getCompatibilityScore(
         };
       }
     }
+  }
+
+  const collectionKeysA = item.visualProfile.effectiveCollections.map((collection) => collection.key);
+  const collectionKeysB = peer.visualProfile.effectiveCollections.map((collection) => collection.key);
+  const sharedCollections = collectionKeysA.filter((key) => collectionKeysB.includes(key));
+  if (sharedCollections.length > 0) {
+    return {
+      score: 0.9,
+      reason: reason("same_collection", 0.9, "SYSTEM", "Items belong to the same coordinated collection.", { sharedCollections }),
+    };
   }
 
   const paletteScore = paletteOverlap(item.visualProfile.dominantColors, peer.visualProfile.dominantColors);
@@ -170,14 +188,45 @@ export function scoreStyleCoherence(input: StyleCoherenceInput): StyleCoherenceR
       }
     }
 
-    const primaryCollection = Array.from(collectionCounts.entries()).sort((a, b) => b[1] - a[1])[0];
-    if (primaryCollection && primaryCollection[1] >= 2) {
-      const addCandidate = candidateProducts.find(
-        (candidate) =>
-          candidate.availableForSale &&
-          !cartProductIds.has(candidate.productId) &&
-          candidate.visualProfile.effectiveCollections.some((collection) => collection.key === primaryCollection[0]),
+    const rankedCollections = Array.from(collectionCounts.entries()).sort((a, b) => b[1] - a[1]);
+    const primaryCollection = rankedCollections[0];
+    const secondaryCollection = rankedCollections[1];
+    const hasAmbiguousTheme = Boolean(
+      primaryCollection
+      && secondaryCollection
+      && primaryCollection[1] >= 2
+      && primaryCollection[1] === secondaryCollection[1],
+    );
+
+    if (!hasAmbiguousTheme && primaryCollection && primaryCollection[1] >= 2) {
+      const cartColorwayKeys = new Set(
+        items.flatMap((item) => item.visualProfile.effectiveColorwayKeys),
       );
+      const addCandidate = candidateProducts
+        .filter(
+          (candidate) =>
+            candidate.availableForSale &&
+            !cartProductIds.has(candidate.productId) &&
+            candidate.visualProfile.effectiveCollections.some((collection) => collection.key === primaryCollection[0]),
+        )
+        .map((candidate) => {
+          const collectionBoost = candidate.visualProfile.effectiveCollections.some(
+            (collection) => collection.key === primaryCollection[0],
+          )
+            ? 0.55
+            : 0;
+          const colorwayBoost = colorwayOverlap(
+            candidate.visualProfile.effectiveColorwayKeys,
+            Array.from(cartColorwayKeys),
+          ) * 0.25;
+          const confidenceBoost = (candidate.visualProfile.visualConfidence ?? 0) * 0.2;
+
+          return {
+            candidate,
+            rankScore: collectionBoost + colorwayBoost + confidenceBoost,
+          };
+        })
+        .sort((left, right) => right.rankScore - left.rankScore)[0]?.candidate;
 
       if (addCandidate) {
         suggestions.push({
@@ -194,7 +243,7 @@ export function scoreStyleCoherence(input: StyleCoherenceInput): StyleCoherenceR
       }
     }
 
-    if (status === "clashing") {
+    if (!hasAmbiguousTheme && status === "clashing") {
       const bestCandidate = candidateProducts
         .filter((candidate) => candidate.availableForSale)
         .map((candidate) => {
@@ -210,14 +259,24 @@ export function scoreStyleCoherence(input: StyleCoherenceInput): StyleCoherenceR
             .filter((item) => item.productId !== matchingCartItem.productId)
             .map((item) => getCompatibilityScore(candidate, item, compatibilityRules));
           const projectedScore = compatibility.reduce((sum, entry) => sum + entry.score, 0) / Math.max(1, compatibility.length);
+          const remainingCartColorwayKeys = Array.from(new Set(
+            items
+              .filter((item) => item.productId !== matchingCartItem.productId)
+              .flatMap((item) => getActiveColorwayKeys(item)),
+          ));
+          const variantAlignment = colorwayOverlap(
+            getActiveColorwayKeys(candidate),
+            remainingCartColorwayKeys,
+          );
 
           return {
             candidate,
             projectedScore,
+            rankScore: projectedScore + variantAlignment * 0.05,
           };
         })
-        .filter((entry): entry is { candidate: CartVisualItem; projectedScore: number } => Boolean(entry))
-        .sort((a, b) => b.projectedScore - a.projectedScore)[0];
+        .filter((entry): entry is { candidate: CartVisualItem; projectedScore: number; rankScore: number } => Boolean(entry))
+        .sort((a, b) => b.rankScore - a.rankScore || b.projectedScore - a.projectedScore)[0];
 
       if (bestCandidate && bestCandidate.projectedScore > coherenceScore) {
         suggestions.push({
@@ -235,10 +294,21 @@ export function scoreStyleCoherence(input: StyleCoherenceInput): StyleCoherenceR
     }
   }
 
+  const seenSuggestions = new Set<string>();
+  const uniqueSuggestions = suggestions.filter((suggestion) => {
+    const key = `${suggestion.candidateProductId}:${suggestion.candidateVariantId ?? "default"}`;
+    if (seenSuggestions.has(key)) {
+      return false;
+    }
+
+    seenSuggestions.add(key);
+    return true;
+  });
+
   return {
     coherenceScore,
     status,
     reasons,
-    suggestions,
+    suggestions: uniqueSuggestions,
   };
 }

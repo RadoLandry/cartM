@@ -62,6 +62,60 @@ describe("scoreStyleCoherence", () => {
     expect(result.suggestions.some((suggestion) => suggestion.type === "add" && suggestion.candidateProductId === "prod-4")).toBe(true);
   });
 
+  it("ranks the strongest in-stock collection-completion candidate ahead of weaker matches", () => {
+    const result = scoreStyleCoherence({
+      shop: "test.myshopify.com",
+      items: [
+        makeItem({ productId: "prod-1", title: "Gloves", categoryTags: ["gloves"] }),
+        makeItem({ productId: "prod-2", title: "Headgear", categoryTags: ["headgear"], selectedVariantId: "var-2" }),
+        makeItem({
+          productId: "prod-3",
+          title: "Mouthguard",
+          categoryTags: ["mouthguard"],
+          selectedVariantId: "var-3",
+          visualProfile: {
+            dominantColors: ["#dc2626"],
+            effectiveColorwayKeys: ["red"],
+            effectiveCollections: [],
+            visualConfidence: 0.35,
+          },
+        }),
+      ],
+      compatibilityRules: [{ sourceColorwayKey: "black-gold", targetColorwayKey: "red", compatibility: ColorCompatibility.AVOID }],
+      candidateProducts: [
+        makeItem({
+          productId: "prod-weak",
+          title: "Training Tee",
+          categoryTags: ["tops"],
+          selectedVariantId: "var-weak",
+          visualProfile: {
+            dominantColors: ["#111827"],
+            effectiveColorwayKeys: ["black"],
+            effectiveCollections: [{ key: "pro", label: "Pro", source: "shopify" }],
+            visualConfidence: 0.41,
+          },
+        }),
+        makeItem({
+          productId: "prod-strong",
+          title: "Shin Guards",
+          categoryTags: ["shin-guards"],
+          selectedVariantId: "var-strong",
+          visualProfile: {
+            dominantColors: ["#111827", "#d97706"],
+            effectiveColorwayKeys: ["black-gold"],
+            effectiveCollections: [{ key: "pro", label: "Pro", source: "merchant" }],
+            visualConfidence: 0.93,
+          },
+        }),
+      ],
+    });
+
+    expect(result.suggestions[0]).toMatchObject({
+      type: "add",
+      candidateProductId: "prod-strong",
+    });
+  });
+
   it("suggests a swap when a same-category candidate improves a clashing cart", () => {
     const clashingItem = makeItem({
       productId: "prod-2",
@@ -98,6 +152,62 @@ describe("scoreStyleCoherence", () => {
 
     expect(result.status).toBe("clashing");
     expect(result.suggestions.some((suggestion) => suggestion.type === "swap" && suggestion.candidateProductId === "prod-3")).toBe(true);
+  });
+
+  it("prefers a candidate whose selected variant colorway matches the cart theme", () => {
+    const clashingItem = makeItem({
+      productId: "prod-2",
+      title: "Headgear",
+      categoryTags: ["headgear"],
+      selectedVariantId: "var-2",
+      selectedColorwayKey: "red",
+      visualProfile: {
+        dominantColors: ["#dc2626"],
+        effectiveColorwayKeys: ["red"],
+        effectiveCollections: [],
+        visualConfidence: 0.48,
+      },
+    });
+
+    const result = scoreStyleCoherence({
+      shop: "test.myshopify.com",
+      items: [makeItem({ productId: "prod-1", title: "Gloves" }), clashingItem],
+      compatibilityRules: [{ sourceColorwayKey: "black-gold", targetColorwayKey: "red", compatibility: ColorCompatibility.AVOID }],
+      candidateProducts: [
+        makeItem({
+          productId: "prod-3",
+          title: "Broad Palette Headgear",
+          categoryTags: ["headgear"],
+          selectedVariantId: "var-3-red",
+          selectedColorwayKey: "red",
+          visualProfile: {
+            dominantColors: ["#111827", "#d97706"],
+            effectiveColorwayKeys: ["black-gold", "red"],
+            effectiveCollections: [{ key: "pro", label: "Pro", source: "merchant" }],
+            visualConfidence: 0.91,
+          },
+        }),
+        makeItem({
+          productId: "prod-4",
+          title: "Matching Variant Headgear",
+          categoryTags: ["headgear"],
+          selectedVariantId: "var-4-black-gold",
+          selectedColorwayKey: "black-gold",
+          visualProfile: {
+            dominantColors: ["#111827", "#d97706"],
+            effectiveColorwayKeys: ["black-gold", "red"],
+            effectiveCollections: [{ key: "pro", label: "Pro", source: "merchant" }],
+            visualConfidence: 0.91,
+          },
+        }),
+      ],
+    });
+
+    expect(result.suggestions[0]).toMatchObject({
+      type: "swap",
+      candidateProductId: "prod-4",
+      candidateVariantId: "var-4-black-gold",
+    });
   });
 
   it("returns mixed for lower-confidence palette-only overlap", () => {
@@ -163,5 +273,168 @@ describe("scoreStyleCoherence", () => {
     });
 
     expect(result.suggestions).toHaveLength(0);
+  });
+
+  it("suppresses suggestions when the cart expresses two equally strong visual themes", () => {
+    const result = scoreStyleCoherence({
+      shop: "test.myshopify.com",
+      items: [
+        makeItem({
+          productId: "prod-1",
+          title: "Pro Gloves",
+          categoryTags: ["gloves"],
+          selectedVariantId: "var-1",
+          visualProfile: {
+            dominantColors: ["#111827", "#d97706"],
+            effectiveColorwayKeys: ["black-gold"],
+            effectiveCollections: [{ key: "pro", label: "Pro", source: "shopify" }],
+            visualConfidence: 0.91,
+          },
+        }),
+        makeItem({
+          productId: "prod-2",
+          title: "Pro Headgear",
+          categoryTags: ["headgear"],
+          selectedVariantId: "var-2",
+          visualProfile: {
+            dominantColors: ["#111827", "#d97706"],
+            effectiveColorwayKeys: ["black-gold"],
+            effectiveCollections: [{ key: "pro", label: "Pro", source: "shopify" }],
+            visualConfidence: 0.91,
+          },
+        }),
+        makeItem({
+          productId: "prod-3",
+          title: "Legacy Shorts",
+          categoryTags: ["shorts"],
+          selectedVariantId: "var-3",
+          selectedColorwayKey: "red",
+          visualProfile: {
+            dominantColors: ["#dc2626", "#1f2937"],
+            effectiveColorwayKeys: ["red"],
+            effectiveCollections: [{ key: "legacy", label: "Legacy", source: "merchant" }],
+            visualConfidence: 0.88,
+          },
+        }),
+        makeItem({
+          productId: "prod-4",
+          title: "Legacy Rashguard",
+          categoryTags: ["rashguard"],
+          selectedVariantId: "var-4",
+          selectedColorwayKey: "red",
+          visualProfile: {
+            dominantColors: ["#dc2626", "#1f2937"],
+            effectiveColorwayKeys: ["red"],
+            effectiveCollections: [{ key: "legacy", label: "Legacy", source: "merchant" }],
+            visualConfidence: 0.88,
+          },
+        }),
+      ],
+      compatibilityRules: [{ sourceColorwayKey: "black-gold", targetColorwayKey: "red", compatibility: ColorCompatibility.AVOID }],
+      candidateProducts: [
+        makeItem({
+          productId: "prod-5",
+          title: "Pro Shin Guards",
+          categoryTags: ["shin-guards"],
+          selectedVariantId: "var-5",
+          visualProfile: {
+            dominantColors: ["#111827", "#d97706"],
+            effectiveColorwayKeys: ["black-gold"],
+            effectiveCollections: [{ key: "pro", label: "Pro", source: "shopify" }],
+            visualConfidence: 0.93,
+          },
+        }),
+      ],
+    });
+
+    expect(result.suggestions).toHaveLength(0);
+  });
+
+  it("does not surface the same candidate twice as both an addition and a swap", () => {
+    const result = scoreStyleCoherence({
+      shop: "test.myshopify.com",
+      items: [
+        makeItem({ productId: "prod-1", title: "Gloves", categoryTags: ["gloves"] }),
+        makeItem({
+          productId: "prod-aux",
+          title: "Shin Guards",
+          categoryTags: ["shin-guards"],
+          selectedVariantId: "var-aux",
+        }),
+        makeItem({
+          productId: "prod-2",
+          title: "Headgear",
+          categoryTags: ["headgear"],
+          selectedVariantId: "var-2",
+          selectedColorwayKey: "red",
+          visualProfile: {
+            dominantColors: ["#dc2626"],
+            effectiveColorwayKeys: ["red"],
+            effectiveCollections: [],
+            visualConfidence: 0.48,
+          },
+        }),
+      ],
+      compatibilityRules: [{ sourceColorwayKey: "black-gold", targetColorwayKey: "red", compatibility: ColorCompatibility.AVOID }],
+      candidateProducts: [
+        makeItem({
+          productId: "prod-3",
+          title: "Replacement Headgear",
+          categoryTags: ["headgear"],
+          selectedVariantId: "var-3",
+          selectedColorwayKey: "black-gold",
+          visualProfile: {
+            dominantColors: ["#111827", "#d97706"],
+            effectiveColorwayKeys: ["black-gold"],
+            effectiveCollections: [{ key: "pro", label: "Pro", source: "merchant" }],
+            visualConfidence: 0.92,
+          },
+        }),
+      ],
+    });
+
+    expect(result.suggestions).toHaveLength(1);
+    expect(result.suggestions[0]).toMatchObject({
+      type: "add",
+      candidateProductId: "prod-3",
+    });
+  });
+
+  it("lets merchant avoid rules override a shared collection match", () => {
+    const result = scoreStyleCoherence({
+      shop: "test.myshopify.com",
+      items: [
+        makeItem({
+          productId: "prod-1",
+          title: "Gloves",
+          selectedColorwayKey: "black-gold",
+          visualProfile: {
+            dominantColors: ["#111827", "#d97706"],
+            effectiveColorwayKeys: ["black-gold"],
+            effectiveCollections: [{ key: "pro", label: "Pro", source: "shopify" }],
+            visualConfidence: 0.91,
+          },
+        }),
+        makeItem({
+          productId: "prod-2",
+          title: "Headgear",
+          categoryTags: ["headgear"],
+          selectedVariantId: "var-2",
+          selectedColorwayKey: "red",
+          visualProfile: {
+            dominantColors: ["#dc2626"],
+            effectiveColorwayKeys: ["red"],
+            effectiveCollections: [{ key: "pro", label: "Pro", source: "merchant" }],
+            visualConfidence: 0.88,
+          },
+        }),
+      ],
+      compatibilityRules: [{ sourceColorwayKey: "black-gold", targetColorwayKey: "red", compatibility: ColorCompatibility.AVOID }],
+    });
+
+    expect(result.status).toBe("clashing");
+    expect(result.reasons[0]).toMatchObject({
+      reasonType: "merchant_override",
+    });
   });
 });

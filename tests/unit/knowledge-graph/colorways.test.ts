@@ -6,6 +6,7 @@ import {
   extractDominantColors,
   normalizeColorToken,
   resolveEffectiveVisualProfile,
+  resolveSelectedColorwayKey,
   summarizeCollections,
 } from "../../../app/lib/knowledge-graph/colorways";
 
@@ -95,5 +96,15 @@ describe("visual profile derivation", () => {
     expect(effective.collections).toEqual([
       { shopifyCollectionId: "col-2", title: "Legacy", handle: "legacy" },
     ]);
+  });
+
+  it("keeps merchant override colorways authoritative over variant title tokens", () => {
+    const selectedColorwayKey = resolveSelectedColorwayKey(
+      "Red / Small",
+      ["black-gold"],
+      { preferFallback: true },
+    );
+
+    expect(selectedColorwayKey).toBe("black-gold");
   });
 });

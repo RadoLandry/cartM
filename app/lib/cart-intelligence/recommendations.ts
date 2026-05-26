@@ -371,25 +371,64 @@ export function buildThresholdRecommendations(
 export function buildVisualRecommendations(
   result: StyleCoherenceResult,
   candidates: CartVisualItem[],
-): VisualRecommendationPayload[] {
-  return result.suggestions.map((suggestion) => {
+  cartItems: CartVisualItem[] = [],
+): VisualRecommendationPayload {
+  const opportunities = result.suggestions.map((suggestion, index) => {
     const candidate = candidates.find((item) => item.productId === suggestion.candidateProductId);
-    const matchedCollectionKeys = candidate?.visualProfile.effectiveCollections.map((collection) => collection.key) ?? [];
-    const matchedColorwayKeys = candidate?.visualProfile.effectiveColorwayKeys ?? [];
 
     return {
       type: suggestion.type === "add" ? "collection_completion" : "swap",
       productId: suggestion.candidateProductId,
       variantId: suggestion.candidateVariantId,
+      title: candidate?.title ?? suggestion.candidateProductId,
       confidence: suggestion.confidence,
+      rank: index + 1,
+      reasonLabel: suggestion.reasons[0]?.message ?? "Supports the current cart theme.",
+      ...(typeof suggestion.reasons[0]?.metadata?.projectedScore === "number"
+        ? {
+            projectedCoherenceScore: suggestion.reasons[0].metadata.projectedScore.toFixed(2),
+          }
+        : {}),
       reasons: suggestion.reasons,
-    } satisfies VisualRecommendationPayload & {
-      visualContext?: {
-        matchedCollectionKeys: string[];
-        matchedColorwayKeys: string[];
-        currentCoherenceScore: number;
-        projectedCoherenceScore?: number;
-      };
     };
-  });
+  }).slice(0, 3);
+
+  const collectionCounts = new Map<string, { label: string; count: number }>();
+  for (const item of cartItems) {
+    for (const collection of item.visualProfile.effectiveCollections) {
+      const current = collectionCounts.get(collection.key);
+      collectionCounts.set(collection.key, {
+        label: collection.label,
+        count: (current?.count ?? 0) + 1,
+      });
+    }
+  }
+
+  const dominantCollection = Array.from(collectionCounts.entries())
+    .sort((left, right) => right[1].count - left[1].count)[0];
+  const shouldHide = opportunities.length === 0;
+  const hiddenReason = result.status === "cohesive"
+    ? "The cart is already visually coordinated."
+    : "No clear style recommendation is warranted right now.";
+
+  return {
+    summary: {
+      status: shouldHide ? "hidden" : result.status,
+      coherenceScore: result.coherenceScore.toFixed(2),
+      ...(!shouldHide && dominantCollection && dominantCollection[1].count >= 2
+        ? {
+            dominantTheme: {
+              type: "collection",
+              key: dominantCollection[0],
+              label: dominantCollection[1].label,
+              confidence: opportunities[0]?.confidence ?? result.coherenceScore,
+            },
+          }
+        : {}),
+      ...(shouldHide
+        ? { reason: hiddenReason }
+        : {}),
+    },
+    opportunities,
+  };
 }

@@ -140,11 +140,28 @@ export interface StyleReason {
 }
 
 export interface VisualRecommendationPayload {
-  type: "collection_completion" | "swap";
-  productId: string;
-  variantId?: string;
-  confidence: number;
-  reasons: StyleReason[];
+  summary: {
+    status: "hidden" | "cohesive" | "mixed" | "clashing";
+    coherenceScore: string;
+    dominantTheme?: {
+      type: "collection" | "colorway" | "mixed";
+      key: string;
+      label: string;
+      confidence: number;
+    };
+    reason?: string;
+  };
+  opportunities: Array<{
+    type: "collection_completion" | "swap";
+    productId: string;
+    variantId?: string;
+    title: string;
+    confidence: number;
+    rank: number;
+    reasonLabel: string;
+    projectedCoherenceScore?: string;
+    reasons: StyleReason[];
+  }>;
 }
 
 export function normalizeColorToken(value: string): string {
@@ -317,6 +334,31 @@ export function resolveEffectiveVisualProfile(profile: Pick<
     source: profile.source,
     extractionSummary: profile.extractionSummary,
   };
+}
+
+export function resolveVariantColorwayKeys(
+  variantTitle: string | null | undefined,
+  fallbackColorwayKeys: string[],
+  options?: {
+    preferFallback?: boolean;
+  },
+): string[] {
+  if (options?.preferFallback || !variantTitle) {
+    return fallbackColorwayKeys;
+  }
+
+  const variantColorwayKeys = deriveColorwayKeysFromText([variantTitle]);
+  return variantColorwayKeys.length > 0 ? variantColorwayKeys : fallbackColorwayKeys;
+}
+
+export function resolveSelectedColorwayKey(
+  variantTitle: string | null | undefined,
+  fallbackColorwayKeys: string[],
+  options?: {
+    preferFallback?: boolean;
+  },
+): string | null {
+  return resolveVariantColorwayKeys(variantTitle, fallbackColorwayKeys, options)[0] ?? null;
 }
 
 export function mapProductToVisualProfile(

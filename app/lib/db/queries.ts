@@ -32,6 +32,12 @@ import type {
   BundleRuleRecord,
 } from "../knowledge-graph/bundles";
 import { toBundleProjection } from "../knowledge-graph/bundles";
+import {
+  resolveEffectiveVisualProfile,
+  resolveSelectedColorwayKey,
+  type CollectionSummary,
+} from "../knowledge-graph/colorways";
+import type { CartVisualItem } from "../cart-intelligence/style-coherence";
 import type {
   CartThresholdItem,
   ThresholdCandidateProduct,
@@ -776,6 +782,244 @@ export async function getProductsForVisualBackfill(
     take,
     ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
   });
+}
+
+export interface StyleCartLineInput {
+  productId: string;
+  variantId?: string | null;
+  quantity?: number;
+}
+
+function mapCollectionsForCart(
+  collections: CollectionSummary[],
+  source: "shopify" | "merchant",
+) {
+  return collections.map((collection) => ({
+    key: collection.handle || collection.shopifyCollectionId,
+    label: collection.title,
+    source,
+  }));
+}
+
+function mapProductRecordToCartVisualItem(product: {
+  id: string;
+  title: string;
+  categoryTags: string[];
+  variants: Array<{
+    id: string;
+    title: string;
+    inventoryQuantity: number | null;
+  }>;
+  visualProfile: {
+    productId: string;
+    dominantColors: Prisma.JsonValue;
+    detectedColorwayKeys: string[];
+    overrideColorwayKeys: string[];
+    detectedCollections: Prisma.JsonValue;
+    overrideCollections: Prisma.JsonValue | null;
+    visualConfidence: number | null;
+    reviewStatus: VisualReviewStatus;
+    source: VisualProfileSource;
+    extractionSummary: Prisma.JsonValue | null;
+  } | null;
+}, selection?: StyleCartLineInput): CartVisualItem | null {
+  if (!product.visualProfile) {
+    return null;
+  }
+
+  const effective = resolveEffectiveVisualProfile({
+    productId: product.visualProfile.productId,
+    dominantColors: (product.visualProfile.dominantColors as string[]) ?? [],
+    detectedColorwayKeys: product.visualProfile.detectedColorwayKeys,
+    overrideColorwayKeys: product.visualProfile.overrideColorwayKeys,
+    detectedCollections: (product.visualProfile.detectedCollections as CollectionSummary[]) ?? [],
+    overrideCollections: (product.visualProfile.overrideCollections as CollectionSummary[] | null) ?? null,
+    visualConfidence: product.visualProfile.visualConfidence,
+    reviewStatus: product.visualProfile.reviewStatus,
+    source: product.visualProfile.source,
+    extractionSummary: {
+      tokenMatches: [],
+      paletteSource: "none",
+      notes: [],
+    },
+  });
+
+  const selectedVariant = selection?.variantId
+    ? product.variants.find((variant) => variant.id === selection.variantId)
+    : product.variants.find((variant) => (variant.inventoryQuantity ?? 0) > 0) ?? product.variants[0];
+
+  const collectionSource = product.visualProfile.overrideCollections ? "merchant" : "shopify";
+
+  return {
+    productId: product.id,
+    title: product.title,
+    categoryTags: product.categoryTags,
+    availableForSale: (selectedVariant?.inventoryQuantity ?? 0) > 0,
+    selectedVariantId: selectedVariant?.id,
+    selectedColorwayKey: resolveSelectedColorwayKey(selectedVariant?.title, effective.colorwayKeys, {
+      preferFallback: product.visualProfile.overrideColorwayKeys.length > 0,
+    }),
+    visualProfile: {
+      dominantColors: effective.dominantColors,
+      effectiveColorwayKeys: effective.colorwayKeys,
+      effectiveCollections: mapCollectionsForCart(effective.collections, collectionSource),
+      visualConfidence: effective.visualConfidence,
+    },
+  };
+}
+
+export async function listCartVisualItems(
+  shop: string,
+  cartLines: StyleCartLineInput[],
+): Promise<CartVisualItem[]> {
+  const productIds = Array.from(new Set(cartLines.map((line) => line.productId)));
+
+  if (productIds.length === 0) {
+    return [];
+  }
+
+  const products = await db.product.findMany({
+    where: {
+      shop,
+      id: { in: productIds },
+    },
+    select: {
+      id: true,
+      title: true,
+      categoryTags: true,
+      variants: {
+        select: {
+          id: true,
+          title: true,
+          inventoryQuantity: true,
+        },
+      },
+      visualProfile: {
+        select: {
+          productId: true,
+          dominantColors: true,
+          detectedColorwayKeys: true,
+          overrideColorwayKeys: true,
+          detectedCollections: true,
+          overrideCollections: true,
+          visualConfidence: true,
+          reviewStatus: true,
+          source: true,
+          extractionSummary: true,
+        },
+      },
+    },
+  });
+
+  const productMap = new Map(products.map((product) => [product.id, product]));
+
+  return cartLines
+    .map((line) => mapProductRecordToCartVisualItem(productMap.get(line.productId)!, line))
+    .filter((item): item is CartVisualItem => Boolean(item));
+}
+
+export async function listStyleCandidateProducts(
+  shop: string,
+  input: {
+    categoryTags: string[];
+    excludeProductIds?: string[];
+    swapProductSelections?: Array<{
+      productId: string;
+      variantId?: string | null;
+    }>;
+    take?: number;
+  },
+): Promise<CartVisualItem[]> {
+  const take = input.take ?? 50;
+  const swapProductIds = new Set((input.swapProductSelections ?? []).map((selection) => selection.productId));
+  const excludedProductIds = (input.excludeProductIds ?? []).filter((productId) => !swapProductIds.has(productId));
+
+  if (input.categoryTags.length === 0) {
+    return [];
+  }
+
+  const products = await db.product.findMany({
+    where: {
+      shop,
+      status: "ACTIVE",
+      id: {
+        notIn: excludedProductIds,
+      },
+      categoryTags: {
+        hasSome: input.categoryTags,
+      },
+      visualProfile: {
+        isNot: null,
+      },
+    },
+    select: {
+      id: true,
+      title: true,
+      categoryTags: true,
+      variants: {
+        select: {
+          id: true,
+          title: true,
+          inventoryQuantity: true,
+        },
+        orderBy: [
+          { inventoryQuantity: "desc" },
+          { createdAt: "asc" },
+        ],
+      },
+      visualProfile: {
+        select: {
+          productId: true,
+          dominantColors: true,
+          detectedColorwayKeys: true,
+          overrideColorwayKeys: true,
+          detectedCollections: true,
+          overrideCollections: true,
+          visualConfidence: true,
+          reviewStatus: true,
+          source: true,
+          extractionSummary: true,
+        },
+      },
+    },
+    orderBy: { updatedAt: "desc" },
+    take,
+  });
+
+  const swapSelectionMap = new Map(
+    (input.swapProductSelections ?? []).map((selection) => [selection.productId, selection]),
+  );
+
+  const candidates = products.flatMap((product) => {
+    const swapSelection = swapSelectionMap.get(product.id);
+
+    if (!swapSelection) {
+      const primaryCandidate = mapProductRecordToCartVisualItem(product);
+      return primaryCandidate ? [primaryCandidate] : [];
+    }
+
+    return product.variants
+      .filter((variant) => variant.id !== swapSelection.variantId)
+      .map((variant) => mapProductRecordToCartVisualItem(product, {
+        productId: product.id,
+        variantId: variant.id,
+      }))
+      .filter((item): item is CartVisualItem => Boolean(item) && item.availableForSale);
+  });
+
+  const seen = new Set<string>();
+
+  return candidates
+    .filter((item) => {
+      const key = `${item.productId}:${item.selectedVariantId ?? "default"}`;
+      if (seen.has(key)) {
+        return false;
+      }
+
+      seen.add(key);
+      return true;
+    })
+    .filter((item): item is CartVisualItem => Boolean(item));
 }
 
 /**
