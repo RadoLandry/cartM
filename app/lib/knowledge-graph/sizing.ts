@@ -50,6 +50,9 @@ export interface CartItemForConflict {
   sizeValue: string;
   sizeCategory: string;
   isChildProduct: boolean;
+  title?: string;
+  inventoryQuantity?: number | null;
+  sizeNumeric?: number | null;
 }
 
 export interface SizeConflictRequest {
@@ -65,11 +68,31 @@ export interface ConflictingItem {
   expectedSize?: string;
 }
 
+export interface SizeConflictSuggestion {
+  targetItem: "itemA" | "itemB";
+  currentVariantId: string;
+  currentSize: string;
+  suggestedSize: string;
+  suggestedVariantId?: string;
+  availability: "available" | "unavailable" | "unknown";
+  confidence: number;
+  reason: string;
+}
+
+export interface SizeConflictSummary {
+  total: number;
+  errorCount: number;
+  warningCount: number;
+}
+
 export interface SizeConflict {
+  conflictKey: string;
   severity: "ERROR" | "WARNING";
+  reasonType: "child_adult_mismatch" | "mapped_size_mismatch" | "measurement_rule_mismatch";
   itemA: ConflictingItem;
   itemB: ConflictingItem;
   message: string;
+  suggestions: SizeConflictSuggestion[];
   suggestedCorrection?: string;
 }
 
@@ -77,6 +100,43 @@ export interface SizeConflictResult {
   conflicts: SizeConflict[];
   hasErrors: boolean;
   hasWarnings: boolean;
+  summary: SizeConflictSummary;
+}
+
+export interface ShopperSizeConflictSuggestion {
+  targetItemVariantId: string;
+  suggestedSize: string;
+  suggestedVariantId?: string;
+  availability: "available" | "unavailable" | "unknown";
+  confidence: number;
+  label: string;
+  reason: string;
+}
+
+export interface ShopperSizeConflictCard {
+  conflictKey: string;
+  severity: "ERROR" | "WARNING";
+  title: string;
+  message: string;
+  affectedItems: Array<{
+    productId: string;
+    variantId: string;
+    categoryTag: string;
+    selectedSize: string;
+    expectedSize?: string;
+  }>;
+  primarySuggestion?: ShopperSizeConflictSuggestion;
+  additionalSuggestions: ShopperSizeConflictSuggestion[];
+}
+
+export interface SizeConflictRecommendationPayload {
+  summary: {
+    totalConflicts: number;
+    errorCount: number;
+    warningCount: number;
+    highestSeverity: "ERROR" | "WARNING" | null;
+  };
+  conflicts: ShopperSizeConflictCard[];
 }
 
 // ---------------------------------------------------------------------------

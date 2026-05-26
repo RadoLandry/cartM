@@ -66,13 +66,13 @@
 
 ### Tests for User Story 2
 
-- [ ] T012 [P] [US2] Extend `tests/unit/cart-intelligence/kit-detection.test.ts` with partial-kit, complete-kit, substitute-match, and missing-item priority assertions for `app/lib/cart-intelligence/kit-detection.ts`
+- [X] T012 [P] [US2] Extend `tests/unit/cart-intelligence/kit-detection.test.ts` with partial-kit, complete-kit, substitute-match, and missing-item priority assertions for `app/lib/cart-intelligence/kit-detection.ts`
 
 ### Implementation for User Story 2
 
-- [ ] T013 [US2] Extend requirement fulfillment in `app/lib/knowledge-graph/kits.ts` to honor category, product, and alternative-product matching modes from `specs/007-kit-completeness-detection/data-model.md`
-- [ ] T014 [US2] Extend `app/lib/cart-intelligence/kit-detection.ts` to calculate normalized completeness scores, suppress complete-kit prompts, and rank missing required items ahead of optional items
-- [ ] T015 [US2] Extend `app/lib/cart-intelligence/recommendations.ts` to emit shopper-facing missing-item payloads matching `specs/007-kit-completeness-detection/contracts/kit-recommendations.md`
+- [X] T013 [US2] Extend requirement fulfillment in `app/lib/knowledge-graph/kits.ts` to honor category, product, and alternative-product matching modes from `specs/007-kit-completeness-detection/data-model.md`
+- [X] T014 [US2] Extend `app/lib/cart-intelligence/kit-detection.ts` to calculate normalized completeness scores, suppress complete-kit prompts, and rank missing required items ahead of optional items
+- [X] T015 [US2] Extend `app/lib/cart-intelligence/recommendations.ts` to emit shopper-facing missing-item payloads matching `specs/007-kit-completeness-detection/contracts/kit-recommendations.md`
 
 **Checkpoint**: Shopper-facing kit completeness recommendations are independently testable and correctly prioritize essentials while suppressing complete-kit noise.
 

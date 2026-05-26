@@ -73,6 +73,10 @@ export async function detectKitCompleteness(
         continue;
       }
 
+      if (missingRequirements.length === 0) {
+        continue;
+      }
+
       const completenessScore = round(matchedRequirements.length / Math.max(1, requirementCoverage.length));
       const confidence = calculateAssessmentConfidence(
         matchedRequirements.length,

@@ -127,6 +127,19 @@ describe("detectKitCompleteness", () => {
               acceptedRelationshipTypes: [],
               minQuantity: 1,
             },
+            {
+              id: "req-bjj-2",
+              requirementKey: "fight-shorts",
+              label: "Fight Shorts",
+              isRequired: true,
+              priority: 20,
+              safetyCritical: false,
+              matchMode: RequirementMatchMode.CATEGORY,
+              acceptedCategoryTags: ["fight-shorts"],
+              acceptedShopifyProductIds: [],
+              acceptedRelationshipTypes: [],
+              minQuantity: 1,
+            },
           ],
         }),
       ],
@@ -178,6 +191,7 @@ describe("detectKitCompleteness", () => {
               acceptedCategoryTags: [],
               acceptedShopifyProductIds: ["gid://shopify/Product/99"],
             },
+            makeKit().requirements[2],
           ],
         }),
       ],
@@ -188,5 +202,80 @@ describe("detectKitCompleteness", () => {
     });
 
     expect(result[0].matchedRequirements.find((requirement) => requirement.requirementKey === "hand-wraps")?.reasons.some((reason) => reason.reasonType === "substitute_match")).toBe(true);
+  });
+
+  it("suppresses complete kits so no missing-item prompt is produced", async () => {
+    const result = await detectKitCompleteness({
+      shop: "test.myshopify.com",
+      items: [
+        makeCartItem({ productId: "prod-1", categoryTags: ["gloves"] }),
+        makeCartItem({
+          productId: "prod-2",
+          shopifyProductId: "gid://shopify/Product/2",
+          title: "Hand Wraps",
+          categoryTags: ["hand-wraps"],
+        }),
+        makeCartItem({
+          productId: "prod-3",
+          shopifyProductId: "gid://shopify/Product/3",
+          title: "Gear Bag",
+          categoryTags: ["gear-bag"],
+        }),
+      ],
+      kitDefinitions: [makeKit({ requirements: makeKit().requirements.slice(0, 2) })],
+      relationships: [],
+    });
+
+    expect(result).toEqual([]);
+  });
+
+  it("orders missing requirements with required items ahead of optional items, then by priority", async () => {
+    const result = await detectKitCompleteness({
+      shop: "test.myshopify.com",
+      items: [makeCartItem()],
+      kitDefinitions: [
+        makeKit({
+          requirements: [
+            makeKit().requirements[0],
+            makeKit().requirements[1],
+            {
+              id: "req-4",
+              requirementKey: "mouthguard",
+              label: "Mouthguard",
+              isRequired: true,
+              priority: 30,
+              safetyCritical: true,
+              matchMode: RequirementMatchMode.CATEGORY,
+              acceptedCategoryTags: ["mouthguard"],
+              acceptedShopifyProductIds: [],
+              acceptedRelationshipTypes: [],
+              minQuantity: 1,
+            },
+            {
+              id: "req-5",
+              requirementKey: "ankle-support",
+              label: "Ankle Support",
+              isRequired: false,
+              priority: 15,
+              safetyCritical: false,
+              matchMode: RequirementMatchMode.CATEGORY,
+              acceptedCategoryTags: ["ankle-support"],
+              acceptedShopifyProductIds: [],
+              acceptedRelationshipTypes: [],
+              minQuantity: 1,
+            },
+            makeKit().requirements[2],
+          ],
+        }),
+      ],
+      relationships: [],
+    });
+
+    expect(result[0].missingRequirements.map((requirement) => requirement.requirementKey)).toEqual([
+      "hand-wraps",
+      "mouthguard",
+      "ankle-support",
+      "gear-bag",
+    ]);
   });
 });

@@ -904,6 +904,114 @@ export async function getCrossSizeMappingsForPair(
   });
 }
 
+export interface VariantAvailabilityRow {
+  id: string;
+  productId: string;
+  shopifyVariantId: string;
+  title: string;
+  sizeValue: string | null;
+  sizeCategory: string | null;
+  sizeNumeric: number | null;
+  inventoryQuantity: number | null;
+}
+
+export interface CrossSizeMappingPreviewResult {
+  evaluated: boolean;
+  severity?: SizeConflictSeverity;
+  expectedSize?: string;
+  message?: string;
+}
+
+export async function findVariantByProductAndSize(
+  productId: string,
+  sizeValue: string,
+): Promise<VariantAvailabilityRow | null> {
+  return await db.productVariant.findFirst({
+    where: { productId, sizeValue },
+    select: {
+      id: true,
+      productId: true,
+      shopifyVariantId: true,
+      title: true,
+      sizeValue: true,
+      sizeCategory: true,
+      sizeNumeric: true,
+      inventoryQuantity: true,
+    },
+  });
+}
+
+export async function listVariantsForProduct(productId: string): Promise<VariantAvailabilityRow[]> {
+  return await db.productVariant.findMany({
+    where: { productId },
+    orderBy: [{ sizeCategory: "asc" }, { sizeNumeric: "asc" }, { sizeValue: "asc" }],
+    select: {
+      id: true,
+      productId: true,
+      shopifyVariantId: true,
+      title: true,
+      sizeValue: true,
+      sizeCategory: true,
+      sizeNumeric: true,
+      inventoryQuantity: true,
+    },
+  });
+}
+
+export async function previewCrossSizeConflict(
+  shop: string,
+  sourceCategoryTag: string,
+  sourceSize: string,
+  targetCategoryTag: string,
+  targetSize: string,
+): Promise<CrossSizeMappingPreviewResult> {
+  const mappings = await getCrossSizeMappingsForPair(shop, sourceCategoryTag, targetCategoryTag);
+
+  const mapping = mappings.find(
+    (row) =>
+      row.sourceCategoryTag === sourceCategoryTag &&
+      row.sourceSize === sourceSize &&
+      row.targetCategoryTag === targetCategoryTag,
+  );
+
+  if (!mapping) {
+    return {
+      evaluated: false,
+      message: "No compatibility mapping exists for the selected category pair.",
+    };
+  }
+
+  if (mapping.targetSize === targetSize) {
+    return {
+      evaluated: true,
+      severity: mapping.severityOnMismatch,
+      expectedSize: mapping.targetSize,
+      message: `${sourceCategoryTag} size ${sourceSize} is compatible with ${targetCategoryTag} size ${targetSize}.`,
+    };
+  }
+
+  return {
+    evaluated: true,
+    severity: mapping.severityOnMismatch,
+    expectedSize: mapping.targetSize,
+    message: `${sourceCategoryTag} size ${sourceSize} typically pairs with ${targetCategoryTag} size ${mapping.targetSize}, not ${targetSize}.`,
+  };
+}
+
+export async function getSizeChartsForCategories(shop: string, categoryTags: string[]) {
+  if (categoryTags.length === 0) {
+    return [];
+  }
+
+  return await db.sizeChart.findMany({
+    where: {
+      shop,
+      categoryTag: { in: categoryTags },
+    },
+    orderBy: [{ categoryTag: "asc" }, { sizeSystem: "asc" }],
+  });
+}
+
 export async function upsertSizeChart(data: UpsertSizeChartInput) {
   const { shop, categoryTag, sizeSystem, breakpoints, source = SizeChartSource.AUTO } = data;
   return await db.sizeChart.upsert({

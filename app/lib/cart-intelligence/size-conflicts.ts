@@ -33,7 +33,7 @@ export async function detectSizeConflicts(
   const conflicts: SizeConflict[] = [];
 
   if (!cartItems || cartItems.length <= 1) {
-    return { conflicts: [], hasErrors: false, hasWarnings: false };
+    return buildResult([]);
   }
 
   for (let i = 0; i < cartItems.length; i++) {
@@ -41,15 +41,13 @@ export async function detectSizeConflicts(
       const itemA = cartItems[i];
       const itemB = cartItems[j];
 
-      // Only compare items with different category tags
-      if (itemA.categoryTag === itemB.categoryTag) continue;
-
-      // Skip if sizeValue is missing or empty on either item
-      if (!itemA.sizeValue || !itemB.sizeValue) continue;
+      if (shouldSkipPair(itemA, itemB)) {
+        continue;
+      }
 
       // Rule 1: child vs adult mismatch → ERROR (regardless of size values)
       if (itemA.isChildProduct !== itemB.isChildProduct) {
-        conflicts.push(buildConflict("ERROR", itemA, itemB, null, null));
+        conflicts.push(buildConflict("ERROR", "child_adult_mismatch", itemA, itemB, null, null));
         continue;
       }
 
@@ -62,54 +60,40 @@ export async function detectSizeConflicts(
 
       if (mappings.length === 0) continue; // unmapped pair — skip
 
-      // Check mapping from A→B
-      const abMapping = mappings.find(
-        (m) =>
-          m.sourceCategoryTag === itemA.categoryTag &&
-          m.sourceSize === itemA.sizeValue &&
-          m.targetCategoryTag === itemB.categoryTag,
-      );
+      const abMismatch = getMappedSizeMismatch(mappings, itemA, itemB);
 
-      if (abMapping && abMapping.targetSize !== itemB.sizeValue) {
+      if (abMismatch) {
         conflicts.push(
           buildConflict(
-            abMapping.severityOnMismatch as "ERROR" | "WARNING",
+            abMismatch.severity,
+            "mapped_size_mismatch",
             itemA,
             itemB,
-            abMapping.targetSize,
+            abMismatch.expectedTargetSize,
             null,
           ),
         );
         continue;
       }
 
-      // Check mapping from B→A
-      const baMapping = mappings.find(
-        (m) =>
-          m.sourceCategoryTag === itemB.categoryTag &&
-          m.sourceSize === itemB.sizeValue &&
-          m.targetCategoryTag === itemA.categoryTag,
-      );
+      const baMismatch = getMappedSizeMismatch(mappings, itemB, itemA);
 
-      if (baMapping && baMapping.targetSize !== itemA.sizeValue) {
+      if (baMismatch) {
         conflicts.push(
           buildConflict(
-            baMapping.severityOnMismatch as "ERROR" | "WARNING",
+            baMismatch.severity,
+            "mapped_size_mismatch",
             itemA,
             itemB,
             null,
-            baMapping.targetSize,
+            baMismatch.expectedTargetSize,
           ),
         );
       }
     }
   }
 
-  return {
-    conflicts,
-    hasErrors: conflicts.some((c) => c.severity === "ERROR"),
-    hasWarnings: conflicts.some((c) => c.severity === "WARNING"),
-  };
+  return buildResult(conflicts);
 }
 
 // ---------------------------------------------------------------------------
@@ -118,6 +102,7 @@ export async function detectSizeConflicts(
 
 function buildConflict(
   severity: "ERROR" | "WARNING",
+  reasonType: "child_adult_mismatch" | "mapped_size_mismatch" | "measurement_rule_mismatch",
   itemA: CartItemForConflict,
   itemB: CartItemForConflict,
   /** Expected size for itemB (from A→B mapping) */
@@ -143,25 +128,149 @@ function buildConflict(
 
   let message: string;
   let suggestedCorrection: string | undefined;
+  let suggestions = [] as SizeConflict["suggestions"];
 
   if (severity === "ERROR") {
     const childItem = itemA.isChildProduct ? itemA : itemB;
     const adultItem = itemA.isChildProduct ? itemB : itemA;
     message = `Child-sized ${childItem.categoryTag} (${childItem.sizeValue}) mixed with adult-sized ${adultItem.categoryTag} (${adultItem.sizeValue}).`;
     suggestedCorrection = `Ensure both items use the same age range sizing.`;
+    suggestions = rankSuggestions([
+      createSuggestion(
+        itemA.isChildProduct ? "itemB" : "itemA",
+        adultItem.variantId,
+        adultItem.sizeValue,
+        childItem.sizeValue,
+        0.95,
+        "Use the same age-range sizing across paired protective gear.",
+      ),
+    ]);
   } else if (expectedSizeForB != null) {
     message = `${itemA.categoryTag} size ${itemA.sizeValue} typically pairs with ${itemB.categoryTag} size ${expectedSizeForB}, but ${itemB.sizeValue} is selected.`;
     suggestedCorrection = `Change ${itemB.categoryTag} to ${expectedSizeForB}, or ${itemA.categoryTag} to match ${itemB.sizeValue}.`;
+    suggestions = rankSuggestions([
+      createSuggestion(
+        "itemB",
+        itemB.variantId,
+        itemB.sizeValue,
+        expectedSizeForB,
+        severity === "ERROR" ? 0.95 : 0.85,
+        `${itemA.categoryTag} size ${itemA.sizeValue} maps to ${itemB.categoryTag} size ${expectedSizeForB}.`,
+      ),
+    ]);
   } else {
     message = `${itemB.categoryTag} size ${itemB.sizeValue} typically pairs with ${itemA.categoryTag} size ${expectedSizeForA}, but ${itemA.sizeValue} is selected.`;
     suggestedCorrection = `Change ${itemA.categoryTag} to ${expectedSizeForA}, or ${itemB.categoryTag} to match ${itemA.sizeValue}.`;
+    suggestions = rankSuggestions([
+      createSuggestion(
+        "itemA",
+        itemA.variantId,
+        itemA.sizeValue,
+        expectedSizeForA ?? itemA.sizeValue,
+        severity === "ERROR" ? 0.95 : 0.85,
+        `${itemB.categoryTag} size ${itemB.sizeValue} maps to ${itemA.categoryTag} size ${expectedSizeForA}.`,
+      ),
+    ]);
   }
 
   return {
+    conflictKey: buildConflictKey(reasonType, itemA.variantId, itemB.variantId),
     severity,
+    reasonType,
     itemA: conflictingA,
     itemB: conflictingB,
     message,
+    suggestions,
     suggestedCorrection,
   };
+}
+
+function buildConflictKey(
+  reasonType: SizeConflict["reasonType"],
+  variantA: string,
+  variantB: string,
+): string {
+  const [left, right] = [variantA, variantB].sort();
+  return `${reasonType}:${left}:${right}`;
+}
+
+function buildResult(conflicts: SizeConflict[]): SizeConflictResult {
+  const errorCount = conflicts.filter((conflict) => conflict.severity === "ERROR").length;
+  const warningCount = conflicts.length - errorCount;
+
+  return {
+    conflicts,
+    hasErrors: errorCount > 0,
+    hasWarnings: warningCount > 0,
+    summary: {
+      total: conflicts.length,
+      errorCount,
+      warningCount,
+    },
+  };
+}
+
+function shouldSkipPair(itemA: CartItemForConflict, itemB: CartItemForConflict): boolean {
+  return itemA.categoryTag === itemB.categoryTag || !hasComparableSize(itemA) || !hasComparableSize(itemB);
+}
+
+function hasComparableSize(item: CartItemForConflict): boolean {
+  return item.sizeValue.trim().length > 0;
+}
+
+function getMappedSizeMismatch(
+  mappings: Awaited<ReturnType<typeof getCrossSizeMappingsForPair>>,
+  sourceItem: CartItemForConflict,
+  targetItem: CartItemForConflict,
+): { severity: "ERROR" | "WARNING"; expectedTargetSize: string } | null {
+  const mapping = mappings.find(
+    (row) =>
+      row.sourceCategoryTag === sourceItem.categoryTag &&
+      row.sourceSize === sourceItem.sizeValue &&
+      row.targetCategoryTag === targetItem.categoryTag,
+  );
+
+  if (!mapping || mapping.targetSize === targetItem.sizeValue) {
+    return null;
+  }
+
+  return {
+    severity: mapping.severityOnMismatch as "ERROR" | "WARNING",
+    expectedTargetSize: mapping.targetSize,
+  };
+}
+
+function createSuggestion(
+  targetItem: "itemA" | "itemB",
+  currentVariantId: string,
+  currentSize: string,
+  suggestedSize: string,
+  confidence: number,
+  reason: string,
+): SizeConflict["suggestions"][number] {
+  return {
+    targetItem,
+    currentVariantId,
+    currentSize,
+    suggestedSize,
+    availability: "unknown",
+    confidence,
+    reason,
+  };
+}
+
+function rankSuggestions(
+  suggestions: SizeConflict["suggestions"],
+): SizeConflict["suggestions"] {
+  const availabilityRank = {
+    available: 0,
+    unknown: 1,
+    unavailable: 2,
+  } as const;
+
+  return [...suggestions].sort(
+    (left, right) =>
+      availabilityRank[left.availability] - availabilityRank[right.availability] ||
+      right.confidence - left.confidence,
+  );
 }
