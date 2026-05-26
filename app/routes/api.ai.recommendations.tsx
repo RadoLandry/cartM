@@ -1,10 +1,19 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { z } from "zod";
 
-import { buildVisualRecommendations } from "../lib/cart-intelligence/recommendations";
+import {
+  buildRecommendationPersonalization,
+  buildVisualRecommendations,
+} from "../lib/cart-intelligence/recommendations";
+import {
+  buildProfileKey,
+  resolveCustomerProfile,
+} from "../lib/cart-intelligence/customer-profile";
 import { scoreStyleCoherence } from "../lib/cart-intelligence/style-coherence";
 import {
+  getCustomerProfile,
   getColorCompatibilityRulesForKeys,
+  getSessionCustomerProfile,
   listCartVisualItems,
   listStyleCandidateProducts,
 } from "../lib/db/queries";
@@ -15,12 +24,36 @@ const CartLineSchema = z.object({
   quantity: z.coerce.number().int().min(1).default(1),
 });
 
+const ProfileInputSchema = z.object({
+  discipline: z.string().min(1).optional(),
+  disciplines: z.array(z.string().min(1)).optional(),
+  experienceLevel: z.string().min(1).optional(),
+  weightClass: z.string().min(1).optional(),
+  priceSensitivity: z.string().min(1).optional(),
+  knownSizes: z.record(z.string(), z.string().min(1)).optional(),
+});
+
 const RecommendationRequestSchema = z.object({
   shop: z.string().min(1),
   cartId: z.string().optional(),
   currencyCode: z.string().min(3).max(3).default("USD"),
+  shopifyCustomerId: z.string().min(1).optional(),
+  sessionId: z.string().min(1).optional(),
+  profileInput: ProfileInputSchema.optional(),
   cart: z.array(CartLineSchema).default([]),
 });
+
+function parseProfileInputSearchParam(value: string | null) {
+  if (!value) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return value;
+  }
+}
 
 function parseUrlRequest(request: Request) {
   const url = new URL(request.url);
@@ -37,6 +70,9 @@ function parseUrlRequest(request: Request) {
     shop: url.searchParams.get("shop") ?? "",
     cartId: url.searchParams.get("cartId") ?? undefined,
     currencyCode: url.searchParams.get("currencyCode") ?? "USD",
+    shopifyCustomerId: url.searchParams.get("shopifyCustomerId") ?? undefined,
+    sessionId: url.searchParams.get("sessionId") ?? undefined,
+    profileInput: parseProfileInputSearchParam(url.searchParams.get("profileInput")),
     cart,
   });
 }
@@ -48,17 +84,51 @@ async function parseBodyRequest(request: Request) {
     shop: body?.shop ?? "",
     cartId: body?.cartId ?? undefined,
     currencyCode: body?.currencyCode ?? "USD",
+    shopifyCustomerId: body?.shopifyCustomerId ?? undefined,
+    sessionId: body?.sessionId ?? undefined,
+    profileInput: body?.profileInput ?? undefined,
     cart: Array.isArray(body?.cart) ? body.cart : [],
   });
 }
 
 async function buildStyleResponse(input: z.infer<typeof RecommendationRequestSchema>) {
   const cartItems = await listCartVisualItems(input.shop, input.cart);
+  const storedProfile = input.shopifyCustomerId
+    ? await getCustomerProfile(input.shop, input.shopifyCustomerId, input.sessionId)
+    : input.sessionId
+      ? await getSessionCustomerProfile(input.shop, input.sessionId)
+      : null;
+  const resolvedProfile = (storedProfile || input.profileInput || input.shopifyCustomerId || input.sessionId)
+    ? resolveCustomerProfile({
+        shop: input.shop,
+        shopifyCustomerId: input.shopifyCustomerId,
+        sessionId: input.sessionId,
+        explicitInput: input.profileInput,
+        storedProfile: storedProfile
+          ? {
+              profileKey: buildProfileKey(input.shop, storedProfile.shopifyCustomerId, storedProfile.sessionId),
+              shop: storedProfile.shop,
+              shopifyCustomerId: storedProfile.shopifyCustomerId,
+              sessionId: storedProfile.sessionId,
+              sizeProfile: storedProfile.sizeProfile,
+              disciplineProfile: storedProfile.disciplineProfile,
+              explicitProfile: storedProfile.explicitProfile,
+              purchaseSummary: storedProfile.purchaseSummary,
+              behaviorSummary: storedProfile.behaviorSummary,
+              confidenceSummary: storedProfile.confidenceSummary,
+              lastActiveAt: storedProfile.lastActiveAt,
+            }
+          : null,
+      })
+    : null;
 
   if (cartItems.length === 0) {
     return {
       ok: true,
       request: input,
+      ...(resolvedProfile
+        ? { personalization: buildRecommendationPersonalization(resolvedProfile) }
+        : {}),
       style: {
         summary: {
           status: "hidden",
@@ -97,6 +167,9 @@ async function buildStyleResponse(input: z.infer<typeof RecommendationRequestSch
   return {
     ok: true,
     request: input,
+    ...(resolvedProfile
+      ? { personalization: buildRecommendationPersonalization(resolvedProfile) }
+      : {}),
     style: buildVisualRecommendations(result, candidateProducts, cartItems),
   };
 }

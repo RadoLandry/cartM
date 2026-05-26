@@ -2509,8 +2509,354 @@ export async function markReturnRecordsProcessed(ids: string[]) {
 }
 
 // ---------------------------------------------------------------------------
-// Customer Size Profile (US4 — session persistence)
+// Customer Profile & History
 // ---------------------------------------------------------------------------
+
+const customerProfileSelect = Prisma.validator<Prisma.CustomerProfileSelect>()({
+  id: true,
+  shop: true,
+  shopifyCustomerId: true,
+  sessionId: true,
+  sizeProfile: true,
+  disciplineProfile: true,
+  explicitProfile: true,
+  purchaseSummary: true,
+  behaviorSummary: true,
+  confidenceSummary: true,
+  lastActiveAt: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+type SelectedCustomerProfile = Prisma.CustomerProfileGetPayload<{
+  select: typeof customerProfileSelect;
+}>;
+
+type JsonRecord = Record<string, unknown>;
+
+export interface CustomerProfileRecord {
+  id: string;
+  shop: string;
+  shopifyCustomerId?: string;
+  sessionId?: string;
+  sizeProfile: Record<string, string>;
+  disciplineProfile: JsonRecord;
+  explicitProfile: JsonRecord;
+  purchaseSummary: JsonRecord;
+  behaviorSummary: JsonRecord;
+  confidenceSummary: JsonRecord;
+  lastActiveAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface CustomerProfilePatch {
+  sizeProfile?: Record<string, string>;
+  disciplineProfile?: JsonRecord;
+  explicitProfile?: JsonRecord;
+  purchaseSummary?: JsonRecord;
+  behaviorSummary?: JsonRecord;
+  confidenceSummary?: JsonRecord;
+  lastActiveAt?: Date | null;
+}
+
+export interface CustomerPurchaseSummaryUpdate {
+  orderId?: string;
+  processedAt?: Date;
+  totalSpent?: number;
+  currencyCode?: string;
+  productTitles?: string[];
+}
+
+function asJsonRecord(value: Prisma.JsonValue | null | undefined): JsonRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  return value as JsonRecord;
+}
+
+function asStringRecord(value: Prisma.JsonValue | null | undefined): Record<string, string> {
+  const record = asJsonRecord(value);
+
+  return Object.fromEntries(
+    Object.entries(record).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+}
+
+function serializeJsonRecord(value: JsonRecord): Prisma.InputJsonValue {
+  return value as Prisma.InputJsonValue;
+}
+
+function toCustomerProfileRecord(row: SelectedCustomerProfile): CustomerProfileRecord {
+  return {
+    id: row.id,
+    shop: row.shop,
+    shopifyCustomerId: row.shopifyCustomerId ?? undefined,
+    sessionId: row.sessionId ?? undefined,
+    sizeProfile: asStringRecord(row.sizeProfile),
+    disciplineProfile: asJsonRecord(row.disciplineProfile),
+    explicitProfile: asJsonRecord(row.explicitProfile),
+    purchaseSummary: asJsonRecord(row.purchaseSummary),
+    behaviorSummary: asJsonRecord(row.behaviorSummary),
+    confidenceSummary: asJsonRecord(row.confidenceSummary),
+    lastActiveAt: row.lastActiveAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function mergeCustomerProfilePatch(
+  existing: CustomerProfileRecord | null,
+  patch: CustomerProfilePatch,
+) {
+  const current = existing ?? {
+    sizeProfile: {},
+    disciplineProfile: {},
+    explicitProfile: {},
+    purchaseSummary: {},
+    behaviorSummary: {},
+    confidenceSummary: {},
+    lastActiveAt: null,
+  };
+
+  return {
+    sizeProfile: { ...current.sizeProfile, ...(patch.sizeProfile ?? {}) },
+    disciplineProfile: { ...current.disciplineProfile, ...(patch.disciplineProfile ?? {}) },
+    explicitProfile: { ...current.explicitProfile, ...(patch.explicitProfile ?? {}) },
+    purchaseSummary: { ...current.purchaseSummary, ...(patch.purchaseSummary ?? {}) },
+    behaviorSummary: { ...current.behaviorSummary, ...(patch.behaviorSummary ?? {}) },
+    confidenceSummary: { ...current.confidenceSummary, ...(patch.confidenceSummary ?? {}) },
+    lastActiveAt: patch.lastActiveAt === undefined ? current.lastActiveAt : patch.lastActiveAt,
+  };
+}
+
+function customerProfileSelectArgs() {
+  return { select: customerProfileSelect };
+}
+
+export async function getCustomerProfile(
+  shop: string,
+  shopifyCustomerId?: string,
+  sessionId?: string,
+): Promise<CustomerProfileRecord | null> {
+  if (!shopifyCustomerId && !sessionId) {
+    return null;
+  }
+
+  if (shopifyCustomerId) {
+    const customerRow = await db.customerProfile.findUnique({
+      where: { shop_shopifyCustomerId: { shop, shopifyCustomerId } },
+      ...customerProfileSelectArgs(),
+    });
+
+    if (customerRow) {
+      return toCustomerProfileRecord(customerRow);
+    }
+  }
+
+  if (sessionId) {
+    const sessionRow = await db.customerProfile.findUnique({
+      where: { shop_sessionId: { shop, sessionId } },
+      ...customerProfileSelectArgs(),
+    });
+
+    if (sessionRow) {
+      return toCustomerProfileRecord(sessionRow);
+    }
+  }
+
+  return null;
+}
+
+export async function upsertCustomerProfile(
+  shop: string,
+  patch: CustomerProfilePatch,
+  shopifyCustomerId?: string,
+  sessionId?: string,
+): Promise<CustomerProfileRecord | null> {
+  if (!shopifyCustomerId && !sessionId) {
+    return null;
+  }
+
+  const existing = await getCustomerProfile(shop, shopifyCustomerId, sessionId);
+  const merged = mergeCustomerProfilePatch(existing, patch);
+
+  if (shopifyCustomerId) {
+    const row = await db.customerProfile.upsert({
+      where: { shop_shopifyCustomerId: { shop, shopifyCustomerId } },
+      update: {
+        sizeProfile: serializeJsonRecord(merged.sizeProfile),
+        disciplineProfile: serializeJsonRecord(merged.disciplineProfile),
+        explicitProfile: serializeJsonRecord(merged.explicitProfile),
+        purchaseSummary: serializeJsonRecord(merged.purchaseSummary),
+        behaviorSummary: serializeJsonRecord(merged.behaviorSummary),
+        confidenceSummary: serializeJsonRecord(merged.confidenceSummary),
+        lastActiveAt: merged.lastActiveAt,
+        updatedAt: new Date(),
+      },
+      create: {
+        shop,
+        shopifyCustomerId,
+        sizeProfile: serializeJsonRecord(merged.sizeProfile),
+        disciplineProfile: serializeJsonRecord(merged.disciplineProfile),
+        explicitProfile: serializeJsonRecord(merged.explicitProfile),
+        purchaseSummary: serializeJsonRecord(merged.purchaseSummary),
+        behaviorSummary: serializeJsonRecord(merged.behaviorSummary),
+        confidenceSummary: serializeJsonRecord(merged.confidenceSummary),
+        lastActiveAt: merged.lastActiveAt,
+      },
+      ...customerProfileSelectArgs(),
+    });
+
+    return toCustomerProfileRecord(row);
+  }
+
+  if (!sessionId) {
+    return null;
+  }
+
+  const row = await db.customerProfile.upsert({
+    where: { shop_sessionId: { shop, sessionId } },
+    update: {
+      sizeProfile: serializeJsonRecord(merged.sizeProfile),
+      disciplineProfile: serializeJsonRecord(merged.disciplineProfile),
+      explicitProfile: serializeJsonRecord(merged.explicitProfile),
+      purchaseSummary: serializeJsonRecord(merged.purchaseSummary),
+      behaviorSummary: serializeJsonRecord(merged.behaviorSummary),
+      confidenceSummary: serializeJsonRecord(merged.confidenceSummary),
+      lastActiveAt: merged.lastActiveAt,
+      updatedAt: new Date(),
+    },
+    create: {
+      shop,
+      sessionId,
+      sizeProfile: serializeJsonRecord(merged.sizeProfile),
+      disciplineProfile: serializeJsonRecord(merged.disciplineProfile),
+      explicitProfile: serializeJsonRecord(merged.explicitProfile),
+      purchaseSummary: serializeJsonRecord(merged.purchaseSummary),
+      behaviorSummary: serializeJsonRecord(merged.behaviorSummary),
+      confidenceSummary: serializeJsonRecord(merged.confidenceSummary),
+      lastActiveAt: merged.lastActiveAt,
+    },
+    ...customerProfileSelectArgs(),
+  });
+
+  return toCustomerProfileRecord(row);
+}
+
+export async function mergeAnonymousCustomerProfile(
+  shop: string,
+  shopifyCustomerId: string,
+  anonymousSessionId: string,
+): Promise<CustomerProfileRecord | null> {
+  const [customerProfile, anonymousProfile] = await Promise.all([
+    getCustomerProfile(shop, shopifyCustomerId),
+    getCustomerProfile(shop, undefined, anonymousSessionId),
+  ]);
+
+  if (!anonymousProfile) {
+    return customerProfile;
+  }
+
+  const mergedProfile = await upsertCustomerProfile(
+    shop,
+    {
+      sizeProfile: {
+        ...(customerProfile?.sizeProfile ?? {}),
+        ...anonymousProfile.sizeProfile,
+      },
+      disciplineProfile: {
+        ...(customerProfile?.disciplineProfile ?? {}),
+        ...anonymousProfile.disciplineProfile,
+      },
+      explicitProfile: {
+        ...(customerProfile?.explicitProfile ?? {}),
+        ...anonymousProfile.explicitProfile,
+      },
+      purchaseSummary: {
+        ...(customerProfile?.purchaseSummary ?? {}),
+        ...anonymousProfile.purchaseSummary,
+      },
+      behaviorSummary: {
+        ...(customerProfile?.behaviorSummary ?? {}),
+        ...anonymousProfile.behaviorSummary,
+      },
+      confidenceSummary: {
+        ...(customerProfile?.confidenceSummary ?? {}),
+        ...anonymousProfile.confidenceSummary,
+      },
+      lastActiveAt: anonymousProfile.lastActiveAt ?? customerProfile?.lastActiveAt ?? null,
+    },
+    shopifyCustomerId,
+  );
+
+  await db.customerProfile.delete({
+    where: { shop_sessionId: { shop, sessionId: anonymousSessionId } },
+  }).catch(() => null);
+
+  return mergedProfile;
+}
+
+export async function getRecognizedCustomerProfile(
+  shop: string,
+  shopifyCustomerId: string,
+): Promise<CustomerProfileRecord | null> {
+  return getCustomerProfile(shop, shopifyCustomerId);
+}
+
+export async function getSessionCustomerProfile(
+  shop: string,
+  sessionId: string,
+): Promise<CustomerProfileRecord | null> {
+  return getCustomerProfile(shop, undefined, sessionId);
+}
+
+export async function upsertSessionCustomerProfile(
+  shop: string,
+  sessionId: string,
+  patch: CustomerProfilePatch,
+): Promise<CustomerProfileRecord | null> {
+  return upsertCustomerProfile(shop, patch, undefined, sessionId);
+}
+
+export async function updateCustomerPurchaseSummary(
+  shop: string,
+  shopifyCustomerId: string,
+  update: CustomerPurchaseSummaryUpdate,
+): Promise<CustomerProfileRecord | null> {
+  const existing = await getRecognizedCustomerProfile(shop, shopifyCustomerId);
+  const existingSummary = existing?.purchaseSummary ?? {};
+  const existingTotalOrders = typeof existingSummary.totalOrders === "number"
+    ? existingSummary.totalOrders
+    : 0;
+  const existingTitles = Array.isArray(existingSummary.recentProductTitles)
+    ? existingSummary.recentProductTitles.filter((value): value is string => typeof value === "string")
+    : [];
+  const nextTitles = Array.from(new Set([...(update.productTitles ?? []), ...existingTitles])).slice(0, 8);
+  const existingLifetimeSpend = typeof existingSummary.lifetimeSpend === "number"
+    ? existingSummary.lifetimeSpend
+    : 0;
+
+  return upsertCustomerProfile(
+    shop,
+    {
+      purchaseSummary: {
+        ...existingSummary,
+        totalOrders: existingTotalOrders + 1,
+        ...(update.orderId ? { lastOrderId: update.orderId } : {}),
+        ...(update.processedAt ? { lastOrderAt: update.processedAt.toISOString() } : {}),
+        ...(update.totalSpent !== undefined
+          ? { lifetimeSpend: existingLifetimeSpend + update.totalSpent }
+          : {}),
+        ...(update.currencyCode ? { currencyCode: update.currencyCode } : {}),
+        ...(nextTitles.length > 0 ? { recentProductTitles: nextTitles } : {}),
+      },
+      lastActiveAt: update.processedAt ?? new Date(),
+    },
+    shopifyCustomerId,
+  );
+}
 
 /**
  * Return the sizeProfile JSON map for a customer or anonymous session.
@@ -2521,20 +2867,9 @@ export async function getSizeProfileForSession(
   shopifyCustomerId?: string,
   sessionId?: string,
 ): Promise<Record<string, string>> {
-  if (!shopifyCustomerId && !sessionId) return {};
+  const profile = await getCustomerProfile(shop, shopifyCustomerId, sessionId);
 
-  const row = await db.customerProfile.findFirst({
-    where: {
-      shop,
-      ...(shopifyCustomerId
-        ? { shopifyCustomerId }
-        : { sessionId }),
-    },
-    select: { sizeProfile: true },
-  });
-
-  if (!row) return {};
-  return (row.sizeProfile as Record<string, string>) ?? {};
+  return profile?.sizeProfile ?? {};
 }
 
 /**
@@ -2547,22 +2882,13 @@ export async function updateSizeProfile(
   shopifyCustomerId?: string,
   sessionId?: string,
 ): Promise<void> {
-  if (!shopifyCustomerId && !sessionId) return;
-
-  const existing = await getSizeProfileForSession(shop, shopifyCustomerId, sessionId);
-  const merged = { ...existing, ...updates };
-
-  if (shopifyCustomerId) {
-    await db.customerProfile.upsert({
-      where: { shop_shopifyCustomerId: { shop, shopifyCustomerId } },
-      update: { sizeProfile: merged as Prisma.InputJsonValue, updatedAt: new Date() },
-      create: { shop, shopifyCustomerId, sizeProfile: merged as Prisma.InputJsonValue },
-    });
-  } else if (sessionId) {
-    await db.customerProfile.upsert({
-      where: { shop_sessionId: { shop, sessionId } },
-      update: { sizeProfile: merged as Prisma.InputJsonValue, updatedAt: new Date() },
-      create: { shop, sessionId, sizeProfile: merged as Prisma.InputJsonValue },
-    });
-  }
+  await upsertCustomerProfile(
+    shop,
+    {
+      sizeProfile: updates,
+      lastActiveAt: new Date(),
+    },
+    shopifyCustomerId,
+    sessionId,
+  );
 }

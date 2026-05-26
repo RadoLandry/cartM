@@ -9,6 +9,7 @@ import type {
   SizeConflictRecommendationPayload,
   SizeConflictResult,
 } from "../knowledge-graph/sizing";
+import type { ResolvedCustomerProfile } from "./customer-profile";
 import type { CartVisualItem, StyleCoherenceResult } from "./style-coherence";
 
 export interface KitRecommendationReason {
@@ -114,6 +115,18 @@ export interface ThresholdRecommendationPayload {
     unlockMessage: string;
     wouldOvershoot: boolean;
   }>;
+}
+
+export interface RecommendationPersonalizationPayload {
+  profileKey: string;
+  identityMode: ResolvedCustomerProfile["identityMode"];
+  guidanceMode: ResolvedCustomerProfile["guidanceMode"];
+  recencyState: ResolvedCustomerProfile["recencyState"];
+  confidence: number;
+  purchaseFrequency?: ResolvedCustomerProfile["purchaseFrequency"];
+  knownSizes: Record<string, string>;
+  disciplinePreferences: ResolvedCustomerProfile["disciplinePreferences"];
+  sourceSummary: ResolvedCustomerProfile["sourceSummary"];
 }
 
 function buildShopperSizeConflictSuggestion(
@@ -430,5 +443,21 @@ export function buildVisualRecommendations(
         : {}),
     },
     opportunities,
+  };
+}
+
+export function buildRecommendationPersonalization(
+  profile: ResolvedCustomerProfile,
+): RecommendationPersonalizationPayload {
+  return {
+    profileKey: profile.profileKey,
+    identityMode: profile.identityMode,
+    guidanceMode: profile.guidanceMode,
+    recencyState: profile.recencyState,
+    confidence: profile.confidence,
+    ...(profile.purchaseFrequency ? { purchaseFrequency: profile.purchaseFrequency } : {}),
+    knownSizes: profile.knownSizes,
+    disciplinePreferences: profile.disciplinePreferences,
+    sourceSummary: profile.sourceSummary,
   };
 }

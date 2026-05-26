@@ -300,6 +300,12 @@ model CustomerProfile {
   sessionId          String?
   /// JSON map of categoryTag → known size label, e.g. { "clothing": "M", "gloves_oz": "14oz" }
   sizeProfile        Json     @default("{}")
+  disciplineProfile  Json     @default("{}")
+  explicitProfile    Json     @default("{}")
+  purchaseSummary    Json     @default("{}")
+  behaviorSummary    Json     @default("{}")
+  confidenceSummary  Json     @default("{}")
+  lastActiveAt       DateTime?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 

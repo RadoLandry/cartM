@@ -98,3 +98,143 @@ export const PRODUCT_BY_ID_QUERY = `#graphql
     }
   }
 `;
+
+export interface AdminGraphqlClient {
+  graphql: (
+    query: string,
+    options?: {
+      variables?: Record<string, unknown>;
+    },
+  ) => Promise<Response>;
+}
+
+export interface ShopifyCustomerSummary {
+  id: string;
+  numberOfOrders: string;
+  amountSpent?: {
+    amount: string;
+    currencyCode: string;
+  } | null;
+  tags: string[];
+  lastOrder?: {
+    id: string;
+    processedAt: string;
+  } | null;
+}
+
+export interface ShopifyCustomerOrderSummary {
+  id: string;
+  processedAt: string;
+  totalPriceSet?: {
+    shopMoney?: {
+      amount: string;
+      currencyCode: string;
+    } | null;
+  } | null;
+  lineItems: {
+    nodes: Array<{
+      quantity: number;
+      variant?: {
+        id: string;
+        title: string;
+        product?: {
+          id: string;
+          productType: string;
+          tags: string[];
+        } | null;
+      } | null;
+    }>;
+  };
+}
+
+interface CustomerSummaryGraphqlResponse {
+  data?: {
+    customer?: ShopifyCustomerSummary | null;
+  };
+}
+
+interface CustomerOrderSummaryGraphqlResponse {
+  data?: {
+    customer?: {
+      orders: {
+        nodes: ShopifyCustomerOrderSummary[];
+      };
+    } | null;
+  };
+}
+
+export const CUSTOMER_SUMMARY_QUERY = `#graphql
+  query getCustomerSummary($id: ID!) {
+    customer(id: $id) {
+      id
+      numberOfOrders
+      amountSpent {
+        amount
+        currencyCode
+      }
+      tags
+      lastOrder {
+        id
+        processedAt
+      }
+    }
+  }
+`;
+
+export const CUSTOMER_ORDER_SUMMARY_QUERY = `#graphql
+  query getCustomerOrderSummary($id: ID!, $first: Int!) {
+    customer(id: $id) {
+      orders(first: $first, sortKey: PROCESSED_AT, reverse: true) {
+        nodes {
+          id
+          processedAt
+          totalPriceSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+          }
+          lineItems(first: 20) {
+            nodes {
+              quantity
+              variant {
+                id
+                title
+                product {
+                  id
+                  productType
+                  tags
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+export async function fetchCustomerSummary(
+  admin: AdminGraphqlClient,
+  customerId: string,
+): Promise<ShopifyCustomerSummary | null> {
+  const response = await admin.graphql(CUSTOMER_SUMMARY_QUERY, {
+    variables: { id: customerId },
+  });
+  const payload = await response.json() as CustomerSummaryGraphqlResponse;
+
+  return payload.data?.customer ?? null;
+}
+
+export async function fetchCustomerOrderSummary(
+  admin: AdminGraphqlClient,
+  customerId: string,
+  first = 10,
+): Promise<ShopifyCustomerOrderSummary[]> {
+  const response = await admin.graphql(CUSTOMER_ORDER_SUMMARY_QUERY, {
+    variables: { id: customerId, first },
+  });
+  const payload = await response.json() as CustomerOrderSummaryGraphqlResponse;
+
+  return payload.data?.customer?.orders.nodes ?? [];
+}
