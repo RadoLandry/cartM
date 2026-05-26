@@ -1,6 +1,7 @@
 import type { VisualRecommendationPayload } from "../knowledge-graph/colorways";
 import type { BundleDetectionResult } from "./bundles";
 import type { KitAssessment, KitAssessmentReason } from "../knowledge-graph/kits";
+import type { ThresholdEvaluationResult } from "./threshold";
 import type {
   ShopperSizeConflictCard,
   ShopperSizeConflictSuggestion,
@@ -92,6 +93,27 @@ export interface BundleRecommendationPayload {
 export interface BuildBundleRecommendationsInput {
   detection: BundleDetectionResult;
   completionCandidates?: Record<string, BundleCompletionCandidate[]>;
+}
+
+export interface ThresholdRecommendationPayload {
+  summary: {
+    status: "hidden" | "eligible" | "qualified";
+    thresholdKey?: string;
+    benefitLabel?: string;
+    targetSubtotal?: string;
+    gapAmount?: string;
+    reason?: string;
+  };
+  suggestions: Array<{
+    productId: string;
+    variantId?: string;
+    title: string;
+    priceLabel?: string;
+    rank: number;
+    reason: string;
+    unlockMessage: string;
+    wouldOvershoot: boolean;
+  }>;
 }
 
 function buildShopperSizeConflictSuggestion(
@@ -294,6 +316,55 @@ export function buildBundleRecommendations(
         isCompetingOffer: match.competitionGroupKeys.length > 0,
       } satisfies ShopperBundleOpportunity;
     }),
+  };
+}
+
+export function buildThresholdRecommendations(
+  result: ThresholdEvaluationResult,
+): ThresholdRecommendationPayload {
+  if (result.status === "qualified") {
+    return {
+      summary: {
+        status: "qualified",
+        thresholdKey: result.selectedRule?.key,
+        benefitLabel: result.selectedRule?.benefitLabel,
+        targetSubtotal: result.selectedRule ? `${result.selectedRule.targetSubtotal.toFixed(2)}` : undefined,
+        gapAmount: result.gapAmount !== null ? `${result.gapAmount.toFixed(2)}` : undefined,
+        reason: "The current cart already qualifies for this threshold.",
+      },
+      suggestions: [],
+    };
+  }
+
+  if (result.status !== "eligible" || !result.selectedRule) {
+    return {
+      summary: {
+        status: "hidden",
+        reason: result.suppressionReason,
+      },
+      suggestions: [],
+    };
+  }
+
+  return {
+    summary: {
+      status: "eligible",
+      thresholdKey: result.selectedRule.key,
+      benefitLabel: result.selectedRule.benefitLabel,
+      targetSubtotal: `${result.selectedRule.targetSubtotal.toFixed(2)}`,
+      gapAmount: result.gapAmount !== null ? `${result.gapAmount.toFixed(2)}` : undefined,
+      reason: `Add a relevant item to unlock ${result.selectedRule.benefitLabel.toLowerCase()}.`,
+    },
+    suggestions: result.candidates.map((candidate, index) => ({
+      productId: candidate.productId,
+      variantId: candidate.variantId,
+      title: candidate.title,
+      ...(candidate.unitPrice !== null ? { priceLabel: `$${candidate.unitPrice.toFixed(2)}` } : {}),
+      rank: index + 1,
+      reason: candidate.reasoning[0] ?? "Relevant to the current cart.",
+      unlockMessage: `Helps close the remaining gap toward ${result.selectedRule?.benefitLabel.toLowerCase()}.`,
+      wouldOvershoot: candidate.wouldOvershoot,
+    })),
   };
 }
 

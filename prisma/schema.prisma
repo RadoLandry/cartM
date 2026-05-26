@@ -374,6 +374,29 @@ enum BundleComponentMatchMode {
   CATEGORY_OR_PRODUCT
 }
 
+enum ThresholdRuleSource {
+  AUTO
+  MERCHANT
+  HYBRID
+}
+
+enum ThresholdRuleStatus {
+  ACTIVE
+  DRAFT
+  ARCHIVED
+}
+
+enum ThresholdBenefitType {
+  FREE_SHIPPING
+  DISCOUNT_TIER
+  CUSTOM
+}
+
+enum ThresholdDuplicatePurchasePolicy {
+  DISALLOW
+  ALLOW_REPEATABLE
+}
+
 model ProductVisualProfile {
   id                   String              @id @default(cuid())
   productId            String              @unique
@@ -489,4 +512,30 @@ model BundleRuleComponent {
 
   @@unique([bundleRuleId, componentKey])
   @@index([bundleRuleId, sortOrder])
+}
+
+model ThresholdRule {
+  id                        String                           @id @default(cuid())
+  shop                      String
+  key                       String
+  label                     String
+  description               String?
+  source                    ThresholdRuleSource              @default(MERCHANT)
+  status                    ThresholdRuleStatus              @default(DRAFT)
+  priority                  Int                              @default(100)
+  benefitType               ThresholdBenefitType
+  benefitLabel              String
+  targetSubtotal            Decimal                          @db.Decimal(10, 2)
+  actionableWindow          Decimal                          @db.Decimal(10, 2)
+  allowOvershoot            Boolean                          @default(false)
+  maxSuggestions            Int                              @default(3)
+  supportedDisciplineTags   String[]
+  supportedCategoryTags     String[]
+  excludedShopifyProductIds String[]
+  duplicatePurchasePolicy   ThresholdDuplicatePurchasePolicy @default(DISALLOW)
+  createdAt                 DateTime                         @default(now())
+  updatedAt                 DateTime                         @updatedAt
+
+  @@unique([shop, key])
+  @@index([shop, status, priority])
 }

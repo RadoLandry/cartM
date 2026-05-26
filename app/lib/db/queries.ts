@@ -7,6 +7,10 @@ import {
   ColorCompatibility,
   KitDefinitionSource,
   KitDefinitionStatus,
+  ThresholdBenefitType,
+  ThresholdDuplicatePurchasePolicy,
+  ThresholdRuleSource,
+  ThresholdRuleStatus,
   SyncJobStatus,
   WebhookProcessingStatus,
   RelationshipType,
@@ -28,6 +32,11 @@ import type {
   BundleRuleRecord,
 } from "../knowledge-graph/bundles";
 import { toBundleProjection } from "../knowledge-graph/bundles";
+import type {
+  CartThresholdItem,
+  ThresholdCandidateProduct,
+  ThresholdRuleRecord,
+} from "../knowledge-graph/thresholds";
 
 export async function createSyncJob(shop: string) {
   return await db.syncJob.create({
@@ -1386,6 +1395,50 @@ function mapBundleRuleRecord(rule: BundleRuleWithComponents): BundleRuleRecord {
   };
 }
 
+type ThresholdRuleRow = Prisma.ThresholdRuleGetPayload<{
+  select: {
+    id: true;
+    key: true;
+    label: true;
+    description: true;
+    source: true;
+    status: true;
+    priority: true;
+    benefitType: true;
+    benefitLabel: true;
+    targetSubtotal: true;
+    actionableWindow: true;
+    allowOvershoot: true;
+    maxSuggestions: true;
+    supportedDisciplineTags: true;
+    supportedCategoryTags: true;
+    excludedShopifyProductIds: true;
+    duplicatePurchasePolicy: true;
+  };
+}>;
+
+function mapThresholdRuleRecord(rule: ThresholdRuleRow): ThresholdRuleRecord {
+  return {
+    id: rule.id,
+    key: rule.key,
+    label: rule.label,
+    description: rule.description,
+    source: rule.source,
+    status: rule.status,
+    priority: rule.priority,
+    benefitType: rule.benefitType,
+    benefitLabel: rule.benefitLabel,
+    targetSubtotal: Number(rule.targetSubtotal),
+    actionableWindow: Number(rule.actionableWindow),
+    allowOvershoot: rule.allowOvershoot,
+    maxSuggestions: rule.maxSuggestions,
+    supportedDisciplineTags: rule.supportedDisciplineTags,
+    supportedCategoryTags: rule.supportedCategoryTags,
+    excludedShopifyProductIds: rule.excludedShopifyProductIds,
+    duplicatePurchasePolicy: rule.duplicatePurchasePolicy,
+  };
+}
+
 export interface UpsertBundleRuleInput {
   id?: string;
   shop: string;
@@ -1793,6 +1846,371 @@ export async function getDistinctProductCategoryTagsForShop(shop: string): Promi
   }
 
   return Array.from(tags).sort();
+}
+
+export interface UpsertThresholdRuleInput {
+  id?: string;
+  shop: string;
+  key: string;
+  label: string;
+  description?: string | null;
+  source?: ThresholdRuleSource;
+  status?: ThresholdRuleStatus;
+  priority?: number;
+  benefitType: ThresholdBenefitType;
+  benefitLabel: string;
+  targetSubtotal: Prisma.Decimal | number | string;
+  actionableWindow: Prisma.Decimal | number | string;
+  allowOvershoot?: boolean;
+  maxSuggestions?: number;
+  supportedDisciplineTags?: string[];
+  supportedCategoryTags?: string[];
+  excludedShopifyProductIds?: string[];
+  duplicatePurchasePolicy?: ThresholdDuplicatePurchasePolicy;
+}
+
+export async function upsertThresholdRule(input: UpsertThresholdRuleInput) {
+  const {
+    id,
+    shop,
+    key,
+    label,
+    description = null,
+    source = ThresholdRuleSource.MERCHANT,
+    status = ThresholdRuleStatus.DRAFT,
+    priority = 100,
+    benefitType,
+    benefitLabel,
+    targetSubtotal,
+    actionableWindow,
+    allowOvershoot = false,
+    maxSuggestions = 3,
+    supportedDisciplineTags = [],
+    supportedCategoryTags = [],
+    excludedShopifyProductIds = [],
+    duplicatePurchasePolicy = ThresholdDuplicatePurchasePolicy.DISALLOW,
+  } = input;
+
+  if (id) {
+    return await db.thresholdRule.update({
+      where: { id },
+      data: {
+        key,
+        label,
+        description,
+        source,
+        status,
+        priority,
+        benefitType,
+        benefitLabel,
+        targetSubtotal,
+        actionableWindow,
+        allowOvershoot,
+        maxSuggestions,
+        supportedDisciplineTags,
+        supportedCategoryTags,
+        excludedShopifyProductIds,
+        duplicatePurchasePolicy,
+        updatedAt: new Date(),
+      },
+    });
+  }
+
+  return await db.thresholdRule.upsert({
+    where: {
+      shop_key: {
+        shop,
+        key,
+      },
+    },
+    update: {
+      label,
+      description,
+      source,
+      status,
+      priority,
+      benefitType,
+      benefitLabel,
+      targetSubtotal,
+      actionableWindow,
+      allowOvershoot,
+      maxSuggestions,
+      supportedDisciplineTags,
+      supportedCategoryTags,
+      excludedShopifyProductIds,
+      duplicatePurchasePolicy,
+      updatedAt: new Date(),
+    },
+    create: {
+      shop,
+      key,
+      label,
+      description,
+      source,
+      status,
+      priority,
+      benefitType,
+      benefitLabel,
+      targetSubtotal,
+      actionableWindow,
+      allowOvershoot,
+      maxSuggestions,
+      supportedDisciplineTags,
+      supportedCategoryTags,
+      excludedShopifyProductIds,
+      duplicatePurchasePolicy,
+    },
+  });
+}
+
+export async function archiveThresholdRule(thresholdRuleId: string) {
+  return await db.thresholdRule.update({
+    where: { id: thresholdRuleId },
+    data: {
+      status: ThresholdRuleStatus.ARCHIVED,
+      updatedAt: new Date(),
+    },
+  });
+}
+
+export async function getThresholdRuleById(thresholdRuleId: string): Promise<ThresholdRuleRecord | null> {
+  const rule = await db.thresholdRule.findUnique({
+    where: { id: thresholdRuleId },
+    select: {
+      id: true,
+      key: true,
+      label: true,
+      description: true,
+      source: true,
+      status: true,
+      priority: true,
+      benefitType: true,
+      benefitLabel: true,
+      targetSubtotal: true,
+      actionableWindow: true,
+      allowOvershoot: true,
+      maxSuggestions: true,
+      supportedDisciplineTags: true,
+      supportedCategoryTags: true,
+      excludedShopifyProductIds: true,
+      duplicatePurchasePolicy: true,
+    },
+  });
+
+  return rule ? mapThresholdRuleRecord(rule) : null;
+}
+
+export async function listThresholdRulesForShop(shop: string, take = 50): Promise<ThresholdRuleRecord[]> {
+  const rules = await db.thresholdRule.findMany({
+    where: { shop },
+    orderBy: [{ status: "asc" }, { priority: "asc" }, { label: "asc" }],
+    take,
+    select: {
+      id: true,
+      key: true,
+      label: true,
+      description: true,
+      source: true,
+      status: true,
+      priority: true,
+      benefitType: true,
+      benefitLabel: true,
+      targetSubtotal: true,
+      actionableWindow: true,
+      allowOvershoot: true,
+      maxSuggestions: true,
+      supportedDisciplineTags: true,
+      supportedCategoryTags: true,
+      excludedShopifyProductIds: true,
+      duplicatePurchasePolicy: true,
+    },
+  });
+
+  return rules.map(mapThresholdRuleRecord);
+}
+
+export async function listActiveThresholdRules(shop: string): Promise<ThresholdRuleRecord[]> {
+  const rules = await db.thresholdRule.findMany({
+    where: {
+      shop,
+      status: ThresholdRuleStatus.ACTIVE,
+    },
+    orderBy: [{ priority: "asc" }, { label: "asc" }],
+    select: {
+      id: true,
+      key: true,
+      label: true,
+      description: true,
+      source: true,
+      status: true,
+      priority: true,
+      benefitType: true,
+      benefitLabel: true,
+      targetSubtotal: true,
+      actionableWindow: true,
+      allowOvershoot: true,
+      maxSuggestions: true,
+      supportedDisciplineTags: true,
+      supportedCategoryTags: true,
+      excludedShopifyProductIds: true,
+      duplicatePurchasePolicy: true,
+    },
+  });
+
+  return rules.map(mapThresholdRuleRecord);
+}
+
+export async function listProductsForThresholdEditor(shop: string, take = 200) {
+  return await db.product.findMany({
+    where: { shop },
+    select: {
+      id: true,
+      shopifyProductId: true,
+      title: true,
+      disciplineTags: true,
+      categoryTags: true,
+      status: true,
+      variants: {
+        select: {
+          id: true,
+          shopifyVariantId: true,
+          title: true,
+          price: true,
+          inventoryQuantity: true,
+        },
+        orderBy: [{ title: "asc" }, { createdAt: "asc" }],
+      },
+    },
+    orderBy: { updatedAt: "desc" },
+    take,
+  });
+}
+
+export async function listThresholdCandidateProducts(
+  shop: string,
+  rule: Pick<
+    ThresholdRuleRecord,
+    "supportedCategoryTags" | "supportedDisciplineTags" | "excludedShopifyProductIds"
+  >,
+  take = 50,
+): Promise<ThresholdCandidateProduct[]> {
+  const andFilters: Prisma.ProductWhereInput[] = [];
+
+  if (rule.supportedCategoryTags.length > 0) {
+    andFilters.push({ categoryTags: { hasSome: rule.supportedCategoryTags } });
+  }
+
+  if (rule.supportedDisciplineTags.length > 0) {
+    andFilters.push({ disciplineTags: { hasSome: rule.supportedDisciplineTags } });
+  }
+
+  if (rule.excludedShopifyProductIds.length > 0) {
+    andFilters.push({ shopifyProductId: { notIn: rule.excludedShopifyProductIds } });
+  }
+
+  const rows = await db.product.findMany({
+    where: {
+      shop,
+      status: "ACTIVE",
+      ...(andFilters.length > 0 ? { AND: andFilters } : {}),
+    },
+    select: {
+      id: true,
+      shopifyProductId: true,
+      title: true,
+      categoryTags: true,
+      disciplineTags: true,
+      variants: {
+        select: {
+          id: true,
+          shopifyVariantId: true,
+          title: true,
+          price: true,
+          inventoryQuantity: true,
+        },
+        orderBy: [{ title: "asc" }, { createdAt: "asc" }],
+      },
+    },
+    orderBy: { updatedAt: "desc" },
+    take,
+  });
+
+  return rows.map((row) => ({
+    productId: row.id,
+    shopifyProductId: row.shopifyProductId,
+    title: row.title,
+    categoryTags: row.categoryTags,
+    disciplineTags: row.disciplineTags,
+    variants: row.variants.map((variant) => ({
+      id: variant.id,
+      shopifyVariantId: variant.shopifyVariantId,
+      title: variant.title,
+      price: variant.price !== null ? Number(variant.price) : null,
+      inventoryQuantity: variant.inventoryQuantity,
+    })),
+  }));
+}
+
+export interface ThresholdPreviewCartFixtureLine {
+  productId: string;
+  variantId: string;
+  quantity: number;
+}
+
+export async function listThresholdPreviewCartItems(
+  shop: string,
+  fixture: ThresholdPreviewCartFixtureLine[],
+): Promise<CartThresholdItem[]> {
+  if (fixture.length === 0) {
+    return [];
+  }
+
+  const products = await db.product.findMany({
+    where: {
+      shop,
+      id: { in: fixture.map((line) => line.productId) },
+    },
+    select: {
+      id: true,
+      shopifyProductId: true,
+      title: true,
+      categoryTags: true,
+      disciplineTags: true,
+      variants: {
+        select: {
+          id: true,
+          shopifyVariantId: true,
+          title: true,
+          price: true,
+          inventoryQuantity: true,
+        },
+      },
+    },
+  });
+
+  const productsById = new Map(products.map((product) => [product.id, product]));
+
+  return fixture.flatMap((line) => {
+    const product = productsById.get(line.productId);
+    const variant = product?.variants.find((candidate) => candidate.id === line.variantId);
+
+    if (!product || !variant) {
+      return [];
+    }
+
+    return [{
+      productId: product.id,
+      shopifyProductId: product.shopifyProductId,
+      variantId: variant.id,
+      shopifyVariantId: variant.shopifyVariantId,
+      title: product.title,
+      quantity: line.quantity,
+      availableForSale: (variant.inventoryQuantity ?? 1) > 0,
+      categoryTags: product.categoryTags,
+      disciplineTags: product.disciplineTags,
+      unitPrice: variant.price !== null ? Number(variant.price) : null,
+    }];
+  });
 }
 
 export async function listProductsForKitEditor(shop: string, take = 200) {
