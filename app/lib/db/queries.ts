@@ -1,5 +1,9 @@
 import {
   Prisma,
+  BundleComponentMatchMode,
+  BundleDiscountType,
+  BundleRuleSource,
+  BundleRuleStatus,
   ColorCompatibility,
   KitDefinitionSource,
   KitDefinitionStatus,
@@ -17,6 +21,13 @@ import {
   VisualReviewStatus,
 } from "@prisma/client";
 import db from "../../db.server";
+import type {
+  BundleCompletionCandidateProduct,
+  BundleProjectionRecord,
+  BundleRuleComponentDefinition,
+  BundleRuleRecord,
+} from "../knowledge-graph/bundles";
+import { toBundleProjection } from "../knowledge-graph/bundles";
 
 export async function createSyncJob(shop: string) {
   return await db.syncJob.create({
@@ -1333,6 +1344,455 @@ export async function listActiveKitDefinitions(shop: string, disciplineTags?: st
       },
     },
   });
+}
+
+type BundleRuleWithComponents = Prisma.BundleRuleGetPayload<{
+  include: {
+    components: {
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }];
+    };
+  };
+}>;
+
+function formatDecimal(value: Prisma.Decimal): string {
+  return value.toFixed(2);
+}
+
+function mapBundleRuleRecord(rule: BundleRuleWithComponents): BundleRuleRecord {
+  return {
+    id: rule.id,
+    key: rule.key,
+    label: rule.label,
+    description: rule.description,
+    source: rule.source,
+    status: rule.status,
+    priority: rule.priority,
+    completionThreshold: rule.completionThreshold,
+    discountType: rule.discountType,
+    discountValue: formatDecimal(rule.discountValue),
+    components: rule.components.map((component) => ({
+      id: component.id,
+      componentKey: component.componentKey,
+      label: component.label,
+      description: component.description,
+      isRequired: component.isRequired,
+      sortOrder: component.sortOrder,
+      minQuantity: component.minQuantity,
+      matchMode: component.matchMode,
+      acceptedCategoryTags: component.acceptedCategoryTags,
+      acceptedShopifyProductIds: component.acceptedShopifyProductIds,
+      acceptedShopifyVariantIds: component.acceptedShopifyVariantIds,
+    })),
+  };
+}
+
+export interface UpsertBundleRuleInput {
+  id?: string;
+  shop: string;
+  key: string;
+  label: string;
+  description?: string | null;
+  source?: BundleRuleSource;
+  status?: BundleRuleStatus;
+  priority?: number;
+  completionThreshold?: number;
+  discountType: BundleDiscountType;
+  discountValue: Prisma.Decimal | number | string;
+}
+
+export interface UpsertBundleRuleComponentInput {
+  id?: string;
+  bundleRuleId: string;
+  componentKey: string;
+  label: string;
+  description?: string | null;
+  isRequired?: boolean;
+  sortOrder?: number;
+  matchMode?: BundleComponentMatchMode;
+  acceptedCategoryTags?: string[];
+  acceptedShopifyProductIds?: string[];
+  acceptedShopifyVariantIds?: string[];
+  minQuantity?: number;
+}
+
+export async function upsertBundleRule(input: UpsertBundleRuleInput) {
+  const {
+    id,
+    shop,
+    key,
+    label,
+    description = null,
+    source = BundleRuleSource.MERCHANT,
+    status = BundleRuleStatus.DRAFT,
+    priority = 100,
+    completionThreshold = 0.8,
+    discountType,
+    discountValue,
+  } = input;
+
+  if (id) {
+    return await db.bundleRule.update({
+      where: { id },
+      data: {
+        key,
+        label,
+        description,
+        source,
+        status,
+        priority,
+        completionThreshold,
+        discountType,
+        discountValue,
+        updatedAt: new Date(),
+      },
+      include: {
+        components: {
+          orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+        },
+      },
+    });
+  }
+
+  return await db.bundleRule.upsert({
+    where: {
+      shop_key: {
+        shop,
+        key,
+      },
+    },
+    update: {
+      label,
+      description,
+      source,
+      status,
+      priority,
+      completionThreshold,
+      discountType,
+      discountValue,
+      updatedAt: new Date(),
+    },
+    create: {
+      shop,
+      key,
+      label,
+      description,
+      source,
+      status,
+      priority,
+      completionThreshold,
+      discountType,
+      discountValue,
+    },
+    include: {
+      components: {
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+      },
+    },
+  });
+}
+
+export async function upsertBundleRuleComponent(input: UpsertBundleRuleComponentInput) {
+  const {
+    id,
+    bundleRuleId,
+    componentKey,
+    label,
+    description = null,
+    isRequired = true,
+    sortOrder = 100,
+    matchMode = BundleComponentMatchMode.CATEGORY_OR_PRODUCT,
+    acceptedCategoryTags = [],
+    acceptedShopifyProductIds = [],
+    acceptedShopifyVariantIds = [],
+    minQuantity = 1,
+  } = input;
+
+  if (id) {
+    return await db.bundleRuleComponent.update({
+      where: { id },
+      data: {
+        componentKey,
+        label,
+        description,
+        isRequired,
+        sortOrder,
+        matchMode,
+        acceptedCategoryTags,
+        acceptedShopifyProductIds,
+        acceptedShopifyVariantIds,
+        minQuantity,
+        updatedAt: new Date(),
+      },
+    });
+  }
+
+  return await db.bundleRuleComponent.upsert({
+    where: {
+      bundleRuleId_componentKey: {
+        bundleRuleId,
+        componentKey,
+      },
+    },
+    update: {
+      label,
+      description,
+      isRequired,
+      sortOrder,
+      matchMode,
+      acceptedCategoryTags,
+      acceptedShopifyProductIds,
+      acceptedShopifyVariantIds,
+      minQuantity,
+      updatedAt: new Date(),
+    },
+    create: {
+      bundleRuleId,
+      componentKey,
+      label,
+      description,
+      isRequired,
+      sortOrder,
+      matchMode,
+      acceptedCategoryTags,
+      acceptedShopifyProductIds,
+      acceptedShopifyVariantIds,
+      minQuantity,
+    },
+  });
+}
+
+export async function deleteBundleRuleComponent(componentId: string) {
+  return await db.bundleRuleComponent.delete({
+    where: { id: componentId },
+  });
+}
+
+export async function archiveBundleRule(bundleRuleId: string) {
+  return await db.bundleRule.update({
+    where: { id: bundleRuleId },
+    data: {
+      status: BundleRuleStatus.ARCHIVED,
+      updatedAt: new Date(),
+    },
+    include: {
+      components: {
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+      },
+    },
+  });
+}
+
+export async function getBundleRuleById(bundleRuleId: string): Promise<BundleRuleRecord | null> {
+  const rule = await db.bundleRule.findUnique({
+    where: { id: bundleRuleId },
+    include: {
+      components: {
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+      },
+    },
+  });
+
+  return rule ? mapBundleRuleRecord(rule) : null;
+}
+
+export async function listBundleRulesForShop(shop: string, take = 50): Promise<BundleRuleRecord[]> {
+  const rules = await db.bundleRule.findMany({
+    where: { shop },
+    orderBy: [{ status: "asc" }, { priority: "asc" }, { label: "asc" }],
+    take,
+    include: {
+      components: {
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+      },
+    },
+  });
+
+  return rules.map(mapBundleRuleRecord);
+}
+
+export async function listActiveBundleRules(shop: string): Promise<BundleRuleRecord[]> {
+  const rules = await db.bundleRule.findMany({
+    where: {
+      shop,
+      status: BundleRuleStatus.ACTIVE,
+    },
+    orderBy: [{ priority: "asc" }, { label: "asc" }],
+    include: {
+      components: {
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+      },
+    },
+  });
+
+  return rules.map(mapBundleRuleRecord);
+}
+
+export async function listActiveBundleRuleProjections(
+  shop: string,
+): Promise<BundleProjectionRecord[]> {
+  const rules = await listActiveBundleRules(shop);
+  return rules.map((rule) => toBundleProjection(rule));
+}
+
+export async function listProductsForBundleEditor(shop: string, take = 200) {
+  return await db.product.findMany({
+    where: { shop },
+    select: {
+      id: true,
+      shopifyProductId: true,
+      title: true,
+      disciplineTags: true,
+      categoryTags: true,
+      status: true,
+      variants: {
+        select: {
+          id: true,
+          shopifyVariantId: true,
+          title: true,
+          inventoryQuantity: true,
+        },
+        orderBy: [{ title: "asc" }, { createdAt: "asc" }],
+      },
+    },
+    orderBy: { updatedAt: "desc" },
+    take,
+  });
+}
+
+export async function listBundleCompletionCandidateProducts(
+  shop: string,
+  component: Pick<
+    BundleRuleComponentDefinition,
+    "acceptedCategoryTags" | "acceptedShopifyProductIds" | "acceptedShopifyVariantIds"
+  >,
+  take = 25,
+): Promise<BundleCompletionCandidateProduct[]> {
+  const filters: Prisma.ProductWhereInput[] = [];
+
+  if (component.acceptedCategoryTags.length > 0) {
+    filters.push({ categoryTags: { hasSome: component.acceptedCategoryTags } });
+  }
+
+  if (component.acceptedShopifyProductIds.length > 0) {
+    filters.push({ shopifyProductId: { in: component.acceptedShopifyProductIds } });
+  }
+
+  if (component.acceptedShopifyVariantIds.length > 0) {
+    filters.push({ variants: { some: { shopifyVariantId: { in: component.acceptedShopifyVariantIds } } } });
+  }
+
+  if (filters.length === 0) {
+    return [];
+  }
+
+  const rows = await db.product.findMany({
+    where: {
+      shop,
+      status: "ACTIVE",
+      OR: filters,
+    },
+    select: {
+      id: true,
+      shopifyProductId: true,
+      title: true,
+      categoryTags: true,
+      variants: {
+        select: {
+          id: true,
+          shopifyVariantId: true,
+          title: true,
+          inventoryQuantity: true,
+        },
+        orderBy: [{ title: "asc" }, { createdAt: "asc" }],
+      },
+    },
+    orderBy: { updatedAt: "desc" },
+    take,
+  });
+
+  return rows.map((row) => ({
+    productId: row.id,
+    shopifyProductId: row.shopifyProductId,
+    title: row.title,
+    categoryTags: row.categoryTags,
+    variants: row.variants,
+  }));
+}
+
+export interface BundlePreviewCartFixtureLine {
+  productId: string;
+  variantId: string;
+  quantity: number;
+}
+
+export async function listBundlePreviewCartItems(
+  shop: string,
+  fixture: BundlePreviewCartFixtureLine[],
+) {
+  if (fixture.length === 0) {
+    return [];
+  }
+
+  const products = await db.product.findMany({
+    where: {
+      shop,
+      id: { in: fixture.map((line) => line.productId) },
+    },
+    select: {
+      id: true,
+      shopifyProductId: true,
+      title: true,
+      categoryTags: true,
+      disciplineTags: true,
+      variants: {
+        select: {
+          id: true,
+          shopifyVariantId: true,
+          title: true,
+          inventoryQuantity: true,
+        },
+      },
+    },
+  });
+
+  const productsById = new Map(products.map((product) => [product.id, product]));
+
+  return fixture.flatMap((line) => {
+    const product = productsById.get(line.productId);
+    const variant = product?.variants.find((candidate) => candidate.id === line.variantId);
+
+    if (!product || !variant) {
+      return [];
+    }
+
+    return [{
+      productId: product.id,
+      shopifyProductId: product.shopifyProductId,
+      variantId: variant.id,
+      shopifyVariantId: variant.shopifyVariantId,
+      title: product.title,
+      quantity: line.quantity,
+      availableForSale: (variant.inventoryQuantity ?? 1) > 0,
+      categoryTags: product.categoryTags,
+      disciplineTags: product.disciplineTags,
+    }];
+  });
+}
+
+export async function getDistinctProductCategoryTagsForShop(shop: string): Promise<string[]> {
+  const rows = await db.product.findMany({
+    where: { shop },
+    select: { categoryTags: true },
+  });
+
+  const tags = new Set<string>();
+  for (const row of rows) {
+    for (const tag of row.categoryTags) {
+      tags.add(tag);
+    }
+  }
+
+  return Array.from(tags).sort();
 }
 
 export async function listProductsForKitEditor(shop: string, take = 200) {

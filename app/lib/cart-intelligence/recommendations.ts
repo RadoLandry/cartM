@@ -1,4 +1,5 @@
 import type { VisualRecommendationPayload } from "../knowledge-graph/colorways";
+import type { BundleDetectionResult } from "./bundles";
 import type { KitAssessment, KitAssessmentReason } from "../knowledge-graph/kits";
 import type {
   ShopperSizeConflictCard,
@@ -36,6 +37,61 @@ export interface KitRecommendationPayload {
   status: "partial" | "complete";
   missingRecommendations: MissingKitRecommendation[];
   summaryReasons: KitRecommendationReason[];
+}
+
+export interface BundleCompletionCandidate {
+  componentKey: string;
+  productId: string;
+  variantId?: string;
+  title: string;
+  availableForSale: boolean;
+  confidence: number;
+  reason: string;
+}
+
+export interface ShopperBundleCompletionAction {
+  componentKey: string;
+  title: string;
+  remainingQuantity: number;
+  productId?: string;
+  variantId?: string;
+  availability: "available" | "unavailable" | "unknown";
+  confidence: number;
+  reason: string;
+}
+
+export interface ShopperBundleOpportunity {
+  bundleKey: string;
+  label: string;
+  status: "qualified" | "nearly_complete";
+  priority: number;
+  message: string;
+  savings: {
+    label: string;
+    discountType: "PERCENTAGE" | "FIXED";
+    discountValue: string;
+  };
+  completionProgress: {
+    matchedRequiredCount: number;
+    totalRequiredCount: number;
+    coverageRatio: number;
+  };
+  completionActions: ShopperBundleCompletionAction[];
+  isCompetingOffer: boolean;
+}
+
+export interface BundleRecommendationPayload {
+  summary: {
+    qualifiedCount: number;
+    nearCompleteCount: number;
+    primaryBundleKey?: string;
+  };
+  opportunities: ShopperBundleOpportunity[];
+}
+
+export interface BuildBundleRecommendationsInput {
+  detection: BundleDetectionResult;
+  completionCandidates?: Record<string, BundleCompletionCandidate[]>;
 }
 
 function buildShopperSizeConflictSuggestion(
@@ -148,6 +204,97 @@ export function buildKitRecommendations(assessments: KitAssessment[]): KitRecomm
         })),
       summaryReasons: assessment.reasons.map(toKitRecommendationReason),
     }));
+}
+
+function formatBundleSavingsLabel(discountType: "PERCENTAGE" | "FIXED", discountValue: string) {
+  return discountType === "PERCENTAGE"
+    ? `Save ${discountValue}%`
+    : `Save $${discountValue}`;
+}
+
+function buildBundleCompletionActions(
+  opportunity: BundleDetectionResult["matches"][number],
+  completionCandidates: Record<string, BundleCompletionCandidate[]>,
+): ShopperBundleCompletionAction[] {
+  if (opportunity.status !== "nearly_complete") {
+    return [];
+  }
+
+  return opportunity.missingComponents
+    .filter((component) => component.isRequired)
+    .map((component) => {
+      const candidate = completionCandidates[component.componentKey]?.[0];
+
+      return {
+        componentKey: component.componentKey,
+        title: candidate?.title ?? component.label,
+        remainingQuantity: component.remainingQuantity,
+        productId: candidate?.productId,
+        variantId: candidate?.variantId,
+        availability: candidate
+          ? candidate.availableForSale
+            ? "available"
+            : "unavailable"
+          : "unknown",
+        confidence: candidate?.confidence ?? 0.5,
+        reason: candidate?.reason ?? `${component.label} is still needed to qualify this bundle.`,
+      };
+    });
+}
+
+export function buildBundleRecommendations(
+  input: BuildBundleRecommendationsInput,
+): BundleRecommendationPayload {
+  const surfacedMatches = [...input.detection.matches]
+    .filter((match): match is typeof match & { status: "qualified" | "nearly_complete" } => (
+      match.status === "qualified" || match.status === "nearly_complete"
+    ))
+    .sort((left, right) => left.priority - right.priority || left.bundleKey.localeCompare(right.bundleKey));
+  const completionCandidates = input.completionCandidates ?? {};
+
+  return {
+    summary: {
+      qualifiedCount: surfacedMatches.filter((match) => match.status === "qualified").length,
+      nearCompleteCount: surfacedMatches.filter((match) => match.status === "nearly_complete").length,
+      ...(surfacedMatches[0] ? { primaryBundleKey: surfacedMatches[0].bundleKey } : {}),
+    },
+    opportunities: surfacedMatches.map((match) => {
+      const requiredMissingKeys = new Set(
+        match.missingComponents
+          .filter((component) => component.isRequired)
+          .map((component) => component.componentKey),
+      );
+      const totalRequiredCount = match.matchedComponents.filter(
+        (component) => component.requiredQuantity > 0,
+      ).length - match.missingComponents.filter((component) => !component.isRequired).length;
+      const matchedRequiredCount = match.matchedComponents.filter(
+        (component) => component.matchedQuantity >= component.requiredQuantity
+          && !requiredMissingKeys.has(component.componentKey),
+      ).length;
+
+      return {
+        bundleKey: match.bundleKey,
+        label: match.label,
+        status: match.status,
+        priority: match.priority,
+        message: match.status === "qualified"
+          ? `${match.label} is unlocked in the current cart.`
+          : `${match.label} is nearly complete and can be finished with a few additions.`,
+        savings: {
+          label: formatBundleSavingsLabel(match.savings.discountType, match.savings.discountValue),
+          discountType: match.savings.discountType,
+          discountValue: match.savings.discountValue,
+        },
+        completionProgress: {
+          matchedRequiredCount,
+          totalRequiredCount,
+          coverageRatio: match.coverageRatio,
+        },
+        completionActions: buildBundleCompletionActions(match, completionCandidates),
+        isCompetingOffer: match.competitionGroupKeys.length > 0,
+      } satisfies ShopperBundleOpportunity;
+    }),
+  };
 }
 
 export function buildVisualRecommendations(

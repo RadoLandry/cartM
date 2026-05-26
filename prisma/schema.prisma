@@ -350,6 +350,30 @@ enum RequirementMatchMode {
   PRODUCT_OR_ALTERNATIVE
 }
 
+enum BundleRuleSource {
+  AUTO
+  MERCHANT
+  HYBRID
+}
+
+enum BundleRuleStatus {
+  ACTIVE
+  DRAFT
+  ARCHIVED
+}
+
+enum BundleDiscountType {
+  PERCENTAGE
+  FIXED
+}
+
+enum BundleComponentMatchMode {
+  CATEGORY
+  PRODUCT
+  VARIANT
+  CATEGORY_OR_PRODUCT
+}
+
 model ProductVisualProfile {
   id                   String              @id @default(cuid())
   productId            String              @unique
@@ -424,4 +448,45 @@ model KitRequirement {
 
   @@unique([kitDefinitionId, requirementKey])
   @@index([kitDefinitionId, priority])
+}
+
+model BundleRule {
+  id                  String             @id @default(cuid())
+  shop                String
+  key                 String
+  label               String
+  description         String?
+  source              BundleRuleSource   @default(MERCHANT)
+  status              BundleRuleStatus   @default(DRAFT)
+  priority            Int                @default(100)
+  completionThreshold Float              @default(0.8)
+  discountType        BundleDiscountType
+  discountValue       Decimal            @db.Decimal(10, 2)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  components          BundleRuleComponent[]
+
+  @@unique([shop, key])
+  @@index([shop, status, priority])
+}
+
+model BundleRuleComponent {
+  id                        String                   @id @default(cuid())
+  bundleRuleId              String
+  componentKey              String
+  label                     String
+  description               String?
+  isRequired                Boolean                  @default(true)
+  sortOrder                 Int                      @default(100)
+  matchMode                 BundleComponentMatchMode @default(CATEGORY_OR_PRODUCT)
+  acceptedCategoryTags      String[]
+  acceptedShopifyProductIds String[]
+  acceptedShopifyVariantIds String[]
+  minQuantity               Int                      @default(1)
+  createdAt                 DateTime                 @default(now())
+  updatedAt                 DateTime                 @updatedAt
+  bundleRule                BundleRule               @relation(fields: [bundleRuleId], references: [id], onDelete: Cascade)
+
+  @@unique([bundleRuleId, componentKey])
+  @@index([bundleRuleId, sortOrder])
 }
