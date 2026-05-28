@@ -1,0 +1,81 @@
+<div
+  class="cartmind-chat-block"
+  data-cartmind-chat-root
+  data-config-id="cartmind-chat-config-{{ block.id }}"
+  {{ block.shopify_attributes }}
+></div>
+
+<script type="application/json" id="cartmind-chat-config-{{ block.id }}">
+  {
+    "shop": {{ shop.permanent_domain | json }},
+    "surface": {{ block.settings.surface | json }},
+    "appBaseUrl": {{ block.settings.app_base_url | json }},
+    "bootstrapUrl": {{ block.settings.bootstrap_path | json }},
+    "launcherLabel": {{ block.settings.launcher_label | json }},
+    "assistantGreeting": {{ block.settings.assistant_greeting | json }},
+    "panelTitle": {{ block.settings.panel_title | json }},
+    "cart": {
+      "cartId": {{ cart.id | json }},
+      "currencyCode": {{ cart.currency.iso_code | default: shop.currency | json }},
+      "items": [
+        {% for item in cart.items %}
+          {
+            "productId": {{ item.product.id | json }},
+            "variantId": {{ item.variant.id | json }},
+            "quantity": {{ item.quantity | json }}
+          }{% unless forloop.last %},{% endunless %}
+        {% endfor %}
+      ]
+    }
+  }
+</script>
+
+{% schema %}
+{
+  "name": "CartMind chat",
+  "target": "section",
+  "javascript": "cartmind-chat.js",
+  "settings": [
+    {
+      "type": "select",
+      "id": "surface",
+      "label": "Cart surface",
+      "default": "cart_drawer",
+      "options": [
+        { "value": "cart_drawer", "label": "Cart drawer" },
+        { "value": "cart_page", "label": "Cart page" }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "app_base_url",
+      "label": "App base URL",
+      "default": ""
+    },
+    {
+      "type": "text",
+      "id": "bootstrap_path",
+      "label": "Bootstrap app proxy path",
+      "default": "/apps/cartmind-chat/chat-bootstrap"
+    },
+    {
+      "type": "text",
+      "id": "launcher_label",
+      "label": "Launcher label",
+      "default": "Ask CartMind"
+    },
+    {
+      "type": "text",
+      "id": "panel_title",
+      "label": "Panel title",
+      "default": "CartMind chat"
+    },
+    {
+      "type": "textarea",
+      "id": "assistant_greeting",
+      "label": "Greeting",
+      "default": "Ask about fit, comparisons, or what works well with the items already in your cart."
+    }
+  ]
+}
+{% endschema %}

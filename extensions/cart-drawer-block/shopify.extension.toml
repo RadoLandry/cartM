@@ -1,0 +1,7 @@
+api_version = "2025-04"
+uid = "7b89ea16-d272-45b9-3bdb-9359b2d6fc308c224ccc"
+
+[[extensions]]
+name = "CartMind Chat"
+handle = "cart-drawer-block"
+type = "theme"

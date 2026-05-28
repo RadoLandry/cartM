@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "build": "react-router build",
+    "build:storefront-widget": "vite build --config storefront-widget/vite.config.ts",
     "dev": "shopify app dev",
     "config:link": "shopify app config link",
     "generate": "shopify app generate",
@@ -24,6 +25,7 @@
     "node": ">=20.19 <22 || >=22.12"
   },
   "dependencies": {
+    "@ai-sdk/react": "^3.0.193",
     "@ai-sdk/openai": "^3.0.64",
     "@prisma/client": "^6.16.3",
     "@react-router/dev": "^7.12.0",

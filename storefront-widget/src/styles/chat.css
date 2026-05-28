@@ -1,0 +1,232 @@
+.cm-launcher {
+  align-items: center;
+  background: linear-gradient(135deg, #121827, #1f3f5b);
+  border: 0;
+  border-radius: 999px;
+  color: #f8fafc;
+  cursor: pointer;
+  display: inline-flex;
+  font: 600 14px/1.2 Georgia, "Times New Roman", serif;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0.85rem 1.2rem;
+}
+
+.cm-panel {
+  background: linear-gradient(180deg, #fefefe 0%, #f6f1ea 100%);
+  border: 1px solid rgba(18, 24, 39, 0.12);
+  border-radius: 24px;
+  box-shadow: 0 20px 60px rgba(18, 24, 39, 0.16);
+  color: #121827;
+  display: grid;
+  gap: 1rem;
+  max-width: min(100%, 380px);
+  min-width: min(100%, 320px);
+  overflow: hidden;
+}
+
+.cm-panel--collapsed {
+  gap: 0;
+}
+
+.cm-panel__header {
+  align-items: start;
+  background: radial-gradient(circle at top left, #f4d6b0, transparent 45%), #121827;
+  color: #f8fafc;
+  display: flex;
+  justify-content: space-between;
+  padding: 1rem 1rem 0.85rem;
+}
+
+.cm-panel__header p {
+  font-size: 0.8rem;
+  margin: 0.3rem 0 0;
+  opacity: 0.8;
+}
+
+.cm-panel__header-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.cm-panel__header-actions button,
+.cm-composer__actions button,
+.cm-banner button {
+  background: rgba(255, 255, 255, 0.16);
+  border: 0;
+  border-radius: 999px;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 0.5rem 0.85rem;
+}
+
+.cm-banner {
+  align-items: center;
+  background: #fff4e8;
+  border: 1px solid rgba(189, 84, 26, 0.18);
+  border-radius: 16px;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+  margin: 0 1rem;
+  padding: 0.75rem 0.9rem;
+}
+
+.cm-banner--error {
+  color: #8f2d16;
+}
+
+.cm-thread {
+  display: grid;
+  gap: 0.85rem;
+  max-height: min(60vh, 420px);
+  overflow: auto;
+  padding: 0 1rem;
+}
+
+.cm-thread--empty {
+  color: #3f4d63;
+}
+
+.cm-message {
+  border-radius: 18px;
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.9rem;
+}
+
+.cm-message header {
+  align-items: center;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.cm-message p {
+  margin: 0;
+}
+
+.cm-message--assistant {
+  background: rgba(18, 24, 39, 0.06);
+}
+
+.cm-message--user {
+  background: linear-gradient(135deg, #d8e7f1, #edf4f8);
+}
+
+.cm-message__placeholder {
+  color: #607086;
+  font-style: italic;
+}
+
+.cm-pill {
+  background: rgba(18, 24, 39, 0.08);
+  border-radius: 999px;
+  color: #475569;
+  display: inline-flex;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.5rem;
+}
+
+.cm-pill--error {
+  background: rgba(191, 46, 46, 0.12);
+  color: #9f1239;
+}
+
+.cm-guidance-card {
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid rgba(18, 24, 39, 0.08);
+  border-radius: 16px;
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.85rem;
+}
+
+.cm-guidance-card h4 {
+  margin: 0;
+}
+
+.cm-guidance-card__header {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+.cm-guidance-list {
+  display: grid;
+  gap: 0.6rem;
+  margin: 0;
+  padding-left: 1rem;
+}
+
+.cm-guidance-list li {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.cm-comparison-table {
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.cm-comparison-row {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: minmax(80px, 1fr) repeat(2, minmax(0, 1fr));
+  padding: 0.6rem 0.7rem;
+}
+
+.cm-comparison-row:nth-child(odd) {
+  background: rgba(18, 24, 39, 0.04);
+}
+
+.cm-comparison-row--header {
+  background: rgba(18, 24, 39, 0.08);
+  font-weight: 600;
+}
+
+.cm-composer {
+  border-top: 1px solid rgba(18, 24, 39, 0.08);
+  display: grid;
+  gap: 0.75rem;
+  padding: 0 1rem 1rem;
+}
+
+.cm-composer__label {
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.cm-composer__input {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(18, 24, 39, 0.12);
+  border-radius: 16px;
+  color: inherit;
+  font: inherit;
+  padding: 0.9rem;
+  resize: vertical;
+}
+
+.cm-composer__actions {
+  align-items: center;
+  color: #64748b;
+  display: flex;
+  justify-content: space-between;
+}
+
+.cm-composer__actions button {
+  background: #121827;
+  color: #f8fafc;
+}
+
+@media (max-width: 640px) {
+  .cm-panel {
+    max-width: 100%;
+    min-width: 100%;
+  }
+
+  .cm-comparison-row {
+    grid-template-columns: 1fr;
+  }
+}
