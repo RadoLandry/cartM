@@ -1,4 +1,11 @@
-node_modules
+node_modules/
+build/
+dist/
+coverage/
+public/build/
+public/_dev/
+.react-router/
+.cache/node_modules
 build
 public/build
 coverage

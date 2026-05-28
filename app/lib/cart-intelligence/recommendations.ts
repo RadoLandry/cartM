@@ -10,6 +10,10 @@ import type {
   SizeConflictResult,
 } from "../knowledge-graph/sizing";
 import type { ResolvedCustomerProfile } from "./customer-profile";
+import type {
+  ReplenishmentActionType,
+  ReplenishmentCandidate,
+} from "./replenishment";
 import type { CartVisualItem, StyleCoherenceResult } from "./style-coherence";
 
 export interface KitRecommendationReason {
@@ -127,6 +131,46 @@ export interface RecommendationPersonalizationPayload {
   knownSizes: Record<string, string>;
   disciplinePreferences: ResolvedCustomerProfile["disciplinePreferences"];
   sourceSummary: ResolvedCustomerProfile["sourceSummary"];
+}
+
+export interface ReplenishmentRecommendationOpportunityPayload {
+  candidateKey: string;
+  productId: string;
+  variantId?: string;
+  categoryTag: string;
+  title: string;
+  dueState: "approaching" | "due";
+  confidence: number;
+  expectedReplacementAt: string;
+  actionType: ReplenishmentActionType;
+  reason: string;
+  actionTarget?: {
+    productId: string;
+    variantId?: string;
+    available: boolean;
+  };
+}
+
+export interface ReplenishmentRecommendationPayload {
+  summary: {
+    status: "hidden" | "eligible" | "due";
+    totalCandidates: number;
+    dueCount: number;
+    approachingCount: number;
+    highestPriorityCategory?: string;
+    message?: string;
+  };
+  opportunities: ReplenishmentRecommendationOpportunityPayload[];
+  refreshCart?: {
+    suggestionKey: string;
+    totalItems: number;
+    actions: Array<{
+      productId: string;
+      variantId?: string;
+      quantity: number;
+      actionType: ReplenishmentActionType;
+    }>;
+  };
 }
 
 function buildShopperSizeConflictSuggestion(
@@ -459,5 +503,54 @@ export function buildRecommendationPersonalization(
     knownSizes: profile.knownSizes,
     disciplinePreferences: profile.disciplinePreferences,
     sourceSummary: profile.sourceSummary,
+  };
+}
+
+export function buildReplenishmentRecommendations(
+  candidates: ReplenishmentCandidate[],
+): ReplenishmentRecommendationPayload | undefined {
+  if (candidates.length === 0) {
+    return undefined;
+  }
+
+  const visibleCandidates = candidates.filter(
+    (candidate) => candidate.dueState === "approaching" || candidate.dueState === "due",
+  );
+  const dueCount = visibleCandidates.filter((candidate) => candidate.dueState === "due").length;
+  const approachingCount = visibleCandidates.filter((candidate) => candidate.dueState === "approaching").length;
+  const topCandidate = visibleCandidates[0] ?? candidates[0];
+
+  return {
+    summary: {
+      status: dueCount > 0 ? "due" : visibleCandidates.length > 0 ? "eligible" : "hidden",
+      totalCandidates: candidates.length,
+      dueCount,
+      approachingCount,
+      ...(topCandidate ? { highestPriorityCategory: topCandidate.categoryTag } : {}),
+      message: dueCount > 0
+        ? "Some previously purchased gear looks ready for replacement."
+        : visibleCandidates.length > 0
+          ? "Some previously purchased gear is approaching its expected refresh window."
+          : "No replenishment items are ready yet.",
+    },
+    opportunities: visibleCandidates.map((candidate) => ({
+      candidateKey: candidate.candidateKey,
+      productId: candidate.productId,
+      ...(candidate.variantId ? { variantId: candidate.variantId } : {}),
+      categoryTag: candidate.categoryTag,
+      title: candidate.title,
+      dueState: candidate.dueState,
+      confidence: candidate.confidence,
+      expectedReplacementAt: candidate.expectedReplacementAt,
+      actionType: candidate.preferredAction,
+      reason: candidate.reasons[0] ?? "This item is within its replacement window.",
+      ...((candidate.preferredAction === "reorder" ? candidate.reorderTarget : candidate.upgradeTarget)
+        ? {
+            actionTarget: candidate.preferredAction === "reorder"
+              ? candidate.reorderTarget
+              : candidate.upgradeTarget,
+          }
+        : {}),
+    })),
   };
 }

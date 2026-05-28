@@ -13,6 +13,8 @@ vi.mock("../../../app/lib/db/queries", () => ({
   getColorCompatibilityRulesForKeys: vi.fn(),
   getCustomerProfile: vi.fn(),
   getSessionCustomerProfile: vi.fn(),
+  listActiveReplenishmentLifecycleRules: vi.fn(),
+  listCustomerPurchaseSnapshots: vi.fn(),
   listCartVisualItems: vi.fn(),
   listStyleCandidateProducts: vi.fn(),
 }));
@@ -23,6 +25,8 @@ describe("customer profile recommendations route scaffold", () => {
     vi.mocked(dbQueries.getColorCompatibilityRulesForKeys).mockResolvedValue([] as never);
     vi.mocked(dbQueries.getCustomerProfile).mockResolvedValue(null as never);
     vi.mocked(dbQueries.getSessionCustomerProfile).mockResolvedValue(null as never);
+    vi.mocked(dbQueries.listActiveReplenishmentLifecycleRules).mockResolvedValue([] as never);
+    vi.mocked(dbQueries.listCustomerPurchaseSnapshots).mockResolvedValue([] as never);
     vi.mocked(dbQueries.listCartVisualItems).mockResolvedValue(makeCoordinatedCart() as never);
     vi.mocked(dbQueries.listStyleCandidateProducts).mockResolvedValue([] as never);
   });

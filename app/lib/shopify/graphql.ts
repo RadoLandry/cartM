@@ -147,6 +147,28 @@ export interface ShopifyCustomerOrderSummary {
   };
 }
 
+export interface ShopifyReplenishmentOrderLineItem {
+  title?: string;
+  quantity: number;
+  variant?: {
+    id: string;
+    title: string;
+    product?: {
+      id: string;
+      title: string;
+      tags: string[];
+    } | null;
+  } | null;
+}
+
+export interface ShopifyReplenishmentOrderSummary {
+  id: string;
+  processedAt: string;
+  lineItems: {
+    nodes: ShopifyReplenishmentOrderLineItem[];
+  };
+}
+
 interface CustomerSummaryGraphqlResponse {
   data?: {
     customer?: ShopifyCustomerSummary | null;
@@ -158,6 +180,20 @@ interface CustomerOrderSummaryGraphqlResponse {
     customer?: {
       orders: {
         nodes: ShopifyCustomerOrderSummary[];
+      };
+    } | null;
+  };
+}
+
+interface CustomerReplenishmentHistoryGraphqlResponse {
+  data?: {
+    customer?: {
+      orders: {
+        pageInfo: {
+          hasNextPage: boolean;
+          endCursor?: string | null;
+        };
+        nodes: ShopifyReplenishmentOrderSummary[];
       };
     } | null;
   };
@@ -214,6 +250,38 @@ export const CUSTOMER_ORDER_SUMMARY_QUERY = `#graphql
   }
 `;
 
+export const CUSTOMER_REPLENISHMENT_HISTORY_QUERY = `#graphql
+  query getCustomerReplenishmentHistory($id: ID!, $first: Int!, $after: String) {
+    customer(id: $id) {
+      orders(first: $first, after: $after, sortKey: PROCESSED_AT, reverse: true) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          id
+          processedAt
+          lineItems(first: 50) {
+            nodes {
+              title
+              quantity
+              variant {
+                id
+                title
+                product {
+                  id
+                  title
+                  tags
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
 export async function fetchCustomerSummary(
   admin: AdminGraphqlClient,
   customerId: string,
@@ -237,4 +305,27 @@ export async function fetchCustomerOrderSummary(
   const payload = await response.json() as CustomerOrderSummaryGraphqlResponse;
 
   return payload.data?.customer?.orders.nodes ?? [];
+}
+
+export async function fetchCustomerReplenishmentOrderHistory(
+  admin: AdminGraphqlClient,
+  customerId: string,
+  first = 25,
+  after?: string,
+): Promise<{
+  orders: ShopifyReplenishmentOrderSummary[];
+  hasNextPage: boolean;
+  endCursor?: string;
+}> {
+  const response = await admin.graphql(CUSTOMER_REPLENISHMENT_HISTORY_QUERY, {
+    variables: { id: customerId, first, after },
+  });
+  const payload = await response.json() as CustomerReplenishmentHistoryGraphqlResponse;
+  const connection = payload.data?.customer?.orders;
+
+  return {
+    orders: connection?.nodes ?? [],
+    hasNextPage: connection?.pageInfo.hasNextPage ?? false,
+    ...(connection?.pageInfo.endCursor ? { endCursor: connection.pageInfo.endCursor } : {}),
+  };
 }

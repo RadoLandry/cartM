@@ -314,6 +314,67 @@ model CustomerProfile {
   @@index([shop])
 }
 
+enum ReplenishmentDefaultAction {
+  REORDER
+  UPGRADE_OPTIONAL
+}
+
+enum ReplenishmentRuleSource {
+  SEEDED
+  MERCHANT
+}
+
+enum ReplenishmentPreferredAction {
+  REORDER
+  UPGRADE
+}
+
+model ReplenishmentLifecycleRule {
+  id             String                     @id @default(cuid())
+  shop           String
+  categoryTag    String
+  label          String
+  windowMinDays  Int
+  windowMaxDays  Int
+  priority       Int                        @default(100)
+  defaultAction  ReplenishmentDefaultAction @default(REORDER)
+  source         ReplenishmentRuleSource    @default(SEEDED)
+  isActive       Boolean                    @default(true)
+  createdAt      DateTime                   @default(now())
+  updatedAt      DateTime                   @updatedAt
+
+  @@unique([shop, categoryTag])
+  @@index([shop, isActive])
+  @@index([shop, priority])
+}
+
+model CustomerPurchaseSnapshot {
+  id                  String                       @id @default(cuid())
+  shop                String
+  shopifyCustomerId   String
+  productId           String
+  variantId           String?
+  categoryTag         String
+  firstPurchasedAt    DateTime
+  lastPurchasedAt     DateTime
+  lastOrderId         String?
+  orderCount          Int                          @default(1)
+  totalQuantity       Int                          @default(1)
+  latestTitle         String
+  latestVariantTitle  String?
+  currencyCode        String?
+  lastUnitPrice       Decimal?                     @db.Decimal(10, 2)
+  inferredCadenceDays Int?
+  preferredAction     ReplenishmentPreferredAction @default(REORDER)
+  createdAt           DateTime                     @default(now())
+  updatedAt           DateTime                     @updatedAt
+
+  @@unique([shop, shopifyCustomerId, productId, categoryTag])
+  @@index([shop, shopifyCustomerId])
+  @@index([shop, categoryTag])
+  @@index([shop, shopifyCustomerId, lastPurchasedAt])
+}
+
 // ---------------------------------------------------------------------------
 // Colorway & Collection Tracking
 // ---------------------------------------------------------------------------

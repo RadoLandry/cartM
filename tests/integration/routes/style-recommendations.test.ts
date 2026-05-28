@@ -10,6 +10,8 @@ import {
 
 vi.mock("../../../app/lib/db/queries", () => ({
   getColorCompatibilityRulesForKeys: vi.fn(),
+  listActiveReplenishmentLifecycleRules: vi.fn(),
+  listCustomerPurchaseSnapshots: vi.fn(),
   listCartVisualItems: vi.fn(),
   listStyleCandidateProducts: vi.fn(),
 }));
@@ -30,6 +32,8 @@ describe("style recommendations route", () => {
         updatedAt: new Date(),
       },
     ] as never);
+    vi.mocked(dbQueries.listActiveReplenishmentLifecycleRules).mockResolvedValue([] as never);
+    vi.mocked(dbQueries.listCustomerPurchaseSnapshots).mockResolvedValue([] as never);
   });
 
   it("returns shopper-facing swap opportunities from the loader", async () => {

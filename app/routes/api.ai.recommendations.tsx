@@ -3,17 +3,21 @@ import { z } from "zod";
 
 import {
   buildRecommendationPersonalization,
+  buildReplenishmentRecommendations,
   buildVisualRecommendations,
 } from "../lib/cart-intelligence/recommendations";
 import {
   buildProfileKey,
   resolveCustomerProfile,
 } from "../lib/cart-intelligence/customer-profile";
+import { evaluateReplenishmentCandidates } from "../lib/cart-intelligence/replenishment";
 import { scoreStyleCoherence } from "../lib/cart-intelligence/style-coherence";
 import {
+  listActiveReplenishmentLifecycleRules,
   getCustomerProfile,
   getColorCompatibilityRulesForKeys,
   getSessionCustomerProfile,
+  listCustomerPurchaseSnapshots,
   listCartVisualItems,
   listStyleCandidateProducts,
 } from "../lib/db/queries";
@@ -121,6 +125,9 @@ async function buildStyleResponse(input: z.infer<typeof RecommendationRequestSch
           : null,
       })
     : null;
+  const replenishment = input.shopifyCustomerId
+    ? await buildReplenishmentResponse(input.shop, input.shopifyCustomerId, storedProfile)
+    : undefined;
 
   if (cartItems.length === 0) {
     return {
@@ -129,6 +136,7 @@ async function buildStyleResponse(input: z.infer<typeof RecommendationRequestSch
       ...(resolvedProfile
         ? { personalization: buildRecommendationPersonalization(resolvedProfile) }
         : {}),
+      ...(replenishment ? { replenishment } : {}),
       style: {
         summary: {
           status: "hidden",
@@ -170,8 +178,40 @@ async function buildStyleResponse(input: z.infer<typeof RecommendationRequestSch
     ...(resolvedProfile
       ? { personalization: buildRecommendationPersonalization(resolvedProfile) }
       : {}),
+    ...(replenishment ? { replenishment } : {}),
     style: buildVisualRecommendations(result, candidateProducts, cartItems),
   };
+}
+
+async function buildReplenishmentResponse(
+  shop: string,
+  shopifyCustomerId: string,
+  storedProfile: Awaited<ReturnType<typeof getCustomerProfile>>,
+) {
+  const purchaseSnapshots = await listCustomerPurchaseSnapshots(shop, shopifyCustomerId);
+
+  if (purchaseSnapshots.length === 0) {
+    return undefined;
+  }
+
+  const lifecycleRules = await listActiveReplenishmentLifecycleRules(
+    shop,
+    Array.from(new Set(purchaseSnapshots.map((snapshot) => snapshot.categoryTag))),
+  );
+
+  if (lifecycleRules.length === 0) {
+    return undefined;
+  }
+
+  return buildReplenishmentRecommendations(
+    evaluateReplenishmentCandidates({
+      shop,
+      shopifyCustomerId,
+      profile: storedProfile,
+      purchaseSnapshots,
+      lifecycleRules,
+    }),
+  );
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {

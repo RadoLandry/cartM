@@ -7,6 +7,9 @@ import {
   ColorCompatibility,
   KitDefinitionSource,
   KitDefinitionStatus,
+  ReplenishmentDefaultAction,
+  ReplenishmentPreferredAction,
+  ReplenishmentRuleSource,
   ThresholdBenefitType,
   ThresholdDuplicatePurchasePolicy,
   ThresholdRuleSource,
@@ -2532,6 +2535,51 @@ type SelectedCustomerProfile = Prisma.CustomerProfileGetPayload<{
   select: typeof customerProfileSelect;
 }>;
 
+const replenishmentLifecycleRuleSelect = Prisma.validator<Prisma.ReplenishmentLifecycleRuleSelect>()({
+  id: true,
+  shop: true,
+  categoryTag: true,
+  label: true,
+  windowMinDays: true,
+  windowMaxDays: true,
+  priority: true,
+  defaultAction: true,
+  source: true,
+  isActive: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+const customerPurchaseSnapshotSelect = Prisma.validator<Prisma.CustomerPurchaseSnapshotSelect>()({
+  id: true,
+  shop: true,
+  shopifyCustomerId: true,
+  productId: true,
+  variantId: true,
+  categoryTag: true,
+  firstPurchasedAt: true,
+  lastPurchasedAt: true,
+  lastOrderId: true,
+  orderCount: true,
+  totalQuantity: true,
+  latestTitle: true,
+  latestVariantTitle: true,
+  currencyCode: true,
+  lastUnitPrice: true,
+  inferredCadenceDays: true,
+  preferredAction: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+type SelectedReplenishmentLifecycleRule = Prisma.ReplenishmentLifecycleRuleGetPayload<{
+  select: typeof replenishmentLifecycleRuleSelect;
+}>;
+
+type SelectedCustomerPurchaseSnapshot = Prisma.CustomerPurchaseSnapshotGetPayload<{
+  select: typeof customerPurchaseSnapshotSelect;
+}>;
+
 type JsonRecord = Record<string, unknown>;
 
 export interface CustomerProfileRecord {
@@ -2568,6 +2616,50 @@ export interface CustomerPurchaseSummaryUpdate {
   productTitles?: string[];
 }
 
+export interface ReplenishmentLifecycleRuleRecord {
+  id: string;
+  shop: string;
+  categoryTag: string;
+  label: string;
+  windowMinDays: number;
+  windowMaxDays: number;
+  priority: number;
+  defaultAction: "reorder" | "upgrade_optional";
+  source: "seeded" | "merchant";
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface CustomerPurchaseSnapshotRecord {
+  id: string;
+  shop: string;
+  shopifyCustomerId: string;
+  productId: string;
+  variantId?: string;
+  categoryTag: string;
+  firstPurchasedAt: Date;
+  lastPurchasedAt: Date;
+  lastOrderId?: string;
+  orderCount: number;
+  totalQuantity: number;
+  latestTitle: string;
+  latestVariantTitle?: string;
+  currencyCode?: string;
+  lastUnitPrice?: number;
+  inferredCadenceDays?: number;
+  preferredAction: "reorder" | "upgrade";
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ReplenishmentShopperSummary {
+  lastEvaluatedAt?: string;
+  eligibleCategoryCount?: number;
+  cadenceHintDays?: number;
+  reminderSuppressedUntil?: string;
+}
+
 function asJsonRecord(value: Prisma.JsonValue | null | undefined): JsonRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {};
@@ -2586,6 +2678,63 @@ function asStringRecord(value: Prisma.JsonValue | null | undefined): Record<stri
 
 function serializeJsonRecord(value: JsonRecord): Prisma.InputJsonValue {
   return value as Prisma.InputJsonValue;
+}
+
+function toReplenishmentDefaultAction(value: ReplenishmentDefaultAction): ReplenishmentLifecycleRuleRecord["defaultAction"] {
+  return value === ReplenishmentDefaultAction.UPGRADE_OPTIONAL ? "upgrade_optional" : "reorder";
+}
+
+function toReplenishmentRuleSource(value: ReplenishmentRuleSource): ReplenishmentLifecycleRuleRecord["source"] {
+  return value === ReplenishmentRuleSource.MERCHANT ? "merchant" : "seeded";
+}
+
+function toReplenishmentPreferredAction(value: ReplenishmentPreferredAction): CustomerPurchaseSnapshotRecord["preferredAction"] {
+  return value === ReplenishmentPreferredAction.UPGRADE ? "upgrade" : "reorder";
+}
+
+function toReplenishmentLifecycleRuleRecord(
+  row: SelectedReplenishmentLifecycleRule,
+): ReplenishmentLifecycleRuleRecord {
+  return {
+    id: row.id,
+    shop: row.shop,
+    categoryTag: row.categoryTag,
+    label: row.label,
+    windowMinDays: row.windowMinDays,
+    windowMaxDays: row.windowMaxDays,
+    priority: row.priority,
+    defaultAction: toReplenishmentDefaultAction(row.defaultAction),
+    source: toReplenishmentRuleSource(row.source),
+    isActive: row.isActive,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function toCustomerPurchaseSnapshotRecord(
+  row: SelectedCustomerPurchaseSnapshot,
+): CustomerPurchaseSnapshotRecord {
+  return {
+    id: row.id,
+    shop: row.shop,
+    shopifyCustomerId: row.shopifyCustomerId,
+    productId: row.productId,
+    variantId: row.variantId ?? undefined,
+    categoryTag: row.categoryTag,
+    firstPurchasedAt: row.firstPurchasedAt,
+    lastPurchasedAt: row.lastPurchasedAt,
+    lastOrderId: row.lastOrderId ?? undefined,
+    orderCount: row.orderCount,
+    totalQuantity: row.totalQuantity,
+    latestTitle: row.latestTitle,
+    latestVariantTitle: row.latestVariantTitle ?? undefined,
+    currencyCode: row.currencyCode ?? undefined,
+    lastUnitPrice: row.lastUnitPrice === null ? undefined : Number(row.lastUnitPrice.toString()),
+    inferredCadenceDays: row.inferredCadenceDays ?? undefined,
+    preferredAction: toReplenishmentPreferredAction(row.preferredAction),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
 }
 
 function toCustomerProfileRecord(row: SelectedCustomerProfile): CustomerProfileRecord {
@@ -2853,6 +3002,102 @@ export async function updateCustomerPurchaseSummary(
         ...(nextTitles.length > 0 ? { recentProductTitles: nextTitles } : {}),
       },
       lastActiveAt: update.processedAt ?? new Date(),
+    },
+    shopifyCustomerId,
+  );
+}
+
+export async function listActiveReplenishmentLifecycleRules(
+  shop: string,
+  categoryTags?: string[],
+): Promise<ReplenishmentLifecycleRuleRecord[]> {
+  const rows = await db.replenishmentLifecycleRule.findMany({
+    where: {
+      shop,
+      isActive: true,
+      ...(categoryTags && categoryTags.length > 0
+        ? { categoryTag: { in: categoryTags } }
+        : {}),
+    },
+    orderBy: [
+      { priority: "asc" },
+      { categoryTag: "asc" },
+    ],
+    select: replenishmentLifecycleRuleSelect,
+  });
+
+  return rows.map(toReplenishmentLifecycleRuleRecord);
+}
+
+export async function listCustomerPurchaseSnapshots(
+  shop: string,
+  shopifyCustomerId: string,
+  categoryTags?: string[],
+): Promise<CustomerPurchaseSnapshotRecord[]> {
+  const rows = await db.customerPurchaseSnapshot.findMany({
+    where: {
+      shop,
+      shopifyCustomerId,
+      ...(categoryTags && categoryTags.length > 0
+        ? { categoryTag: { in: categoryTags } }
+        : {}),
+    },
+    orderBy: [
+      { lastPurchasedAt: "desc" },
+      { updatedAt: "desc" },
+    ],
+    select: customerPurchaseSnapshotSelect,
+  });
+
+  return rows.map(toCustomerPurchaseSnapshotRecord);
+}
+
+export async function getReplenishmentShopperSummary(
+  shop: string,
+  shopifyCustomerId: string,
+): Promise<ReplenishmentShopperSummary | null> {
+  const profile = await getRecognizedCustomerProfile(shop, shopifyCustomerId);
+  const replenishment = asJsonRecord(profile?.purchaseSummary?.replenishment);
+
+  if (Object.keys(replenishment).length === 0) {
+    return null;
+  }
+
+  return {
+    ...(typeof replenishment.lastEvaluatedAt === "string"
+      ? { lastEvaluatedAt: replenishment.lastEvaluatedAt }
+      : {}),
+    ...(typeof replenishment.eligibleCategoryCount === "number"
+      ? { eligibleCategoryCount: replenishment.eligibleCategoryCount }
+      : {}),
+    ...(typeof replenishment.cadenceHintDays === "number"
+      ? { cadenceHintDays: replenishment.cadenceHintDays }
+      : {}),
+    ...(typeof replenishment.reminderSuppressedUntil === "string"
+      ? { reminderSuppressedUntil: replenishment.reminderSuppressedUntil }
+      : {}),
+  };
+}
+
+export async function updateReplenishmentShopperSummary(
+  shop: string,
+  shopifyCustomerId: string,
+  patch: ReplenishmentShopperSummary,
+): Promise<CustomerProfileRecord | null> {
+  const existing = await getRecognizedCustomerProfile(shop, shopifyCustomerId);
+  const existingReplenishment = asJsonRecord(existing?.purchaseSummary?.replenishment);
+
+  return upsertCustomerProfile(
+    shop,
+    {
+      purchaseSummary: {
+        ...(existing?.purchaseSummary ?? {}),
+        replenishment: {
+          ...existingReplenishment,
+          ...patch,
+        },
+      },
+      lastActiveAt: existing?.lastActiveAt ?? new Date(),
     },
     shopifyCustomerId,
   );
