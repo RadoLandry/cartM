@@ -80,4 +80,34 @@ describe("storefront chat session state", () => {
       state: "complete",
     });
   });
+
+  it("resets bootstrap credentials when cart context changes mid-session", () => {
+    const bootstrappedState = reduceChatSessionState(
+      makeStorefrontChatSessionState({
+        status: "ready",
+        cartId: "gid://shopify/Cart/123",
+      }),
+      {
+        type: "bootstrap_succeeded",
+        bootstrap: {
+          shop: "test.myshopify.com",
+          cartId: "gid://shopify/Cart/123",
+          sessionKey: "chat_browser-session-123",
+          streamToken: "signed.token",
+          expiresAt: "2026-05-29T10:00:00.000Z",
+          chatUrl: "https://app.example.com/api/ai/chat",
+          conversationLimits: {
+            maxMessages: 20,
+            maxInputCharacters: 2000,
+          },
+        },
+      },
+    );
+
+    const resetState = reduceChatSessionState(bootstrappedState, { type: "bootstrap_reset" });
+
+    expect(resetState.status).toBe("idle");
+    expect(resetState.streamToken).toBeUndefined();
+    expect(resetState.sessionKey).toBeUndefined();
+  });
 });

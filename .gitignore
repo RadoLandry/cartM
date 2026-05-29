@@ -18,6 +18,11 @@ database.sqlite
 *.log
 coverage/
 dist/
+.vscode/
+.idea/
+Thumbs.db
+*.tmp
+*.swp
 
 
 

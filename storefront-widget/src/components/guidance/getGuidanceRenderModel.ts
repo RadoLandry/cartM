@@ -8,7 +8,11 @@ export type GuidanceRenderModel =
       items: Array<{
         id: string;
         title: string;
+        action: "keep" | "add" | "remove" | "swap" | "size_adjust";
+        priorityLabel: "high" | "medium" | "low";
         reason: string;
+        shopperOutcome?: string;
+        safetyCritical: boolean;
         meta?: string;
       }>;
     }
@@ -45,7 +49,11 @@ export function getGuidanceRenderModel(block: StructuredGuidanceBlock): Guidance
         items: block.items.map((item, index) => ({
           id: item.variantId || item.productId || `${block.blockId}-${index}`,
           title: item.title,
+          action: item.action,
+          priorityLabel: item.priorityLabel,
           reason: item.reason,
+          shopperOutcome: item.shopperOutcome,
+          safetyCritical: item.safetyCritical,
           meta: [item.priceLabel, item.availability].filter(Boolean).join(" • ") || undefined,
         })),
       };

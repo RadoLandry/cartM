@@ -21,7 +21,9 @@
         {% for item in cart.items %}
           {
             "productId": {{ item.product.id | json }},
+            "productTitle": {{ item.product.title | json }},
             "variantId": {{ item.variant.id | json }},
+            "variantTitle": {{ item.variant.title | json }},
             "quantity": {{ item.quantity | json }}
           }{% unless forloop.last %},{% endunless %}
         {% endfor %}

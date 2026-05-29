@@ -39,7 +39,9 @@ export function makeStorefrontChatRequest(
       items: [
         {
           productId: "gid://shopify/Product/1",
+          productTitle: "Core Training Gloves",
           variantId: "gid://shopify/ProductVariant/11",
+          variantTitle: "12 oz / Black",
           quantity: 1,
         },
       ],
@@ -66,9 +68,15 @@ export function makeRecommendationListBlock(
     items: [
       {
         productId: "gid://shopify/Product/42",
+        productTitle: "Hand Wraps",
         variantId: "gid://shopify/ProductVariant/42",
+        variantTitle: "180 in / Red",
         title: "Hand Wraps",
+        action: "add",
+        priorityLabel: "high",
         reason: "Useful add-on for the gloves already in the cart.",
+        shopperOutcome: "Improves hand protection during training.",
+        safetyCritical: true,
         priceLabel: "$14.99",
         availability: "available",
       },

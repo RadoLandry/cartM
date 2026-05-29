@@ -17,6 +17,7 @@ import { authenticate } from "../../../app/shopify.server";
 describe("storefront chat bootstrap route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.STOREFRONT_CHAT_SIGNING_SECRET = "test-signing-secret";
     vi.mocked(authenticate.public.appProxy).mockResolvedValue({
       session: { shop: TEST_SHOP },
     } as never);
@@ -63,5 +64,20 @@ describe("storefront chat bootstrap route", () => {
     expect(response.status).toBe(400);
     expect(payload.ok).toBe(false);
     expect(payload.error.fieldErrors).toHaveProperty("surface");
+  });
+
+  it("invokes app proxy authentication before issuing bootstrap payload", async () => {
+    const input = makeStorefrontChatBootstrapRequest();
+    await action({
+      request: new Request("http://localhost/api/app-proxy/chat-bootstrap", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
+      }),
+      params: {},
+      context: {},
+    } as never);
+
+    expect(authenticate.public.appProxy).toHaveBeenCalledTimes(1);
   });
 });

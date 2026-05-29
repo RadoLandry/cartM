@@ -4,7 +4,9 @@ export const StorefrontChatSurfaceSchema = z.enum(["cart_drawer", "cart_page"]);
 
 export const StorefrontCartLineSchema = z.object({
   productId: z.string().min(1),
+  productTitle: z.string().min(1).optional(),
   variantId: z.string().min(1).optional(),
+  variantTitle: z.string().min(1).optional(),
   quantity: z.coerce.number().int().min(1).default(1),
 });
 
@@ -44,9 +46,15 @@ export const RecommendationListBlockSchema = z.object({
   priority: z.number().int().nonnegative(),
   items: z.array(z.object({
     productId: z.string().min(1).optional(),
+    productTitle: z.string().min(1).optional(),
     variantId: z.string().min(1).optional(),
+    variantTitle: z.string().min(1).optional(),
     title: z.string().min(1),
+    action: z.enum(["keep", "add", "remove", "swap", "size_adjust"]),
+    priorityLabel: z.enum(["high", "medium", "low"]),
     reason: z.string().min(1),
+    shopperOutcome: z.string().min(1).optional(),
+    safetyCritical: z.boolean().default(false),
     priceLabel: z.string().min(1).optional(),
     availability: z.enum(["available", "unavailable", "unknown"]).optional(),
   })),

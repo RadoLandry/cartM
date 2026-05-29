@@ -12,9 +12,13 @@ interface StreamTokenPayload {
 }
 
 function getSigningSecret() {
-  return process.env.STOREFRONT_CHAT_SIGNING_SECRET
-    || process.env.SHOPIFY_API_SECRET
-    || "development-storefront-chat-secret";
+  const secret = process.env.STOREFRONT_CHAT_SIGNING_SECRET || process.env.SHOPIFY_API_SECRET;
+
+  if (!secret) {
+    throw new Error("Missing storefront chat signing secret. Set STOREFRONT_CHAT_SIGNING_SECRET or SHOPIFY_API_SECRET.");
+  }
+
+  return secret;
 }
 
 function base64UrlEncode(value: string) {
@@ -72,6 +76,14 @@ export function verifyStorefrontChatToken(token: string) {
     payload = JSON.parse(base64UrlDecode(encodedPayload)) as StreamTokenPayload;
   } catch {
     return { ok: false as const, code: "INVALID_TOKEN", message: "Chat token payload is invalid." };
+  }
+
+  if (!payload.shop || !payload.sessionKey || typeof payload.exp !== "number") {
+    return { ok: false as const, code: "INVALID_TOKEN", message: "Chat token payload is missing required fields." };
+  }
+
+  if (!payload.sessionKey.startsWith("chat_")) {
+    return { ok: false as const, code: "INVALID_TOKEN", message: "Chat token session scope is invalid." };
   }
 
   if (payload.exp <= Date.now()) {

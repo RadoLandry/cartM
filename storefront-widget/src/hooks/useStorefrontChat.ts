@@ -12,6 +12,7 @@ import {
   type ChatSessionState,
   type ChatThreadMessage,
 } from "./useChatSessionState";
+import type { StorefrontCartSnapshot } from "../types";
 
 type RequestMessage = {
   role: "user" | "assistant" | "system";
@@ -23,15 +24,16 @@ interface UseStorefrontChatOptions {
   state: ChatSessionState;
   dispatch: Dispatch<ChatSessionAction>;
   fetchImpl?: typeof fetch;
+  resolveCartSnapshot?: () => Promise<StorefrontCartSnapshot>;
 }
 
-function buildBootstrapRequest(config: StorefrontChatMountConfig, state: ChatSessionState) {
+function buildBootstrapRequest(config: StorefrontChatMountConfig, state: ChatSessionState, cart: StorefrontCartSnapshot) {
   return {
     shop: config.shop,
-    cartId: config.cart.cartId,
+    cartId: cart.cartId,
     surface: config.surface,
     sessionId: state.sessionId,
-    currencyCode: config.cart.currencyCode,
+    currencyCode: cart.currencyCode,
   };
 }
 
@@ -74,17 +76,24 @@ export function useStorefrontChat({
   state,
   dispatch,
   fetchImpl = fetch,
+  resolveCartSnapshot,
 }: UseStorefrontChatOptions) {
   const stateRef = useRef(state);
+  const lastCartFingerprintRef = useRef("");
 
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
 
-  async function ensureBootstrap() {
+  async function ensureBootstrap(cart: StorefrontCartSnapshot) {
     const currentState = stateRef.current;
+    const cartIdChanged = Boolean(currentState.cartId && cart.cartId && currentState.cartId !== cart.cartId);
 
-    if (currentState.streamToken && currentState.chatUrl && currentState.sessionKey) {
+    if (cartIdChanged) {
+      dispatch({ type: "bootstrap_reset" });
+    }
+
+    if (!cartIdChanged && currentState.streamToken && currentState.chatUrl && currentState.sessionKey) {
       return {
         chatUrl: currentState.chatUrl,
         sessionKey: currentState.sessionKey,
@@ -99,7 +108,7 @@ export function useStorefrontChat({
       headers: {
         "content-type": "application/json",
       },
-      body: JSON.stringify(buildBootstrapRequest(config, currentState)),
+      body: JSON.stringify(buildBootstrapRequest(config, currentState, cart)),
     });
 
     if (!response.ok) {
@@ -118,9 +127,26 @@ export function useStorefrontChat({
     };
   }
 
+  async function getCurrentCartSnapshot() {
+    if (resolveCartSnapshot) {
+      return await resolveCartSnapshot();
+    }
+
+    return config.cart;
+  }
+
   async function streamAssistantReply(assistantMessageId: string, pendingUserMessage: string) {
     const currentState = stateRef.current;
-    const bootstrap = await ensureBootstrap();
+    const currentCart = await getCurrentCartSnapshot();
+    const currentFingerprint = JSON.stringify(currentCart.items.map((item) => [item.productId, item.variantId, item.quantity]));
+
+    if (lastCartFingerprintRef.current && lastCartFingerprintRef.current !== currentFingerprint) {
+      dispatch({ type: "bootstrap_reset" });
+    }
+
+    lastCartFingerprintRef.current = currentFingerprint;
+
+    const bootstrap = await ensureBootstrap(currentCart);
     const response = await fetchImpl(bootstrap.chatUrl, {
       method: "POST",
       headers: {
@@ -130,7 +156,7 @@ export function useStorefrontChat({
         shop: config.shop,
         sessionKey: bootstrap.sessionKey,
         streamToken: bootstrap.streamToken,
-        cart: config.cart,
+        cart: currentCart,
         messages: buildRequestMessages(currentState.messages, pendingUserMessage),
       }),
     });

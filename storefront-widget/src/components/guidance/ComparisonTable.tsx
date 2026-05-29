@@ -8,6 +8,10 @@ interface ComparisonTableProps {
 export function ComparisonTable({ block }: ComparisonTableProps) {
   const model = getGuidanceRenderModel(block);
 
+  if (model.kind !== "comparison_table") {
+    return null;
+  }
+
   return (
     <section className="cm-guidance-card">
       <h4>{model.title}</h4>

@@ -30,6 +30,45 @@ interface CartMindChatProps {
   config: StorefrontChatMountConfig;
 }
 
+async function readLatestStorefrontCart(config: StorefrontChatMountConfig) {
+  if (typeof window === "undefined") {
+    return config.cart;
+  }
+
+  const response = await window.fetch("/cart.js", {
+    method: "GET",
+    credentials: "same-origin",
+  }).catch(() => null);
+
+  if (!response?.ok) {
+    return config.cart;
+  }
+
+  const payload = await response.json().catch(() => null);
+
+  if (!payload || !Array.isArray(payload.items)) {
+    return config.cart;
+  }
+
+  return {
+    cartId: payload.token || config.cart.cartId,
+    currencyCode: payload.currency || config.cart.currencyCode,
+    items: payload.items.map((item: {
+      product_id?: number | string;
+      product_title?: string;
+      variant_id?: number | string;
+      variant_title?: string;
+      quantity?: number;
+    }) => ({
+      productId: String(item.product_id || ""),
+      productTitle: item.product_title,
+      variantId: item.variant_id ? String(item.variant_id) : undefined,
+      variantTitle: item.variant_title,
+      quantity: Number(item.quantity || 1),
+    })).filter((item: { productId: string }) => item.productId.length > 0),
+  };
+}
+
 export function CartMindChat({ config }: CartMindChatProps) {
   const [sessionId] = useState(() => getOrCreateBrowserSessionKey(config.shop, config.surface));
   const { state, dispatch } = useChatSessionState({
@@ -43,6 +82,7 @@ export function CartMindChat({ config }: CartMindChatProps) {
     config,
     state,
     dispatch,
+    resolveCartSnapshot: async () => await readLatestStorefrontCart(config),
   });
 
   return (

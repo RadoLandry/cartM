@@ -8,6 +8,10 @@ interface SizeSummaryProps {
 export function SizeSummary({ block }: SizeSummaryProps) {
   const model = getGuidanceRenderModel(block);
 
+  if (model.kind !== "size_summary") {
+    return null;
+  }
+
   return (
     <section className="cm-guidance-card">
       <div className="cm-guidance-card__header">

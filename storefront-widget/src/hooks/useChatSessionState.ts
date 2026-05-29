@@ -48,6 +48,7 @@ export type ChatSessionAction =
   | { type: "panel_collapsed" }
   | { type: "panel_expanded" }
   | { type: "bootstrap_requested" }
+  | { type: "bootstrap_reset" }
   | { type: "bootstrap_succeeded"; bootstrap: StorefrontChatBootstrap }
   | { type: "bootstrap_failed"; error: string }
   | { type: "session_invalidated"; error?: string }
@@ -184,10 +185,20 @@ export function reduceChatSessionState(
         status: "bootstrapping",
         lastError: undefined,
       };
+    case "bootstrap_reset":
+      return {
+        ...state,
+        status: "idle",
+        sessionKey: undefined,
+        streamToken: undefined,
+        streamTokenExpiresAt: undefined,
+        chatUrl: undefined,
+      };
     case "bootstrap_succeeded":
       return {
         ...state,
         status: state.status === "streaming" ? "streaming" : "ready",
+        cartId: action.bootstrap.cartId,
         sessionKey: action.bootstrap.sessionKey,
         streamToken: action.bootstrap.streamToken,
         streamTokenExpiresAt: action.bootstrap.expiresAt,
