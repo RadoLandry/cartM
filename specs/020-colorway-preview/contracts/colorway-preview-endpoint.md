@@ -13,6 +13,7 @@ Define the external contract for requesting a side-by-side current vs proposed c
 - shopDomain: string (required)
 - selectedLineId: string (required)
 - proposedVariantId: string (required)
+- availableVariantIds: string[] (optional, used for unavailable-variant guard)
 - surface: enum (cart_drawer, cart_page, chat) (required)
 - viewportHint: enum (mobile, desktop, unknown) (optional)
 - forceRegenerate: boolean (optional, default false)
@@ -42,8 +43,15 @@ Define the external contract for requesting a side-by-side current vs proposed c
   - reasonCode: enum (missing_image, unsupported_type, fetch_failed, invalid_variant)
   - reasonDetail: string | null
 - diagnostics:
-  - requestId: string
+  - reused: boolean
   - generationMs: number | null
+  - telemetry:
+    - status: enum (ok, partial, invalid, fallback, error)
+    - reused: boolean
+    - omissionCount: number
+    - generationMs: number | null
+    - forceRegenerate: boolean
+    - surface: enum (cart_drawer, cart_page, chat)
 
 ## Error Semantics
 - 400: invalid request payload
@@ -55,5 +63,7 @@ Define the external contract for requesting a side-by-side current vs proposed c
 ## Behavioral Guarantees
 - Endpoint must not mutate cart state.
 - Identical normalized comparison requests may reuse an existing asset.
+- `forceRegenerate` bypasses reuse lookup for an otherwise matching signature.
 - Partial results are preferred over hard failure when at least one renderable item remains.
 - Invalid requests return actionable reason messaging without composition side effects.
+- Route-level analytics logging captures only sanitized preview outcome metadata.

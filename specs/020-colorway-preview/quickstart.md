@@ -3,6 +3,10 @@
 ## Goal
 Validate end-to-end colorway preview behavior for side-by-side comparison, invalid request handling, partial output resilience, and reuse performance.
 
+## Request/Response Fields to Verify
+- Request: `selectedLineId`, `proposedVariantId`, `availableVariantIds`, `surface`, `forceRegenerate`
+- Response: `status`, `comparison.reused`, `omissions[]`, `diagnostics.reused`, `diagnostics.generationMs`, `diagnostics.telemetry`
+
 ## Prerequisites
 - App and storefront widget are running locally.
 - Test cart has at least one item with alternate color variants.
@@ -46,7 +50,7 @@ Expected result:
 2. Compare metadata and response times.
 
 Expected result:
-- Reused path is indicated.
+- Reused path is indicated in both `comparison.reused` and `diagnostics.reused`.
 - Response is faster than first-generation path.
 
 ## Scenario 6: Confirm regeneration on meaningful change
@@ -57,6 +61,14 @@ Expected result:
 - Reuse is bypassed for new signature.
 - New comparison output reflects updated state.
 
+## Scenario 7: Confirm force regeneration bypass
+1. Submit an identical request twice.
+2. On the second request, set `forceRegenerate` to `true`.
+
+Expected result:
+- Reuse is bypassed even when signature would otherwise match.
+- `comparison.reused` and `diagnostics.reused` are `false`.
+
 ## Verification Checklist
 - Preview flow remains read-only and does not mutate cart.
 - Invalid requests are explicit and actionable.
@@ -65,4 +77,5 @@ Expected result:
 
 ## Validation Log
 - 2026-06-02: Planning artifacts generated for Phase 0/1.
-- Validation targets: route integration tests for invalid/partial/reuse paths and visual unit tests for deterministic comparison semantics.
+- 2026-06-02: Type safety verification completed with `npm run -s typecheck` (pass).
+- 2026-06-02: Route telemetry verified to include only sanitized outcome fields (status/reused/omission count/generation time/surface/force regenerate), with no raw cart payloads.

@@ -66,11 +66,11 @@
 
 ### Implementation for User Story 2
 
-- [ ] T015 [P] [US2] Implement omission reason classification for missing/unsupported/fetch-failed assets in app/lib/visual/colorway-preview.ts
-- [ ] T016 [P] [US2] Implement fallback layout strategy for mixed-discipline and non-composable carts in app/lib/visual/templates.ts
-- [ ] T017 [US2] Add invalid-request guards (same variant, unavailable variant, missing line) in app/routes/api.ai.kit-preview.tsx
-- [ ] T018 [US2] Map partial/invalid/fallback response states to endpoint contract fields in app/lib/visual/colorway-preview.ts
-- [ ] T019 [US2] Render shopper-safe partial and invalid state messaging in storefront-widget/src/components/chat/ColorwayPreviewCard.tsx
+- [x] T015 [P] [US2] Implement omission reason classification for missing/unsupported/fetch-failed assets in app/lib/visual/colorway-preview.ts
+- [x] T016 [P] [US2] Implement fallback layout strategy for mixed-discipline and non-composable carts in app/lib/visual/templates.ts
+- [x] T017 [US2] Add invalid-request guards (same variant, unavailable variant, missing line) in app/routes/api.ai.kit-preview.tsx
+- [x] T018 [US2] Map partial/invalid/fallback response states to endpoint contract fields in app/lib/visual/colorway-preview.ts
+- [x] T019 [US2] Render shopper-safe partial and invalid state messaging in storefront-widget/src/components/chat/ColorwayPreviewCard.tsx
 
 **Checkpoint**: US2 adds resilient degraded behavior without breaking US1.
 
@@ -84,11 +84,11 @@
 
 ### Implementation for User Story 3
 
-- [ ] T020 [P] [US3] Implement preview reuse lookup/store adapter in app/lib/visual/colorway-preview-cache.ts
-- [ ] T021 [P] [US3] Extend signature inputs with selected line + proposed variant + template version in app/lib/visual/colorway-signature.ts
-- [ ] T022 [US3] Implement reuse-first orchestration (lookup before compose) in app/lib/visual/colorway-preview.ts
-- [ ] T023 [US3] Add forceRegenerate and reused metadata response handling in app/routes/api.ai.kit-preview.tsx
-- [ ] T024 [US3] Surface reused state in storefront preview consumption flow in storefront-widget/src/hooks/useStorefrontChat.ts
+- [x] T020 [P] [US3] Implement preview reuse lookup/store adapter in app/lib/visual/colorway-preview-cache.ts
+- [x] T021 [P] [US3] Extend signature inputs with selected line + proposed variant + template version in app/lib/visual/colorway-signature.ts
+- [x] T022 [US3] Implement reuse-first orchestration (lookup before compose) in app/lib/visual/colorway-preview.ts
+- [x] T023 [US3] Add forceRegenerate and reused metadata response handling in app/routes/api.ai.kit-preview.tsx
+- [x] T024 [US3] Surface reused state in storefront preview consumption flow in storefront-widget/src/hooks/useStorefrontChat.ts
 
 **Checkpoint**: US3 completes iterative performance optimization with deterministic reuse.
 
@@ -98,10 +98,10 @@
 
 **Purpose**: Final alignment, hardening, and scenario validation across all stories.
 
-- [ ] T025 [P] Align quickstart validation steps with implemented payload fields in specs/020-colorway-preview/quickstart.md
-- [ ] T026 [P] Run and document end-to-end scenario validation notes in specs/020-colorway-preview/quickstart.md
-- [ ] T027 Harden route logging to capture preview outcome analytics without sensitive payload leakage in app/routes/api.ai.kit-preview.tsx
-- [ ] T028 Validate implementation notes and contract consistency in specs/020-colorway-preview/contracts/colorway-preview-endpoint.md
+- [x] T025 [P] Align quickstart validation steps with implemented payload fields in specs/020-colorway-preview/quickstart.md
+- [x] T026 [P] Run and document end-to-end scenario validation notes in specs/020-colorway-preview/quickstart.md
+- [x] T027 Harden route logging to capture preview outcome analytics without sensitive payload leakage in app/routes/api.ai.kit-preview.tsx
+- [x] T028 Validate implementation notes and contract consistency in specs/020-colorway-preview/contracts/colorway-preview-endpoint.md
 
 ---
 

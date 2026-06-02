@@ -55,11 +55,21 @@ interface KitPreviewResponse {
   };
   omissions: Array<{
     lineId: string;
+    scope?: "current" | "proposed" | "both";
     reasonCode: string;
     reasonDetail?: string;
   }>;
   diagnostics: {
+    reused?: boolean;
     generationMs: number | null;
+    telemetry?: {
+      status: "ok" | "partial" | "invalid" | "fallback" | "error";
+      reused: boolean;
+      omissionCount: number;
+      generationMs: number | null;
+      forceRegenerate: boolean;
+      surface: "cart_drawer" | "cart_page" | "chat";
+    };
   };
 }
 
@@ -79,6 +89,7 @@ function buildColorwaySelection(cart: StorefrontCartSnapshot) {
   return {
     selectedLineId,
     proposedVariantId: `preview-${currentVariantId}`,
+    availableVariantIds: [currentVariantId, `preview-${currentVariantId}`],
   };
 }
 
@@ -238,6 +249,7 @@ export function useStorefrontChat({
         cartId: cart.cartId || "anonymous-cart",
         selectedLineId: selection.selectedLineId,
         proposedVariantId: selection.proposedVariantId,
+        availableVariantIds: selection.availableVariantIds,
         surface: config.surface,
         viewportHint: "unknown",
         currencyCode: cart.currencyCode,
@@ -260,6 +272,21 @@ export function useStorefrontChat({
     }
 
     const payload = await response.json() as KitPreviewResponse;
+    if (payload.status === "invalid" || payload.status === "fallback") {
+      dispatch({
+        type: "comparison_context_upsert",
+        context: {
+          comparisonContextId: `preview-${Date.now()}`,
+          requestId: `preview-request-${Date.now()}`,
+          generatedAt: new Date().toISOString(),
+          status: payload.status === "invalid" ? "failed" : "generated",
+          summary: payload.status === "invalid"
+            ? "Colorway preview is unavailable for the selected swap."
+            : "Colorway preview fell back due to limited cart visual data.",
+        },
+      });
+    }
+
     lastKitPreviewResultRef.current = payload;
     return payload;
   }

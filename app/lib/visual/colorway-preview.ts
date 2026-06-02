@@ -8,6 +8,8 @@ import { composeColorwayComparison } from "./compositor";
 import { buildColorwayPreviewSignature, normalizeColorwaySignatureSeed } from "./colorway-signature";
 import { resolveLayoutProfile } from "./templates";
 import { normalizeStorefrontCartForPreview } from "../shopify/storefront-cart";
+import { getColorwayPreviewCache, setColorwayPreviewCache } from "./colorway-preview-cache";
+import type { OmissionReasonCode } from "./compositor";
 
 interface ColorwayStateContext {
   requestId: string;
@@ -72,6 +74,34 @@ export function buildColorwayChangedItemHighlight(input: {
   };
 }
 
+function classifyOmissionReason(input: {
+  line?: {
+    lineId?: string;
+    productId?: string;
+    variantId?: string;
+    imageUrl?: string;
+  };
+  rawReason: OmissionReasonCode;
+}): OmissionReasonCode {
+  if (!input.line?.imageUrl) {
+    return "missing_image";
+  }
+
+  if (!/^https?:\/\//i.test(input.line.imageUrl)) {
+    return "fetch_failed";
+  }
+
+  if (!input.line.productId) {
+    return "unsupported_type";
+  }
+
+  if (!input.line.variantId) {
+    return "invalid_variant";
+  }
+
+  return input.rawReason;
+}
+
 // Phase 1 scaffold: orchestration logic will be implemented in Phase 2+
 export async function generateColorwayPreview(
   input: ColorwayPreviewRequestInput,
@@ -87,6 +117,9 @@ export async function generateColorwayPreview(
   const layoutProfile = resolveLayoutProfile(
     snapshot.inferredDiscipline,
     snapshot.items.length,
+    {
+      nonComposable: snapshot.items.every((item) => !item.renderEligible),
+    },
   );
 
   const signatureSeed = normalizeColorwaySignatureSeed({
@@ -102,6 +135,24 @@ export async function generateColorwayPreview(
     layoutId: layoutProfile.layoutId,
     templateVersion: layoutProfile.templateVersion,
   });
+
+  if (!input.forceRegenerate) {
+    const cached = getColorwayPreviewCache(cacheKey);
+
+    if (cached) {
+      return {
+        ...cached,
+        comparison: {
+          ...cached.comparison,
+          reused: true,
+        },
+        diagnostics: {
+          requestId,
+          generationMs: null,
+        },
+      };
+    }
+  }
 
   const selectedLine = input.cart.items.find((line) => line.lineId === input.selectedLineId);
   const currentVariantId = selectedLine?.variantId ?? "";
@@ -136,18 +187,32 @@ export async function generateColorwayPreview(
       layoutId: comparison.context.layoutId,
       templateVersion: comparison.context.templateVersion,
       generationMs: comparison.diagnostics.generationMs,
-      omissions: comparison.omissions.map((entry) => ({
-        lineId: entry.lineId,
-        scope: "both",
-        reasonCode: entry.reasonCode,
-        ...(entry.reasonDetail ? { reasonDetail: entry.reasonDetail } : {}),
-      })),
+      omissions: comparison.omissions.map((entry) => {
+        const line = input.cart.items.find((cartLine) => cartLine.lineId === entry.lineId);
+        const reasonCode = classifyOmissionReason({
+          line,
+          rawReason: entry.reasonCode,
+        });
+
+        return {
+          lineId: entry.lineId,
+          scope: entry.lineId === input.selectedLineId ? "proposed" : "both",
+          reasonCode,
+          ...(entry.reasonDetail ? { reasonDetail: entry.reasonDetail } : {}),
+        };
+      }),
       comparison: comparison.comparison,
     },
   );
 
-  return {
+  const result = {
     ...mapped,
     change,
   };
+
+  if (result.status !== "error" && result.status !== "invalid") {
+    setColorwayPreviewCache(cacheKey, result);
+  }
+
+  return result;
 }

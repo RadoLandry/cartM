@@ -19,6 +19,7 @@ export interface ColorwayPreviewRequestInput {
   cartId: string;
   selectedLineId: string;
   proposedVariantId: string;
+  availableVariantIds?: string[];
   currencyCode: string;
   surface: "cart_drawer" | "cart_page" | "chat";
   viewportHint?: "mobile" | "desktop" | "unknown";
@@ -96,6 +97,7 @@ export const ColorwayPreviewRequestSchema = z.object({
   cartId: z.string().min(1),
   selectedLineId: z.string().min(1),
   proposedVariantId: z.string().min(1),
+  availableVariantIds: z.array(z.string().min(1)).optional(),
   currencyCode: z.string().min(3).max(3).default("USD"),
   surface: z.enum(["cart_drawer", "cart_page", "chat"]),
   viewportHint: z.enum(["mobile", "desktop", "unknown"]).optional(),

@@ -49,13 +49,24 @@ export interface ApplyBudgetOptimizationSelectionInput {
 export interface ColorwayPreviewLineResolutionInput {
   selectedLineId: string;
   proposedVariantId: string;
-  cart: StorefrontChatRequest["cart"];
+  availableVariantIds?: string[];
+  cart: {
+    currencyCode: string;
+    items: Array<{
+      lineId?: string;
+      productId?: string;
+      variantId?: string;
+      productTitle?: string;
+      variantTitle?: string;
+      quantity?: number;
+    }>;
+  };
 }
 
 export interface ColorwayPreviewLineResolutionResult {
   valid: boolean;
-  reason?: "line_not_found" | "same_variant" | "missing_variant";
-  selectedLine?: StorefrontChatRequest["cart"]["items"][number];
+  reason?: "line_not_found" | "same_variant" | "missing_variant" | "unavailable_variant";
+  selectedLine?: ColorwayPreviewLineResolutionInput["cart"]["items"][number];
 }
 
 function estimateLinePrice(item: StorefrontChatRequest["cart"]["items"][number], index: number) {
@@ -95,6 +106,18 @@ export function resolveColorwayPreviewLine(
     return {
       valid: false,
       reason: "same_variant",
+      selectedLine,
+    };
+  }
+
+  if (
+    input.availableVariantIds
+    && input.availableVariantIds.length > 0
+    && !input.availableVariantIds.includes(input.proposedVariantId)
+  ) {
+    return {
+      valid: false,
+      reason: "unavailable_variant",
       selectedLine,
     };
   }

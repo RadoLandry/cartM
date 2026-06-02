@@ -15,6 +15,10 @@ export interface LayoutProfile {
   fallback: boolean;
 }
 
+interface ResolveLayoutOptions {
+  nonComposable?: boolean;
+}
+
 const TEMPLATE_VERSION = "2026.06.02";
 
 function buildSlots(keys: string[]): LayoutSlot[] {
@@ -71,6 +75,13 @@ const LAYOUT_PROFILES: LayoutProfile[] = [
     slots: buildSlots(["left", "center", "right", "top", "bottom"]),
     fallback: true,
   },
+  {
+    layoutId: "non-composable-neutral",
+    discipline: null,
+    templateVersion: TEMPLATE_VERSION,
+    slots: buildSlots(["center"]),
+    fallback: true,
+  },
 ];
 
 function normalizeDiscipline(value: string | null | undefined): string | null {
@@ -83,13 +94,30 @@ function normalizeDiscipline(value: string | null | undefined): string | null {
 }
 
 function fallbackProfile(): LayoutProfile {
-  return LAYOUT_PROFILES.find((profile) => profile.fallback) ?? LAYOUT_PROFILES[0];
+  return LAYOUT_PROFILES.find((profile) => profile.layoutId === "mixed-neutral")
+    ?? LAYOUT_PROFILES.find((profile) => profile.fallback)
+    ?? LAYOUT_PROFILES[0];
+}
+
+function nonComposableFallbackProfile(): LayoutProfile {
+  return LAYOUT_PROFILES.find((profile) => profile.layoutId === "non-composable-neutral")
+    ?? fallbackProfile();
 }
 
 export function resolveLayoutProfile(
   discipline: string | null | undefined,
   itemCount: number,
+  options: ResolveLayoutOptions = {},
 ): LayoutProfile {
+  if (options.nonComposable || itemCount <= 0) {
+    const nonComposable = nonComposableFallbackProfile();
+
+    return {
+      ...nonComposable,
+      slots: nonComposable.slots.slice(0, 1),
+    };
+  }
+
   const normalizedDiscipline = normalizeDiscipline(discipline);
 
   const directMatch = LAYOUT_PROFILES.find(
