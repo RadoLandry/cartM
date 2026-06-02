@@ -1911,6 +1911,24 @@ export interface UpsertBundleRuleInput {
   discountValue: Prisma.Decimal | number | string;
 }
 
+export interface CreateBundleRuleInput extends Omit<UpsertBundleRuleInput, "id"> {
+  status?: BundleRuleStatus;
+}
+
+export interface UpdateBundleRuleInput {
+  id: string;
+  shop: string;
+  key?: string;
+  label?: string;
+  description?: string | null;
+  source?: BundleRuleSource;
+  status?: BundleRuleStatus;
+  priority?: number;
+  completionThreshold?: number;
+  discountType?: BundleDiscountType;
+  discountValue?: Prisma.Decimal | number | string;
+}
+
 export interface UpsertBundleRuleComponentInput {
   id?: string;
   bundleRuleId: string;
@@ -1924,6 +1942,147 @@ export interface UpsertBundleRuleComponentInput {
   acceptedShopifyProductIds?: string[];
   acceptedShopifyVariantIds?: string[];
   minQuantity?: number;
+}
+
+export interface LogBundleRuleAuditEventInput {
+  bundleRuleId: string;
+  actionType: "CREATED" | "UPDATED" | "STATUS_CHANGED" | "DUPLICATED" | "ARCHIVED";
+  actorId: string;
+  fromStatus?: BundleRuleStatus | null;
+  toStatus?: BundleRuleStatus | null;
+  changeSummary: Prisma.JsonValue;
+}
+
+export async function logBundleRuleAuditEvent(input: LogBundleRuleAuditEventInput) {
+  const {
+    bundleRuleId,
+    actionType,
+    actorId,
+    fromStatus = null,
+    toStatus = null,
+    changeSummary,
+  } = input;
+
+  const id = `bra_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  const payload = JSON.stringify(changeSummary ?? {});
+
+  return await db.$executeRaw(Prisma.sql`
+    INSERT INTO "BundleRuleAuditRecord"
+      ("id", "bundleRuleId", "actionType", "actorId", "fromStatus", "toStatus", "changeSummary", "createdAt")
+    VALUES
+      (
+        ${id},
+        ${bundleRuleId},
+        CAST(${actionType} AS "BundleRuleAuditAction"),
+        ${actorId},
+        CAST(${fromStatus} AS "BundleRuleStatus"),
+        CAST(${toStatus} AS "BundleRuleStatus"),
+        CAST(${payload} AS jsonb),
+        NOW()
+      )
+  `);
+}
+
+export async function createBundleRule(input: CreateBundleRuleInput) {
+  const {
+    shop,
+    key,
+    label,
+    description = null,
+    source = BundleRuleSource.MERCHANT,
+    status = BundleRuleStatus.DRAFT,
+    priority = 100,
+    completionThreshold = 0.8,
+    discountType,
+    discountValue,
+  } = input;
+
+  return await db.bundleRule.create({
+    data: {
+      shop,
+      key,
+      label,
+      description,
+      source,
+      status,
+      priority,
+      completionThreshold,
+      discountType,
+      discountValue,
+    },
+    include: {
+      components: {
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+      },
+    },
+  });
+}
+
+export async function updateBundleRule(input: UpdateBundleRuleInput) {
+  const {
+    id,
+    shop,
+    key,
+    label,
+    description,
+    source,
+    status,
+    priority,
+    completionThreshold,
+    discountType,
+    discountValue,
+  } = input;
+
+  const rule = await db.bundleRule.findFirst({
+    where: { id, shop },
+    select: { id: true },
+  });
+
+  if (!rule) {
+    return null;
+  }
+
+  const data: Prisma.BundleRuleUpdateInput = {
+    updatedAt: new Date(),
+  };
+
+  if (key !== undefined) {
+    data.key = key;
+  }
+  if (label !== undefined) {
+    data.label = label;
+  }
+  if (description !== undefined) {
+    data.description = description;
+  }
+  if (source !== undefined) {
+    data.source = source;
+  }
+  if (status !== undefined) {
+    data.status = status;
+  }
+  if (priority !== undefined) {
+    data.priority = priority;
+  }
+  if (completionThreshold !== undefined) {
+    data.completionThreshold = completionThreshold;
+  }
+  if (discountType !== undefined) {
+    data.discountType = discountType;
+  }
+  if (discountValue !== undefined) {
+    data.discountValue = discountValue;
+  }
+
+  return await db.bundleRule.update({
+    where: { id: rule.id },
+    data,
+    include: {
+      components: {
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+      },
+    },
+  });
 }
 
 export async function upsertBundleRule(input: UpsertBundleRuleInput) {
@@ -1942,9 +2101,9 @@ export async function upsertBundleRule(input: UpsertBundleRuleInput) {
   } = input;
 
   if (id) {
-    return await db.bundleRule.update({
-      where: { id },
-      data: {
+      return await updateBundleRule({
+        id,
+        shop,
         key,
         label,
         description,
@@ -1954,14 +2113,7 @@ export async function upsertBundleRule(input: UpsertBundleRuleInput) {
         completionThreshold,
         discountType,
         discountValue,
-        updatedAt: new Date(),
-      },
-      include: {
-        components: {
-          orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
-        },
-      },
-    });
+      });
   }
 
   return await db.bundleRule.upsert({

@@ -426,7 +426,16 @@ enum BundleRuleSource {
 
 enum BundleRuleStatus {
   ACTIVE
+  PAUSED
   DRAFT
+  ARCHIVED
+}
+
+enum BundleRuleAuditAction {
+  CREATED
+  UPDATED
+  STATUS_CHANGED
+  DUPLICATED
   ARCHIVED
 }
 
@@ -556,9 +565,25 @@ model BundleRule {
   createdAt           DateTime           @default(now())
   updatedAt           DateTime           @updatedAt
   components          BundleRuleComponent[]
+  auditRecords        BundleRuleAuditRecord[]
 
   @@unique([shop, key])
   @@index([shop, status, priority])
+}
+
+model BundleRuleAuditRecord {
+  id            String              @id @default(cuid())
+  bundleRuleId  String
+  actionType    BundleRuleAuditAction
+  actorId       String
+  fromStatus    BundleRuleStatus?
+  toStatus      BundleRuleStatus?
+  changeSummary Json
+  createdAt     DateTime            @default(now())
+  bundleRule    BundleRule          @relation(fields: [bundleRuleId], references: [id], onDelete: Cascade)
+
+  @@index([bundleRuleId, createdAt])
+  @@index([actionType, createdAt])
 }
 
 model BundleRuleComponent {

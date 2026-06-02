@@ -56,11 +56,136 @@ export interface BundleMatch {
 
 export interface BundleDetectionResult {
   matches: BundleMatch[];
+  winningMatch: BundleMatch | null;
   summary: {
     qualifiedCount: number;
     nearCompleteCount: number;
     competingOfferCount: number;
   };
+}
+
+export interface BundleActivationValidationIssue {
+  code: string;
+  message: string;
+}
+
+type BundleActivationValidationInput = Pick<
+  BundleRuleRecord,
+  "label" | "components" | "completionThreshold" | "discountType" | "discountValue"
+> & {
+  startsAt?: string | Date | null;
+  endsAt?: string | Date | null;
+};
+
+function parseDateInput(value: string | Date | null | undefined): Date | null {
+  if (!value) {
+    return null;
+  }
+
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+export function validateBundleRuleActivation(
+  input: BundleActivationValidationInput,
+  now = new Date(),
+): BundleActivationValidationIssue[] {
+  const issues: BundleActivationValidationIssue[] = [];
+  const requiredComponents = input.components.filter((component) => component.isRequired);
+
+  if (requiredComponents.length === 0) {
+    issues.push({
+      code: "required_components_missing",
+      message: "At least one required component is needed before activation.",
+    });
+  }
+
+  if (input.components.length === 0) {
+    issues.push({
+      code: "components_missing",
+      message: "Add at least one bundle component before activation.",
+    });
+  }
+
+  if (input.completionThreshold <= 0 || input.completionThreshold > 1) {
+    issues.push({
+      code: "invalid_completion_threshold",
+      message: "Completion threshold must be greater than 0 and at most 1.",
+    });
+  }
+
+  const discountValue = Number.parseFloat(input.discountValue);
+  if (!Number.isFinite(discountValue) || discountValue <= 0) {
+    issues.push({
+      code: "invalid_discount_value",
+      message: "Discount value must be a positive number.",
+    });
+  }
+
+  if (input.discountType === BundleDiscountType.PERCENTAGE && discountValue > 100) {
+    issues.push({
+      code: "invalid_percentage_discount",
+      message: "Percentage discounts must be 100 or less.",
+    });
+  }
+
+  const startsAt = parseDateInput(input.startsAt);
+  const endsAt = parseDateInput(input.endsAt);
+  if (startsAt && endsAt && endsAt.getTime() <= startsAt.getTime()) {
+    issues.push({
+      code: "invalid_schedule_window",
+      message: "End time must be after start time.",
+    });
+  }
+
+  if (endsAt && endsAt.getTime() <= now.getTime()) {
+    issues.push({
+      code: "expired_schedule",
+      message: "Rule schedule has already ended and cannot be activated.",
+    });
+  }
+
+  return issues;
+}
+
+const STATUS_RANK: Record<BundleMatchStatus, number> = {
+  qualified: 0,
+  nearly_complete: 1,
+  partial: 2,
+  not_applicable: 3,
+};
+
+function parseDiscountValue(match: BundleMatch): number {
+  const parsed = Number.parseFloat(match.savings.discountValue);
+  return Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER;
+}
+
+function compareBundleMatches(left: BundleMatch, right: BundleMatch): number {
+  const statusRank = STATUS_RANK[left.status] - STATUS_RANK[right.status];
+  if (statusRank !== 0) {
+    return statusRank;
+  }
+
+  const priorityRank = left.priority - right.priority;
+  if (priorityRank !== 0) {
+    return priorityRank;
+  }
+
+  const coverageRank = right.coverageRatio - left.coverageRatio;
+  if (coverageRank !== 0) {
+    return coverageRank;
+  }
+
+  const discountRank = parseDiscountValue(left) - parseDiscountValue(right);
+  if (discountRank !== 0) {
+    return discountRank;
+  }
+
+  return left.bundleKey.localeCompare(right.bundleKey);
 }
 
 function round(value: number): number {
@@ -247,6 +372,7 @@ export function detectBundles(input: BundleDetectionRequest): BundleDetectionRes
   if (cartItems.length === 0 || bundleRules.length === 0) {
     return {
       matches: [],
+      winningMatch: null,
       summary: {
         qualifiedCount: 0,
         nearCompleteCount: 0,
@@ -292,12 +418,16 @@ export function detectBundles(input: BundleDetectionRequest): BundleDetectionRes
     } satisfies BundleMatch;
   }));
 
+  const sortedMatches = [...matches].sort(compareBundleMatches);
+  const winningMatch = sortedMatches[0] ?? null;
+
   return {
-    matches,
+    matches: sortedMatches,
+    winningMatch,
     summary: {
-      qualifiedCount: matches.filter((match) => match.status === "qualified").length,
-      nearCompleteCount: matches.filter((match) => match.status === "nearly_complete").length,
-      competingOfferCount: matches.filter((match) => match.competitionGroupKeys.length > 0).length,
+      qualifiedCount: sortedMatches.filter((match) => match.status === "qualified").length,
+      nearCompleteCount: sortedMatches.filter((match) => match.status === "nearly_complete").length,
+      competingOfferCount: sortedMatches.filter((match) => match.competitionGroupKeys.length > 0).length,
     },
   };
 }

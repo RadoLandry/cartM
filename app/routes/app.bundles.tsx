@@ -1,33 +1,43 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { Form, useActionData, useLoaderData } from "react-router";
+import { useActionData, useLoaderData } from "react-router";
 import { z } from "zod";
 
 import {
-  Banner,
   BlockStack,
-  Button,
   Card,
-  EmptyState,
   InlineStack,
   Page,
   Text,
-  TextField,
 } from "@shopify/polaris";
 import { BundleDiscountType, BundleRuleStatus } from "@prisma/client";
 
+import { BundleRuleForm } from "../components/admin/BundleRuleForm";
+import { BundleRuleList } from "../components/admin/BundleRuleList";
+import { BundleRulePreviewPanel } from "../components/admin/BundleRulePreviewPanel";
+
 import {
   archiveBundleRule,
+  createBundleRule,
   deleteBundleRuleComponent,
   getBundleRuleById,
   getDistinctProductCategoryTagsForShop,
   listBundlePreviewCartItems,
   listBundleRulesForShop,
   listProductsForBundleEditor,
-  upsertBundleRule,
+  logBundleRuleAuditEvent,
+  updateBundleRule,
   upsertBundleRuleComponent,
 } from "../lib/db/queries";
-import { detectBundles } from "../lib/cart-intelligence/bundles";
+import {
+  detectBundles,
+  validateBundleRuleActivation,
+} from "../lib/cart-intelligence/bundles";
 import { authenticate } from "../shopify.server";
+
+const OptionalStringSchema = z.preprocess(
+  (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+  z.string().optional(),
+);
 
 const SaveBundleRuleSchema = z.object({
   id: z.string().optional(),
@@ -39,6 +49,59 @@ const SaveBundleRuleSchema = z.object({
   completionThreshold: z.coerce.number().gt(0).lte(1),
   discountType: z.nativeEnum(BundleDiscountType),
   discountValue: z.string().min(1),
+});
+
+const CreateBundleRuleSchema = z.object({
+  key: z.string().min(1),
+  label: z.string().min(1),
+  description: OptionalStringSchema,
+  priority: z.coerce.number().int().min(0).default(100),
+  completionThreshold: z.coerce.number().gt(0).lte(1),
+  discountType: z.nativeEnum(BundleDiscountType),
+  discountValue: z.string().min(1),
+});
+
+const UpdateBundleRuleSchema = z.object({
+  bundleRuleId: z.string().min(1),
+  key: OptionalStringSchema,
+  label: OptionalStringSchema,
+  description: z.preprocess(
+    (value) => (value === undefined ? undefined : value),
+    z.string().nullable().optional(),
+  ),
+  priority: z.preprocess(
+    (value) => (value === undefined || value === null || value === "" ? undefined : value),
+    z.coerce.number().int().min(0).optional(),
+  ),
+  completionThreshold: z.preprocess(
+    (value) => (value === undefined || value === null || value === "" ? undefined : value),
+    z.coerce.number().gt(0).lte(1).optional(),
+  ),
+  discountType: z.preprocess(
+    (value) => (value === undefined || value === null || value === "" ? undefined : value),
+    z.nativeEnum(BundleDiscountType).optional(),
+  ),
+  discountValue: OptionalStringSchema,
+  status: z.preprocess(
+    (value) => (value === undefined || value === null || value === "" ? undefined : value),
+    z.nativeEnum(BundleRuleStatus).optional(),
+  ),
+}).refine((data) => {
+  const mutableFields = [
+    data.key,
+    data.label,
+    data.description,
+    data.priority,
+    data.completionThreshold,
+    data.discountType,
+    data.discountValue,
+    data.status,
+  ];
+
+  return mutableFields.some((value) => value !== undefined);
+}, {
+  message: "At least one mutable field is required for updates.",
+  path: ["bundleRuleId"],
 });
 
 const SaveBundleComponentSchema = z.object({
@@ -68,6 +131,11 @@ const PreviewBundleRuleSchema = z.object({
   cartFixture: z.string().min(2),
 });
 
+const TransitionBundleRuleSchema = z.object({
+  bundleRuleId: z.string().min(1),
+  toStatus: z.literal(BundleRuleStatus.ACTIVE),
+});
+
 const PreviewCartFixtureSchema = z.array(z.object({
   productId: z.string().min(1),
   variantId: z.string().min(1),
@@ -81,18 +149,51 @@ function parseCsvList(raw: string | undefined) {
     .filter(Boolean);
 }
 
+function formatSchemaError(error: z.ZodError): string {
+  return error.issues
+    .map((issue) => {
+      const field = issue.path.join(".") || "form";
+      return `${field}: ${issue.message}`;
+    })
+    .join("; ");
+}
+
+function toNullableString(value: string | undefined) {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  return value.trim() === "" ? null : value;
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
+  const selectedRuleId = new URL(request.url).searchParams.get("ruleId");
+
   const [bundleRules, products, categoryTags] = await Promise.all([
     listBundleRulesForShop(session.shop),
     listProductsForBundleEditor(session.shop),
     getDistinctProductCategoryTagsForShop(session.shop),
   ]);
 
+  const selectedRule = selectedRuleId
+    ? bundleRules.find((rule) => rule.id === selectedRuleId) ?? null
+    : null;
+
+  const validationByRuleId = Object.fromEntries(
+    bundleRules.map((rule) => [
+      rule.id,
+      validateBundleRuleActivation(rule).map((issue) => issue.message),
+    ]),
+  );
+
   return {
     bundleRules,
     products,
     categoryTags,
+    selectedRule,
+    selectedRuleId,
+    validationByRuleId,
   };
 };
 
@@ -102,23 +203,136 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
   const intent = String(formData.get("intent") ?? "");
 
-  if (intent === "save-bundle-rule") {
-    const parsed = SaveBundleRuleSchema.safeParse(Object.fromEntries(formData));
+  if (intent === "create-bundle-rule") {
+    const parsed = CreateBundleRuleSchema.safeParse(Object.fromEntries(formData));
     if (!parsed.success) {
-      return { ok: false, intent, error: parsed.error.message };
-    }
-
-    if (parsed.data.status === BundleRuleStatus.ACTIVE) {
-      const existingRule = parsed.data.id ? await getBundleRuleById(parsed.data.id) : null;
-      if (!existingRule || !existingRule.components.some((component) => component.isRequired)) {
-        return { ok: false, intent, error: "active_rule_requires_required_component" };
-      }
+      return { ok: false, intent, error: formatSchemaError(parsed.error) };
     }
 
     try {
-      await upsertBundleRule({
+      const rule = await createBundleRule({
         shop: session.shop,
-        ...parsed.data,
+        key: parsed.data.key,
+        label: parsed.data.label,
+        description: parsed.data.description ?? null,
+        priority: parsed.data.priority,
+        completionThreshold: parsed.data.completionThreshold,
+        discountType: parsed.data.discountType,
+        discountValue: parsed.data.discountValue,
+      });
+
+      await logBundleRuleAuditEvent({
+        bundleRuleId: rule.id,
+        actionType: "CREATED",
+        actorId: session.shop,
+        changeSummary: {
+          key: rule.key,
+          label: rule.label,
+          status: rule.status,
+        },
+      });
+
+      return { ok: true, intent, ruleId: rule.id };
+    } catch (err: unknown) {
+      if (typeof err === "object" && err !== null && "code" in err && (err as { code: string }).code === "P2002") {
+        return { ok: false, intent, error: "A bundle rule with this key already exists." };
+      }
+
+      throw err;
+    }
+  }
+
+  if (intent === "update-bundle-rule") {
+    const parsed = UpdateBundleRuleSchema.safeParse(Object.fromEntries(formData));
+    if (!parsed.success) {
+      return { ok: false, intent, error: formatSchemaError(parsed.error) };
+    }
+
+    const updatedRule = await updateBundleRule({
+      id: parsed.data.bundleRuleId,
+      shop: session.shop,
+      key: parsed.data.key,
+      label: parsed.data.label,
+      description: toNullableString(parsed.data.description ?? undefined),
+      priority: parsed.data.priority,
+      completionThreshold: parsed.data.completionThreshold,
+      discountType: parsed.data.discountType,
+      discountValue: parsed.data.discountValue,
+      status: parsed.data.status,
+    });
+
+    if (!updatedRule) {
+      return { ok: false, intent, error: "Bundle rule not found." };
+    }
+
+    await logBundleRuleAuditEvent({
+      bundleRuleId: updatedRule.id,
+      actionType: "UPDATED",
+      actorId: session.shop,
+      changeSummary: {
+        fields: Object.keys(parsed.data).filter((key) => key !== "bundleRuleId"),
+      },
+    });
+
+    return { ok: true, intent, ruleId: updatedRule.id };
+  }
+
+  if (intent === "save-bundle-rule") {
+    const parsed = SaveBundleRuleSchema.safeParse(Object.fromEntries(formData));
+    if (!parsed.success) {
+      return { ok: false, intent, error: formatSchemaError(parsed.error) };
+    }
+
+    if (parsed.data.id) {
+      const updatedRule = await updateBundleRule({
+        id: parsed.data.id,
+        shop: session.shop,
+        key: parsed.data.key,
+        label: parsed.data.label,
+        description: parsed.data.description ?? null,
+        status: parsed.data.status,
+        priority: parsed.data.priority,
+        completionThreshold: parsed.data.completionThreshold,
+        discountType: parsed.data.discountType,
+        discountValue: parsed.data.discountValue,
+      });
+
+      if (!updatedRule) {
+        return { ok: false, intent, error: "not_found" };
+      }
+
+      await logBundleRuleAuditEvent({
+        bundleRuleId: updatedRule.id,
+        actionType: "UPDATED",
+        actorId: session.shop,
+        changeSummary: {
+          sourceIntent: "save-bundle-rule",
+        },
+      });
+
+      return { ok: true, intent, ruleId: updatedRule.id };
+    }
+
+    try {
+      const createdRule = await createBundleRule({
+        shop: session.shop,
+        key: parsed.data.key,
+        label: parsed.data.label,
+        description: parsed.data.description ?? null,
+        status: parsed.data.status,
+        priority: parsed.data.priority,
+        completionThreshold: parsed.data.completionThreshold,
+        discountType: parsed.data.discountType,
+        discountValue: parsed.data.discountValue,
+      });
+
+      await logBundleRuleAuditEvent({
+        bundleRuleId: createdRule.id,
+        actionType: "CREATED",
+        actorId: session.shop,
+        changeSummary: {
+          sourceIntent: "save-bundle-rule",
+        },
       });
     } catch (err: unknown) {
       if (typeof err === "object" && err !== null && "code" in err && (err as { code: string }).code === "P2002") {
@@ -134,7 +348,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (intent === "save-bundle-component") {
     const parsed = SaveBundleComponentSchema.safeParse(Object.fromEntries(formData));
     if (!parsed.success) {
-      return { ok: false, intent, error: parsed.error.message };
+      return { ok: false, intent, error: formatSchemaError(parsed.error) };
     }
 
     await upsertBundleRuleComponent({
@@ -150,7 +364,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (intent === "delete-bundle-component") {
     const parsed = DeleteBundleComponentSchema.safeParse(Object.fromEntries(formData));
     if (!parsed.success) {
-      return { ok: false, intent, error: parsed.error.message };
+      return { ok: false, intent, error: formatSchemaError(parsed.error) };
     }
 
     await deleteBundleRuleComponent(parsed.data.componentId);
@@ -160,17 +374,73 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (intent === "archive-bundle-rule") {
     const parsed = ArchiveBundleRuleSchema.safeParse(Object.fromEntries(formData));
     if (!parsed.success) {
-      return { ok: false, intent, error: parsed.error.message };
+      return { ok: false, intent, error: formatSchemaError(parsed.error) };
     }
 
     await archiveBundleRule(parsed.data.bundleRuleId);
     return { ok: true, intent };
   }
 
+  if (intent === "transition-bundle-rule-status") {
+    const parsed = TransitionBundleRuleSchema.safeParse(Object.fromEntries(formData));
+    if (!parsed.success) {
+      return { ok: false, intent, error: formatSchemaError(parsed.error) };
+    }
+
+    const rule = await getBundleRuleById(parsed.data.bundleRuleId);
+    if (!rule) {
+      return { ok: false, intent, error: "not_found" };
+    }
+
+    if (rule.status !== BundleRuleStatus.DRAFT) {
+      return { ok: false, intent, error: `invalid_transition_from_${rule.status.toLowerCase()}` };
+    }
+
+    const validationIssues = validateBundleRuleActivation(rule);
+    if (validationIssues.length > 0) {
+      return {
+        ok: false,
+        intent,
+        error: "activation_validation_failed",
+        validationIssues,
+        ruleId: rule.id,
+      };
+    }
+
+    const updatedRule = await updateBundleRule({
+      id: rule.id,
+      shop: session.shop,
+      status: parsed.data.toStatus,
+    });
+
+    if (!updatedRule) {
+      return { ok: false, intent, error: "not_found" };
+    }
+
+    await logBundleRuleAuditEvent({
+      bundleRuleId: updatedRule.id,
+      actionType: "STATUS_CHANGED",
+      actorId: session.shop,
+      fromStatus: rule.status,
+      toStatus: updatedRule.status,
+      changeSummary: {
+        from: rule.status,
+        to: updatedRule.status,
+      },
+    });
+
+    return {
+      ok: true,
+      intent,
+      ruleId: updatedRule.id,
+      status: updatedRule.status,
+    };
+  }
+
   if (intent === "preview-bundle-rule") {
     const parsed = PreviewBundleRuleSchema.safeParse(Object.fromEntries(formData));
     if (!parsed.success) {
-      return { ok: false, intent, error: parsed.error.message };
+      return { ok: false, intent, error: formatSchemaError(parsed.error) };
     }
 
     const cartFixture = PreviewCartFixtureSchema.safeParse(JSON.parse(parsed.data.cartFixture));
@@ -204,15 +474,9 @@ export default function BundleRulesPage() {
     <Page
       title="Bundle manager"
       subtitle="Configure deterministic bundle rules that power cart qualification and completion guidance."
-      primaryAction={{ content: "Create bundle rule", disabled: true }}
+      primaryAction={{ content: "Create bundle rule", url: "/app/bundles" }}
     >
       <BlockStack gap="500">
-        {actionData?.error ? (
-          <Banner tone="warning">
-            <p>{actionData.error}</p>
-          </Banner>
-        ) : null}
-
         <Card>
           <BlockStack gap="300">
             <InlineStack align="space-between">
@@ -224,68 +488,32 @@ export default function BundleRulesPage() {
               </Text>
             </InlineStack>
 
-            {data.bundleRules.length === 0 ? (
-              <EmptyState
-                heading="No bundle rules yet"
-                image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
-              >
-                <p>Bundle rules created here will become the source of truth for deterministic cart offers.</p>
-              </EmptyState>
-            ) : (
-              <BlockStack gap="200">
-                {data.bundleRules.map((rule) => (
-                  <Card key={rule.id}>
-                    <BlockStack gap="200">
-                      <InlineStack align="space-between">
-                        <Text as="h3" variant="headingSm">
-                          {rule.label}
-                        </Text>
-                        <Text as="span" variant="bodySm" tone="subdued">
-                          {rule.status} · Priority {rule.priority}
-                        </Text>
-                      </InlineStack>
-                      <Text as="p" variant="bodyMd">
-                        {rule.description || "No description yet."}
-                      </Text>
-                      <Text as="p" variant="bodySm" tone="subdued">
-                        {rule.components.length} component(s) · {rule.discountType} {rule.discountValue}
-                      </Text>
-                    </BlockStack>
-                  </Card>
-                ))}
-              </BlockStack>
-            )}
+            <BundleRuleList
+              bundleRules={data.bundleRules}
+              selectedRuleId={data.selectedRuleId}
+              validationByRuleId={data.validationByRuleId}
+            />
           </BlockStack>
         </Card>
 
         <Card>
           <BlockStack gap="300">
             <Text as="h2" variant="headingMd">
-              Action scaffolding
+              Create and edit
             </Text>
-            <Text as="p" variant="bodySm" tone="subdued">
-              The route already validates the bundle action contracts; persistence and preview execution are wired next.
-            </Text>
-            <Form method="post">
-              <BlockStack gap="300">
-                <input type="hidden" name="intent" value="save-bundle-rule" />
-                <TextField label="Bundle key" name="key" autoComplete="off" />
-                <TextField label="Bundle label" name="label" autoComplete="off" />
-                <Button submit>Validate save-bundle-rule intent</Button>
-              </BlockStack>
-            </Form>
+            <BundleRuleForm
+              selectedRule={data.selectedRule}
+              categoryTags={data.categoryTags}
+              actionData={actionData}
+            />
           </BlockStack>
         </Card>
 
         <Card>
-          <BlockStack gap="200">
-            <Text as="h2" variant="headingMd">
-              Editor inputs
-            </Text>
-            <Text as="p" variant="bodySm" tone="subdued">
-              {data.products.length} products and {data.categoryTags.length} category tags are available for upcoming bundle-rule editing flows.
-            </Text>
-          </BlockStack>
+          <BundleRulePreviewPanel
+            productCount={data.products.length}
+            categoryCount={data.categoryTags.length}
+          />
         </Card>
       </BlockStack>
     </Page>

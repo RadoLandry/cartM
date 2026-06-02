@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { action, loader } from "../../../app/routes/app.bundles";
-import { detectBundles } from "../../../app/lib/cart-intelligence/bundles";
+import { detectBundles, validateBundleRuleActivation } from "../../../app/lib/cart-intelligence/bundles";
 import * as dbQueries from "../../../app/lib/db/queries";
 import { authenticate } from "../../../app/shopify.server";
 
@@ -13,16 +13,20 @@ vi.mock("../../../app/shopify.server", () => ({
 
 vi.mock("../../../app/lib/cart-intelligence/bundles", () => ({
   detectBundles: vi.fn(),
+  validateBundleRuleActivation: vi.fn(() => []),
 }));
 
 vi.mock("../../../app/lib/db/queries", () => ({
   archiveBundleRule: vi.fn(),
+  createBundleRule: vi.fn(),
   deleteBundleRuleComponent: vi.fn(),
   getBundleRuleById: vi.fn(),
   getDistinctProductCategoryTagsForShop: vi.fn(),
   listBundlePreviewCartItems: vi.fn(),
   listBundleRulesForShop: vi.fn(),
   listProductsForBundleEditor: vi.fn(),
+  logBundleRuleAuditEvent: vi.fn(),
+  updateBundleRule: vi.fn(),
   upsertBundleRule: vi.fn(),
   upsertBundleRuleComponent: vi.fn(),
 }));
@@ -31,6 +35,7 @@ describe("bundle rule manager route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(authenticate.admin).mockResolvedValue({ session: { shop: "test.myshopify.com" } } as never);
+    vi.mocked(validateBundleRuleActivation).mockReturnValue([]);
     vi.mocked(dbQueries.listBundleRulesForShop).mockResolvedValue([] as never);
     vi.mocked(dbQueries.listProductsForBundleEditor).mockResolvedValue([] as never);
     vi.mocked(dbQueries.getDistinctProductCategoryTagsForShop).mockResolvedValue([] as never);
@@ -55,6 +60,8 @@ describe("bundle rule manager route", () => {
   });
 
   it("saves a bundle rule shell", async () => {
+    vi.mocked(dbQueries.createBundleRule).mockResolvedValueOnce({ id: "bundle-1", status: "DRAFT" } as never);
+
     const request = new Request("http://localhost/app/bundles", {
       method: "POST",
       body: new URLSearchParams({
@@ -72,7 +79,7 @@ describe("bundle rule manager route", () => {
 
     const result = await action({ request, params: {}, context: {} } as never);
 
-    expect(dbQueries.upsertBundleRule).toHaveBeenCalledWith({
+    expect(dbQueries.createBundleRule).toHaveBeenCalledWith({
       shop: "test.myshopify.com",
       key: "boxing-starter-bundle",
       label: "Boxing Starter Bundle",
@@ -134,6 +141,107 @@ describe("bundle rule manager route", () => {
 
     expect(dbQueries.archiveBundleRule).toHaveBeenCalledWith("bundle-1");
     expect(result).toEqual({ ok: true, intent: "archive-bundle-rule" });
+  });
+
+  it("creates a bundle rule via create-bundle-rule intent", async () => {
+    vi.mocked(dbQueries.createBundleRule).mockResolvedValueOnce({
+      id: "bundle-2",
+      key: "kickboxing-starter",
+      label: "Kickboxing Starter",
+      status: "DRAFT",
+      components: [],
+    } as never);
+
+    const request = new Request("http://localhost/app/bundles", {
+      method: "POST",
+      body: new URLSearchParams({
+        intent: "create-bundle-rule",
+        key: "kickboxing-starter",
+        label: "Kickboxing Starter",
+        description: "Kickboxing essentials",
+        priority: "20",
+        completionThreshold: "0.75",
+        discountType: "PERCENTAGE",
+        discountValue: "12.5",
+      }),
+    });
+
+    const result = await action({ request, params: {}, context: {} } as never);
+
+    expect(dbQueries.createBundleRule).toHaveBeenCalledWith(expect.objectContaining({
+      shop: "test.myshopify.com",
+      key: "kickboxing-starter",
+      label: "Kickboxing Starter",
+    }));
+    expect(result).toEqual({ ok: true, intent: "create-bundle-rule", ruleId: "bundle-2" });
+  });
+
+  it("updates only provided fields for update-bundle-rule intent", async () => {
+    vi.mocked(dbQueries.updateBundleRule).mockResolvedValueOnce({
+      id: "bundle-1",
+      status: "DRAFT",
+    } as never);
+
+    const request = new Request("http://localhost/app/bundles", {
+      method: "POST",
+      body: new URLSearchParams({
+        intent: "update-bundle-rule",
+        bundleRuleId: "bundle-1",
+        label: "Updated Label",
+      }),
+    });
+
+    const result = await action({ request, params: {}, context: {} } as never);
+
+    expect(dbQueries.updateBundleRule).toHaveBeenCalledWith(expect.objectContaining({
+      id: "bundle-1",
+      shop: "test.myshopify.com",
+      label: "Updated Label",
+    }));
+    expect(dbQueries.updateBundleRule).not.toHaveBeenCalledWith(expect.objectContaining({ key: "" }));
+    expect(result).toEqual({ ok: true, intent: "update-bundle-rule", ruleId: "bundle-1" });
+  });
+
+  it("blocks draft to active transition when activation validation fails", async () => {
+    vi.mocked(validateBundleRuleActivation).mockReturnValueOnce([
+      {
+        code: "required_components_missing",
+        message: "At least one required component is needed before activation.",
+      },
+    ]);
+
+    vi.mocked(dbQueries.getBundleRuleById).mockResolvedValueOnce({
+      id: "bundle-1",
+      key: "starter",
+      label: "Starter",
+      description: null,
+      source: "MERCHANT",
+      status: "DRAFT",
+      priority: 10,
+      completionThreshold: 0.8,
+      discountType: "PERCENTAGE",
+      discountValue: "10.00",
+      components: [],
+    } as never);
+
+    const request = new Request("http://localhost/app/bundles", {
+      method: "POST",
+      body: new URLSearchParams({
+        intent: "transition-bundle-rule-status",
+        bundleRuleId: "bundle-1",
+        toStatus: "ACTIVE",
+      }),
+    });
+
+    const result = await action({ request, params: {}, context: {} } as never);
+
+    expect(dbQueries.updateBundleRule).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      ok: false,
+      intent: "transition-bundle-rule-status",
+      error: "activation_validation_failed",
+      ruleId: "bundle-1",
+    });
   });
 
   it("previews a bundle rule against a supplied cart fixture", async () => {
