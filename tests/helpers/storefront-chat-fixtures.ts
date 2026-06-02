@@ -156,6 +156,8 @@ export function makeStorefrontChatSessionState(
     streamToken: undefined,
     streamTokenExpiresAt: undefined,
     chatUrl: undefined,
+    actionHistory: [],
+    pendingActionId: undefined,
     ...overrides,
   };
 }

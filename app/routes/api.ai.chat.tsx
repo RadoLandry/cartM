@@ -2,6 +2,7 @@ import type { ActionFunctionArgs } from "react-router";
 
 import { StorefrontChatRequestSchema } from "../lib/ai/schemas";
 import { buildStorefrontChatStreamParts } from "../lib/ai/storefront-chat";
+import { buildCartToolActionProposal } from "../lib/ai/tools";
 import {
   assertAllowedStorefrontOrigin,
   verifyStorefrontChatToken,
@@ -73,11 +74,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   const streamParts = buildStorefrontChatStreamParts(parsed.data);
+  const actionProposal = buildCartToolActionProposal(parsed.data);
+  const partsWithToolEvents = actionProposal
+    ? [
+      ...streamParts.filter((part) => part.type !== "message-complete"),
+      {
+        type: "tool-action-proposed" as const,
+        action: actionProposal,
+      },
+      ...streamParts.filter((part) => part.type === "message-complete"),
+    ]
+    : streamParts;
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      for (const part of streamParts) {
+      for (const part of partsWithToolEvents) {
         controller.enqueue(encoder.encode(encodeSseEvent(part)));
       }
       controller.close();

@@ -1,6 +1,7 @@
 import { useEffect, useRef, type Dispatch } from "react";
 
 import {
+  type CartToolAction,
   StorefrontChatBootstrapResponseSchema,
   StorefrontChatStreamPartSchema,
 } from "../../../app/lib/ai/schemas";
@@ -198,6 +199,17 @@ export function useStorefrontChat({
           case "text-delta":
             dispatch({ type: "assistant_text_delta", messageId: assistantMessageId, text: part.text });
             break;
+          case "tool-action-proposed":
+            dispatch({ type: "tool_action_proposed", messageId: assistantMessageId, action: part.action });
+            break;
+          case "tool-action-status":
+            dispatch({
+              type: "tool_action_status",
+              actionId: part.actionId,
+              status: part.status,
+              summary: part.summary,
+            });
+            break;
           case "guidance-block":
             dispatch({ type: "guidance_block_added", messageId: assistantMessageId, block: part.block });
             break;
@@ -257,8 +269,59 @@ export function useStorefrontChat({
     return await submitMessage(retryMessage);
   }
 
+  async function submitActionConfirmation(action: CartToolAction, decision: "approve" | "decline") {
+    const currentCart = await getCurrentCartSnapshot();
+    const requestUrl = new URL(config.bootstrapUrl);
+    const confirmationUrl = new URL("/api/ai/chat/actions/confirm", requestUrl.origin);
+
+    dispatch({ type: "action_confirmation_requested", actionId: action.actionId });
+
+    try {
+      const response = await fetchImpl(confirmationUrl.toString(), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          shop: config.shop,
+          sessionKey: action.sessionKey,
+          actionId: action.actionId,
+          confirmationToken: action.confirmationToken,
+          decision,
+          cart: currentCart,
+        }),
+      });
+
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.error?.message || `Confirmation failed with status ${response.status}.`);
+      }
+
+      dispatch({
+        type: "tool_action_status",
+        actionId: payload.result.actionId,
+        status: payload.result.status,
+        summary: payload.result.summary,
+      });
+      dispatch({ type: "action_confirmation_finished", actionId: action.actionId });
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to confirm this cart action.";
+      dispatch({
+        type: "tool_action_status",
+        actionId: action.actionId,
+        status: "failed",
+        summary: message,
+      });
+      dispatch({ type: "action_confirmation_failed", actionId: action.actionId, error: message });
+      return false;
+    }
+  }
+
   return {
     submitMessage,
     retryLastMessage,
+    submitActionConfirmation,
   };
 }

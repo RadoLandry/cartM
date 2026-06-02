@@ -11,6 +11,16 @@ interface StreamTokenPayload {
   exp: number;
 }
 
+const ACTION_CONFIRMATION_TOKEN_TTL_MS = 2 * 60 * 1000;
+
+interface ActionConfirmationTokenPayload {
+  actionId: string;
+  shop: string;
+  sessionKey: string;
+  cartId?: string;
+  exp: number;
+}
+
 function getSigningSecret() {
   const secret = process.env.STOREFRONT_CHAT_SIGNING_SECRET || process.env.SHOPIFY_API_SECRET;
 
@@ -114,4 +124,65 @@ export function assertAllowedStorefrontOrigin(request: Request, shop: string) {
   }
 
   return { ok: true as const, origin };
+}
+
+export function issueActionConfirmationToken(input: {
+  actionId: string;
+  shop: string;
+  sessionKey: string;
+  cartId?: string;
+}) {
+  const payload: ActionConfirmationTokenPayload = {
+    actionId: input.actionId,
+    shop: input.shop,
+    sessionKey: input.sessionKey,
+    ...(input.cartId ? { cartId: input.cartId } : {}),
+    exp: Date.now() + ACTION_CONFIRMATION_TOKEN_TTL_MS,
+  };
+
+  const encodedPayload = base64UrlEncode(JSON.stringify(payload));
+  const signature = sign(encodedPayload);
+
+  return {
+    token: `${encodedPayload}.${signature}`,
+    expiresAt: new Date(payload.exp).toISOString(),
+  };
+}
+
+export function verifyActionConfirmationToken(token: string) {
+  const [encodedPayload, signature] = token.split(".");
+
+  if (!encodedPayload || !signature) {
+    return { ok: false as const, code: "INVALID_TOKEN", message: "Confirmation token is malformed." };
+  }
+
+  const expectedSignature = sign(encodedPayload);
+  const providedBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expectedSignature);
+
+  if (providedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(providedBuffer, expectedBuffer)) {
+    return { ok: false as const, code: "INVALID_TOKEN", message: "Confirmation token could not be verified." };
+  }
+
+  let payload: ActionConfirmationTokenPayload;
+
+  try {
+    payload = JSON.parse(base64UrlDecode(encodedPayload)) as ActionConfirmationTokenPayload;
+  } catch {
+    return { ok: false as const, code: "INVALID_TOKEN", message: "Confirmation token payload is invalid." };
+  }
+
+  if (!payload.actionId || !payload.shop || !payload.sessionKey || typeof payload.exp !== "number") {
+    return { ok: false as const, code: "INVALID_TOKEN", message: "Confirmation token payload is missing required fields." };
+  }
+
+  if (payload.exp <= Date.now()) {
+    return {
+      ok: false as const,
+      code: "ACTION_EXPIRED",
+      message: "This action expired. Please ask again to create a new proposal.",
+    };
+  }
+
+  return { ok: true as const, payload };
 }

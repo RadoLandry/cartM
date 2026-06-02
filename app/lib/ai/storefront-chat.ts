@@ -1,6 +1,120 @@
 import type { StorefrontChatRequest, StorefrontChatStreamPart, StructuredGuidanceBlock } from "./schemas";
 import { buildStorefrontChatSystemPrompt } from "./prompts";
 
+export const CART_TOOL_ACTION_STATUSES = [
+  "proposed",
+  "approved",
+  "declined",
+  "expired",
+  "executing",
+  "executed",
+  "failed",
+] as const;
+
+export type CartToolActionLifecycleStatus = (typeof CART_TOOL_ACTION_STATUSES)[number];
+
+export const CART_TOOL_ACTION_TRANSITIONS: Record<CartToolActionLifecycleStatus, CartToolActionLifecycleStatus[]> = {
+  proposed: ["approved", "declined", "expired"],
+  approved: ["executing"],
+  declined: [],
+  expired: [],
+  executing: ["executed", "failed"],
+  executed: [],
+  failed: [],
+};
+
+export interface CartToolActionLifecycleRecord {
+  actionId: string;
+  shop: string;
+  sessionKey: string;
+  cartId?: string;
+  status: CartToolActionLifecycleStatus;
+  payload: unknown;
+  summary?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const actionLifecycleStore = new Map<string, CartToolActionLifecycleRecord>();
+
+export function createCartToolActionRecord(input: {
+  actionId: string;
+  shop: string;
+  sessionKey: string;
+  cartId?: string;
+  payload: unknown;
+}) {
+  const now = new Date().toISOString();
+  const record: CartToolActionLifecycleRecord = {
+    actionId: input.actionId,
+    shop: input.shop,
+    sessionKey: input.sessionKey,
+    ...(input.cartId ? { cartId: input.cartId } : {}),
+    status: "proposed",
+    payload: input.payload,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  actionLifecycleStore.set(input.actionId, record);
+  return record;
+}
+
+export function getCartToolActionRecord(actionId: string) {
+  return actionLifecycleStore.get(actionId);
+}
+
+export function transitionCartToolActionRecord(input: {
+  actionId: string;
+  nextStatus: CartToolActionLifecycleStatus;
+  summary?: string;
+}) {
+  const current = actionLifecycleStore.get(input.actionId);
+
+  if (!current) {
+    return { ok: false as const, code: "ACTION_NOT_FOUND", message: "No matching cart action was found." };
+  }
+
+  const allowed = CART_TOOL_ACTION_TRANSITIONS[current.status];
+  if (!allowed.includes(input.nextStatus)) {
+    return {
+      ok: false as const,
+      code: "INVALID_STATUS_TRANSITION",
+      message: `Cannot transition action ${input.actionId} from ${current.status} to ${input.nextStatus}.`,
+      current,
+    };
+  }
+
+  const updated: CartToolActionLifecycleRecord = {
+    ...current,
+    status: input.nextStatus,
+    ...(input.summary ? { summary: input.summary } : {}),
+    updatedAt: new Date().toISOString(),
+  };
+
+  actionLifecycleStore.set(input.actionId, updated);
+  return { ok: true as const, record: updated };
+}
+
+export function isCartToolActionTerminalStatus(status: CartToolActionLifecycleStatus) {
+  return CART_TOOL_ACTION_TRANSITIONS[status].length === 0;
+}
+
+export function getCartToolActionIdempotentReplay(actionId: string) {
+  const record = actionLifecycleStore.get(actionId);
+
+  if (!record || !isCartToolActionTerminalStatus(record.status)) {
+    return null;
+  }
+
+  return {
+    actionId: record.actionId,
+    status: record.status,
+    summary: record.summary || "Action already resolved earlier.",
+    idempotentReplay: true,
+  };
+}
+
 type RecommendationItem = Extract<StructuredGuidanceBlock, { type: "recommendation_list" }>["items"][number];
 
 function toDisplayName(item: StorefrontChatRequest["cart"]["items"][number], fallback: string) {

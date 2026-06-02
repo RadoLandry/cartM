@@ -54,12 +54,14 @@ async function readLatestStorefrontCart(config: StorefrontChatMountConfig) {
     cartId: payload.token || config.cart.cartId,
     currencyCode: payload.currency || config.cart.currencyCode,
     items: payload.items.map((item: {
+      key?: string;
       product_id?: number | string;
       product_title?: string;
       variant_id?: number | string;
       variant_title?: string;
       quantity?: number;
     }) => ({
+      lineId: item.key ? String(item.key) : undefined,
       productId: String(item.product_id || ""),
       productTitle: item.product_title,
       variantId: item.variant_id ? String(item.variant_id) : undefined,
@@ -78,7 +80,7 @@ export function CartMindChat({ config }: CartMindChatProps) {
     cartId: config.cart.cartId,
     currencyCode: config.cart.currencyCode,
   });
-  const { submitMessage, retryLastMessage } = useStorefrontChat({
+  const { submitMessage, retryLastMessage, submitActionConfirmation } = useStorefrontChat({
     config,
     state,
     dispatch,
@@ -101,6 +103,12 @@ export function CartMindChat({ config }: CartMindChatProps) {
       }}
       onRetry={() => {
         void retryLastMessage();
+      }}
+      onApproveAction={(action) => {
+        void submitActionConfirmation(action, "approve");
+      }}
+      onDeclineAction={(action) => {
+        void submitActionConfirmation(action, "decline");
       }}
     />
   );

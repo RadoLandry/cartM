@@ -3,6 +3,7 @@ import { z } from "zod";
 export const StorefrontChatSurfaceSchema = z.enum(["cart_drawer", "cart_page"]);
 
 export const StorefrontCartLineSchema = z.object({
+  lineId: z.string().min(1).optional(),
   productId: z.string().min(1),
   productTitle: z.string().min(1).optional(),
   variantId: z.string().min(1).optional(),
@@ -106,6 +107,74 @@ export const StorefrontChatMessageSchema = z.object({
   content: z.string().min(1),
 });
 
+export const CartToolActionTypeSchema = z.enum([
+  "add",
+  "remove",
+  "change_quantity",
+  "swap_variant",
+]);
+
+export const CartToolActionPayloadSchema = z.discriminatedUnion("actionType", [
+  z.object({
+    actionType: z.literal("add"),
+    merchandiseId: z.string().min(1),
+    quantity: z.coerce.number().int().min(1),
+  }),
+  z.object({
+    actionType: z.literal("remove"),
+    lineId: z.string().min(1),
+  }),
+  z.object({
+    actionType: z.literal("change_quantity"),
+    lineId: z.string().min(1),
+    quantity: z.coerce.number().int().min(1),
+  }),
+  z.object({
+    actionType: z.literal("swap_variant"),
+    lineId: z.string().min(1),
+    newMerchandiseId: z.string().min(1),
+    quantity: z.coerce.number().int().min(1).optional(),
+  }),
+]);
+
+export const CartToolActionStatusSchema = z.enum([
+  "proposed",
+  "approved",
+  "declined",
+  "expired",
+  "executing",
+  "executed",
+  "failed",
+]);
+
+export const CartToolActionSchema = z.object({
+  actionId: z.string().min(1),
+  toolName: z.enum(["addToCart", "removeFromCart", "changeQuantity", "swapVariant"]),
+  shop: z.string().min(1),
+  sessionKey: z.string().min(1),
+  cartId: z.string().min(1).optional(),
+  payload: CartToolActionPayloadSchema,
+  preview: z.object({
+    before: z.string().min(1).optional(),
+    after: z.string().min(1).optional(),
+    deltaPrice: z.string().min(1).optional(),
+  }).optional(),
+  confirmationToken: z.string().min(1),
+  expiresAt: z.string().datetime(),
+});
+
+export const CartToolActionStatusEventSchema = z.object({
+  actionId: z.string().min(1),
+  status: CartToolActionStatusSchema,
+  summary: z.string().min(1).optional(),
+  cart: z.object({
+    cartId: z.string().min(1).optional(),
+    currencyCode: z.string().length(3).default("USD"),
+    items: z.array(StorefrontCartLineSchema).default([]),
+    subtotal: z.string().min(1).optional(),
+  }).optional(),
+});
+
 export const StorefrontChatRequestSchema = z.object({
   shop: z.string().min(1),
   sessionKey: z.string().min(1),
@@ -122,6 +191,17 @@ export const StorefrontChatStreamPartSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("text-delta"),
     text: z.string(),
+  }),
+  z.object({
+    type: z.literal("tool-action-proposed"),
+    action: CartToolActionSchema,
+  }),
+  z.object({
+    type: z.literal("tool-action-status"),
+    actionId: z.string().min(1),
+    status: CartToolActionStatusSchema,
+    summary: z.string().min(1).optional(),
+    cart: CartToolActionStatusEventSchema.shape.cart.optional(),
   }),
   z.object({
     type: z.literal("guidance-block"),
@@ -145,5 +225,10 @@ export type StorefrontConversationLimits = z.infer<typeof StorefrontConversation
 export type StorefrontChatBootstrap = z.infer<typeof StorefrontChatBootstrapSchema>;
 export type StorefrontChatBootstrapResponse = z.infer<typeof StorefrontChatBootstrapResponseSchema>;
 export type StructuredGuidanceBlock = z.infer<typeof StructuredGuidanceBlockSchema>;
+export type CartToolActionType = z.infer<typeof CartToolActionTypeSchema>;
+export type CartToolActionPayload = z.infer<typeof CartToolActionPayloadSchema>;
+export type CartToolActionStatus = z.infer<typeof CartToolActionStatusSchema>;
+export type CartToolAction = z.infer<typeof CartToolActionSchema>;
+export type CartToolActionStatusEvent = z.infer<typeof CartToolActionStatusEventSchema>;
 export type StorefrontChatRequest = z.infer<typeof StorefrontChatRequestSchema>;
 export type StorefrontChatStreamPart = z.infer<typeof StorefrontChatStreamPartSchema>;

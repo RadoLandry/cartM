@@ -1,6 +1,12 @@
 import { useEffect, useReducer } from "react";
 
-import type { StorefrontChatBootstrap, StorefrontChatSurface, StructuredGuidanceBlock } from "../../../app/lib/ai/schemas";
+import type {
+  CartToolAction,
+  CartToolActionStatus,
+  StorefrontChatBootstrap,
+  StorefrontChatSurface,
+  StructuredGuidanceBlock,
+} from "../../../app/lib/ai/schemas";
 
 export type ChatSessionStatus = "idle" | "bootstrapping" | "ready" | "streaming" | "error";
 export type ChatMessageState = "complete" | "streaming" | "failed";
@@ -11,6 +17,16 @@ export interface ChatThreadMessage {
   content: string;
   state: ChatMessageState;
   guidanceBlocks: StructuredGuidanceBlock[];
+  actionProposals: CartToolAction[];
+}
+
+export interface ChatActionHistoryItem {
+  actionId: string;
+  toolName: CartToolAction["toolName"];
+  status: CartToolActionStatus;
+  summary?: string;
+  proposedAt: string;
+  updatedAt: string;
 }
 
 export interface ChatSessionState {
@@ -30,6 +46,8 @@ export interface ChatSessionState {
   streamToken?: string;
   streamTokenExpiresAt?: string;
   chatUrl?: string;
+  actionHistory: ChatActionHistoryItem[];
+  pendingActionId?: string;
 }
 
 interface CreateInitialChatSessionStateInput {
@@ -56,6 +74,11 @@ export type ChatSessionAction =
   | { type: "assistant_message_started"; messageId: string }
   | { type: "assistant_text_delta"; messageId: string; text: string }
   | { type: "guidance_block_added"; messageId: string; block: StructuredGuidanceBlock }
+  | { type: "tool_action_proposed"; messageId: string; action: CartToolAction }
+  | { type: "tool_action_status"; actionId: string; status: CartToolActionStatus; summary?: string }
+  | { type: "action_confirmation_requested"; actionId: string }
+  | { type: "action_confirmation_finished"; actionId: string }
+  | { type: "action_confirmation_failed"; actionId: string; error: string }
   | { type: "assistant_message_completed"; messageId: string }
   | { type: "stream_failed"; messageId?: string; error: string; retryableMessage?: string }
   | { type: "retry_requested" };
@@ -111,6 +134,8 @@ export function createInitialChatSessionState(
     streamToken: undefined,
     streamTokenExpiresAt: undefined,
     chatUrl: undefined,
+    actionHistory: [],
+    pendingActionId: undefined,
   };
 
   return mergePersistedState(baseState, input.persistedState);
@@ -142,7 +167,30 @@ export function buildChatThreadMessage(
     content,
     state,
     guidanceBlocks: [],
+    actionProposals: [],
   };
+}
+
+function upsertActionHistory(
+  history: ChatActionHistoryItem[],
+  nextItem: Omit<ChatActionHistoryItem, "updatedAt">,
+): ChatActionHistoryItem[] {
+  const existing = history.find((item) => item.actionId === nextItem.actionId);
+  const updatedAt = new Date().toISOString();
+
+  if (!existing) {
+    return [...history, { ...nextItem, updatedAt }];
+  }
+
+  return history.map((item) => (
+    item.actionId === nextItem.actionId
+      ? {
+          ...item,
+          ...nextItem,
+          updatedAt,
+        }
+      : item
+  ));
 }
 
 export function reduceChatSessionState(
@@ -252,6 +300,56 @@ export function reduceChatSessionState(
           ...message,
           guidanceBlocks: [...message.guidanceBlocks, action.block],
         })),
+      };
+    case "tool_action_proposed":
+      return {
+        ...state,
+        messages: updateMessage(state, action.messageId, (message) => ({
+          ...message,
+          actionProposals: [...message.actionProposals, action.action],
+        })),
+        actionHistory: upsertActionHistory(state.actionHistory, {
+          actionId: action.action.actionId,
+          toolName: action.action.toolName,
+          status: "proposed",
+          summary: "Awaiting confirmation.",
+          proposedAt: new Date().toISOString(),
+        }),
+      };
+    case "tool_action_status": {
+      const existing = state.actionHistory.find((item) => item.actionId === action.actionId);
+
+      if (!existing) {
+        return state;
+      }
+
+      return {
+        ...state,
+        actionHistory: upsertActionHistory(state.actionHistory, {
+          actionId: existing.actionId,
+          toolName: existing.toolName,
+          status: action.status,
+          summary: action.summary ?? existing.summary,
+          proposedAt: existing.proposedAt,
+        }),
+      };
+    }
+    case "action_confirmation_requested":
+      return {
+        ...state,
+        pendingActionId: action.actionId,
+      };
+    case "action_confirmation_finished":
+      return {
+        ...state,
+        pendingActionId: state.pendingActionId === action.actionId ? undefined : state.pendingActionId,
+      };
+    case "action_confirmation_failed":
+      return {
+        ...state,
+        status: "error",
+        pendingActionId: state.pendingActionId === action.actionId ? undefined : state.pendingActionId,
+        lastError: action.error,
       };
     case "assistant_message_completed":
       return {

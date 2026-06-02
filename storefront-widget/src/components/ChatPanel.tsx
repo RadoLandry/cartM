@@ -1,3 +1,4 @@
+import type { CartToolAction } from "../../../app/lib/ai/schemas";
 import type { ChatSessionState } from "../hooks/useChatSessionState";
 import { ChatComposer } from "./ChatComposer";
 import { ChatMessageList } from "./ChatMessageList";
@@ -14,6 +15,8 @@ interface ChatPanelProps {
   onDraftChange: (draft: string) => void;
   onSubmit: () => void;
   onRetry: () => void;
+  onApproveAction: (action: CartToolAction) => void;
+  onDeclineAction: (action: CartToolAction) => void;
 }
 
 export function ChatPanel({
@@ -28,6 +31,8 @@ export function ChatPanel({
   onDraftChange,
   onSubmit,
   onRetry,
+  onApproveAction,
+  onDeclineAction,
 }: ChatPanelProps) {
   if (!state.isOpen) {
     return (
@@ -63,7 +68,29 @@ export function ChatPanel({
             </div>
           ) : null}
 
-          <ChatMessageList messages={state.messages} assistantGreeting={assistantGreeting} />
+          <ChatMessageList
+            messages={state.messages}
+            assistantGreeting={assistantGreeting}
+            pendingActionId={state.pendingActionId}
+            onApproveAction={onApproveAction}
+            onDeclineAction={onDeclineAction}
+          />
+          {state.actionHistory.length > 0 ? (
+            <section className="cm-guidance cm-guidance--fallback" aria-label="Action history">
+              <header>
+                <strong>Action history</strong>
+              </header>
+              <ul>
+                {state.actionHistory.map((item) => (
+                  <li key={item.actionId}>
+                    <strong>{item.toolName}</strong>: {item.status}
+                    {item.summary ? ` - ${item.summary}` : ""}
+                    {item.status === "failed" ? " - Recovery: refresh cart and ask for a new proposal." : ""}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
           <ChatComposer
             draft={state.draft}
             disabled={state.status === "bootstrapping" || state.status === "streaming"}
