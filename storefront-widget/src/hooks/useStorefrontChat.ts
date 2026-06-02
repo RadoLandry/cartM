@@ -2,6 +2,7 @@ import { useEffect, useRef, type Dispatch } from "react";
 
 import {
   type CartToolAction,
+  type ProductComparisonResult,
   StorefrontChatBootstrapResponseSchema,
   StorefrontChatStreamPartSchema,
 } from "../../../app/lib/ai/schemas";
@@ -64,6 +65,35 @@ function extractSsePayloads(buffer: string) {
   return {
     payloads,
     remainder,
+  };
+}
+
+function toComparisonGuidanceBlock(result: ProductComparisonResult) {
+  const productOrder = result.products.map((product) => product.productId);
+  const rows = result.dimensions.map((dimension) => ({
+    label: dimension.label,
+    values: productOrder.map((productId) => String(dimension.values[productId] ?? "not_available")),
+  }));
+
+  return {
+    blockId: `comparison-${result.comparisonContextId}`,
+    type: "comparison_table" as const,
+    title: "Product comparison",
+    summary: result.recommendation?.rationale || "Side-by-side comparison of requested products.",
+    priority: 1,
+    columns: result.products.map((product) => ({
+      key: product.productId,
+      title: product.title,
+    })),
+    rows: [
+      ...rows,
+      {
+        label: "Recommendation",
+        values: productOrder.map((productId) => (
+          productId === result.recommendation?.recommendedProductId ? "Recommended" : "-"
+        )),
+      },
+    ],
   };
 }
 
@@ -210,6 +240,54 @@ export function useStorefrontChat({
               summary: part.summary,
             });
             break;
+          case "comparison.proposed":
+            dispatch({
+              type: "comparison_context_upsert",
+              context: {
+                comparisonContextId: part.comparison.comparisonContextId,
+                requestId: part.comparison.request.requestId,
+                generatedAt: part.comparison.request.requestedAt,
+                status: "generated",
+                summary: "Comparison requested.",
+              },
+            });
+            break;
+          case "comparison.result":
+            dispatch({
+              type: "comparison_context_upsert",
+              context: {
+                comparisonContextId: part.comparison.comparisonContextId,
+                requestId: part.comparison.requestId,
+                generatedAt: part.comparison.generatedAt,
+                status: "generated",
+                summary: part.comparison.recommendation?.rationale,
+                result: part.comparison,
+              },
+            });
+            dispatch({
+              type: "guidance_block_added",
+              messageId: assistantMessageId,
+              block: toComparisonGuidanceBlock(part.comparison),
+            });
+            break;
+          case "comparison.error":
+            dispatch({
+              type: "comparison_context_failed",
+              comparisonContextId: part.error.comparisonContextId,
+              summary: part.error.message,
+            });
+            dispatch({
+              type: "guidance_block_added",
+              messageId: assistantMessageId,
+              block: {
+                blockId: `comparison-error-${part.error.comparisonContextId}`,
+                type: "fallback_notice",
+                title: "Comparison unavailable",
+                summary: part.error.suggestedNextStep || part.error.message,
+                priority: 1,
+              },
+            });
+            break;
           case "guidance-block":
             dispatch({ type: "guidance_block_added", messageId: assistantMessageId, block: part.block });
             break;
@@ -269,7 +347,11 @@ export function useStorefrontChat({
     return await submitMessage(retryMessage);
   }
 
-  async function submitActionConfirmation(action: CartToolAction, decision: "approve" | "decline") {
+  async function submitActionConfirmation(
+    action: CartToolAction,
+    decision: "approve" | "decline",
+    selection?: { productId: string; variantId?: string },
+  ) {
     const currentCart = await getCurrentCartSnapshot();
     const requestUrl = new URL(config.bootstrapUrl);
     const confirmationUrl = new URL("/api/ai/chat/actions/confirm", requestUrl.origin);
@@ -288,6 +370,14 @@ export function useStorefrontChat({
           actionId: action.actionId,
           confirmationToken: action.confirmationToken,
           decision,
+          ...(action.payload.actionType === "comparison_select"
+            ? {
+                actionType: "comparison_select",
+                comparisonContextId: action.payload.comparisonContextId,
+                selectedProductId: selection?.productId || action.payload.recommended.productId,
+                selectedVariantId: selection?.variantId || action.payload.recommended.variantId,
+              }
+            : {}),
           cart: currentCart,
         }),
       });

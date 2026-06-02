@@ -1,4 +1,13 @@
-import type { StorefrontChatRequest, StorefrontChatStreamPart, StructuredGuidanceBlock } from "./schemas";
+import type {
+  ProductComparisonDimension,
+  ProductComparisonError,
+  ProductComparisonRequest,
+  ProductComparisonResult,
+  ProductComparisonSnapshot,
+  StorefrontChatRequest,
+  StorefrontChatStreamPart,
+  StructuredGuidanceBlock,
+} from "./schemas";
 import { buildStorefrontChatSystemPrompt } from "./prompts";
 
 export const CART_TOOL_ACTION_STATUSES = [
@@ -36,6 +45,21 @@ export interface CartToolActionLifecycleRecord {
 }
 
 const actionLifecycleStore = new Map<string, CartToolActionLifecycleRecord>();
+
+export interface ProductComparisonContextRecord {
+  comparisonContextId: string;
+  requestId: string;
+  shop: string;
+  sessionKey: string;
+  status: "generated" | "failed" | "expired" | "action_pending" | "action_executed" | "action_failed";
+  productRefs: string[];
+  createdAt: string;
+  updatedAt: string;
+  result?: ProductComparisonResult;
+  error?: ProductComparisonError;
+}
+
+const productComparisonContextStore = new Map<string, ProductComparisonContextRecord>();
 
 export function createCartToolActionRecord(input: {
   actionId: string;
@@ -298,4 +322,200 @@ export function buildStorefrontChatStreamParts(input: StorefrontChatRequest): St
       messageId,
     },
   ];
+}
+
+export function createProductComparisonContext(input: {
+  comparisonContextId: string;
+  request: ProductComparisonRequest;
+}) {
+  const now = new Date().toISOString();
+  const record: ProductComparisonContextRecord = {
+    comparisonContextId: input.comparisonContextId,
+    requestId: input.request.requestId,
+    shop: input.request.shop,
+    sessionKey: input.request.sessionKey,
+    status: "generated",
+    productRefs: input.request.productRefs,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  productComparisonContextStore.set(record.comparisonContextId, record);
+  return record;
+}
+
+export function getProductComparisonContext(comparisonContextId: string) {
+  return productComparisonContextStore.get(comparisonContextId);
+}
+
+export function validateProductComparisonContextScope(input: {
+  comparisonContextId: string;
+  shop: string;
+  sessionKey: string;
+}) {
+  const record = getProductComparisonContext(input.comparisonContextId);
+
+  if (!record) {
+    return { ok: false as const, code: "CONTEXT_NOT_FOUND", message: "Comparison context was not found." };
+  }
+
+  if (record.shop !== input.shop || record.sessionKey !== input.sessionKey) {
+    return { ok: false as const, code: "CONTEXT_SCOPE_MISMATCH", message: "Comparison context does not match this session." };
+  }
+
+  return { ok: true as const, record };
+}
+
+export function setProductComparisonContextResult(input: {
+  comparisonContextId: string;
+  result: ProductComparisonResult;
+}) {
+  const current = getProductComparisonContext(input.comparisonContextId);
+
+  if (!current) {
+    return null;
+  }
+
+  const updated: ProductComparisonContextRecord = {
+    ...current,
+    status: "generated",
+    result: input.result,
+    updatedAt: new Date().toISOString(),
+  };
+
+  productComparisonContextStore.set(updated.comparisonContextId, updated);
+  return updated;
+}
+
+export function setProductComparisonContextError(input: {
+  comparisonContextId: string;
+  error: ProductComparisonError;
+}) {
+  const current = getProductComparisonContext(input.comparisonContextId);
+
+  if (!current) {
+    return null;
+  }
+
+  const updated: ProductComparisonContextRecord = {
+    ...current,
+    status: "failed",
+    error: input.error,
+    updatedAt: new Date().toISOString(),
+  };
+
+  productComparisonContextStore.set(updated.comparisonContextId, updated);
+  return updated;
+}
+
+export function buildProductComparisonDataError(input: {
+  comparisonContextId: string;
+  requestedRefs: string[];
+  snapshots: ProductComparisonSnapshot[];
+}) {
+  if (input.snapshots.length < input.requestedRefs.length) {
+    return {
+      comparisonContextId: input.comparisonContextId,
+      code: "UNRESOLVED_PRODUCT_REF" as const,
+      message: "Some selected products could not be resolved for comparison.",
+      retryable: true,
+      suggestedNextStep: "Refresh your cart and ask CartMind to compare again.",
+    };
+  }
+
+  if (input.snapshots.some((item) => item.availability === "unavailable")) {
+    return {
+      comparisonContextId: input.comparisonContextId,
+      code: "UNAVAILABLE_VARIANT" as const,
+      message: "One or more selected products are currently unavailable.",
+      retryable: true,
+      suggestedNextStep: "Pick available alternatives and rerun comparison.",
+    };
+  }
+
+  if (input.snapshots.some((item) => item.availability === "unknown")) {
+    return {
+      comparisonContextId: input.comparisonContextId,
+      code: "PARTIAL_DATA" as const,
+      message: "Comparison data is partial for one or more products.",
+      retryable: true,
+      suggestedNextStep: "Try again in a moment for fresher product data.",
+    };
+  }
+
+  return null;
+}
+
+function buildProductComparisonDimensions(snapshots: ProductComparisonSnapshot[]): ProductComparisonDimension[] {
+  const keySpecValues = Object.fromEntries(snapshots.map((item) => {
+    const firstAttribute = Object.entries(item.attributes)[0];
+    const value = firstAttribute ? String(firstAttribute[1]) : "not_available";
+
+    return [item.productId, value];
+  }));
+
+  const tradeoffValues = Object.fromEntries(snapshots.map((item) => [
+    item.productId,
+    item.availability === "available" ? "Ready to buy" : "Availability check recommended",
+  ]));
+
+  return [
+    {
+      key: "price",
+      label: "Price",
+      values: Object.fromEntries(snapshots.map((item) => [item.productId, item.price])),
+    },
+    {
+      key: "availability",
+      label: "Availability",
+      values: Object.fromEntries(snapshots.map((item) => [item.productId, item.availability])),
+    },
+    {
+      key: "key_specs",
+      label: "Key specs",
+      values: keySpecValues,
+    },
+    {
+      key: "tradeoffs",
+      label: "Trade-offs",
+      values: tradeoffValues,
+    },
+  ];
+}
+
+function selectComparisonRecommendation(snapshots: ProductComparisonSnapshot[]) {
+  const available = snapshots.find((item) => item.availability === "available") || snapshots[0];
+
+  if (!available) {
+    return undefined;
+  }
+
+  return {
+    recommendedProductId: available.productId,
+    rationale: `Recommended ${available.title} based on current availability and cart context.`,
+    confidence: 0.62,
+  };
+}
+
+export function normalizeProductComparisonResult(input: {
+  comparisonContextId: string;
+  request: ProductComparisonRequest;
+  fetchedAt: string;
+  snapshots: ProductComparisonSnapshot[];
+}): ProductComparisonResult {
+  const dimensions = buildProductComparisonDimensions(input.snapshots);
+  const recommendation = selectComparisonRecommendation(input.snapshots);
+
+  return {
+    comparisonContextId: input.comparisonContextId,
+    requestId: input.request.requestId,
+    generatedAt: new Date().toISOString(),
+    freshness: {
+      priceCheckedAt: input.fetchedAt,
+      availabilityCheckedAt: input.fetchedAt,
+    },
+    products: input.snapshots,
+    dimensions,
+    ...(recommendation ? { recommendation } : {}),
+  };
 }

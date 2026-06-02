@@ -21,6 +21,7 @@ export type GuidanceRenderModel =
       title: string;
       summary: string;
       headings: string[];
+      recommendedColumnIndex?: number;
       rows: Array<{
         label: string;
         values: string[];
@@ -58,11 +59,17 @@ export function getGuidanceRenderModel(block: StructuredGuidanceBlock): Guidance
         })),
       };
     case "comparison_table":
+      const recommendationRow = block.rows.find((row) => row.label.toLowerCase() === "recommendation");
+      const recommendedColumnIndex = recommendationRow
+        ? recommendationRow.values.findIndex((value) => value.toLowerCase() === "recommended")
+        : -1;
+
       return {
         kind: "comparison_table",
         title: block.title,
         summary: block.summary,
         headings: block.columns.map((column) => column.title),
+        ...(recommendedColumnIndex >= 0 ? { recommendedColumnIndex } : {}),
         rows: block.rows,
       };
     case "size_summary":

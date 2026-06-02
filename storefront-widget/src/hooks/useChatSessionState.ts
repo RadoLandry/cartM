@@ -3,6 +3,7 @@ import { useEffect, useReducer } from "react";
 import type {
   CartToolAction,
   CartToolActionStatus,
+  ProductComparisonResult,
   StorefrontChatBootstrap,
   StorefrontChatSurface,
   StructuredGuidanceBlock,
@@ -29,6 +30,15 @@ export interface ChatActionHistoryItem {
   updatedAt: string;
 }
 
+export interface ChatComparisonContext {
+  comparisonContextId: string;
+  requestId: string;
+  generatedAt: string;
+  status: "generated" | "failed" | "expired" | "action_pending" | "action_executed" | "action_failed";
+  summary?: string;
+  result?: ProductComparisonResult;
+}
+
 export interface ChatSessionState {
   shop: string;
   surface: StorefrontChatSurface;
@@ -47,6 +57,8 @@ export interface ChatSessionState {
   streamTokenExpiresAt?: string;
   chatUrl?: string;
   actionHistory: ChatActionHistoryItem[];
+  comparisonContexts: ChatComparisonContext[];
+  latestComparisonContextId?: string;
   pendingActionId?: string;
 }
 
@@ -76,6 +88,9 @@ export type ChatSessionAction =
   | { type: "guidance_block_added"; messageId: string; block: StructuredGuidanceBlock }
   | { type: "tool_action_proposed"; messageId: string; action: CartToolAction }
   | { type: "tool_action_status"; actionId: string; status: CartToolActionStatus; summary?: string }
+  | { type: "comparison_context_upsert"; context: ChatComparisonContext }
+  | { type: "comparison_context_failed"; comparisonContextId: string; summary: string }
+  | { type: "comparison_context_dismissed"; comparisonContextId: string }
   | { type: "action_confirmation_requested"; actionId: string }
   | { type: "action_confirmation_finished"; actionId: string }
   | { type: "action_confirmation_failed"; actionId: string; error: string }
@@ -135,6 +150,8 @@ export function createInitialChatSessionState(
     streamTokenExpiresAt: undefined,
     chatUrl: undefined,
     actionHistory: [],
+    comparisonContexts: [],
+    latestComparisonContextId: undefined,
     pendingActionId: undefined,
   };
 
@@ -188,6 +205,26 @@ function upsertActionHistory(
           ...item,
           ...nextItem,
           updatedAt,
+        }
+      : item
+  ));
+}
+
+function upsertComparisonContext(
+  contexts: ChatComparisonContext[],
+  nextContext: ChatComparisonContext,
+): ChatComparisonContext[] {
+  const existing = contexts.find((item) => item.comparisonContextId === nextContext.comparisonContextId);
+
+  if (!existing) {
+    return [...contexts, nextContext];
+  }
+
+  return contexts.map((item) => (
+    item.comparisonContextId === nextContext.comparisonContextId
+      ? {
+          ...item,
+          ...nextContext,
         }
       : item
   ));
@@ -332,6 +369,39 @@ export function reduceChatSessionState(
           summary: action.summary ?? existing.summary,
           proposedAt: existing.proposedAt,
         }),
+      };
+    }
+    case "comparison_context_upsert":
+      return {
+        ...state,
+        comparisonContexts: upsertComparisonContext(state.comparisonContexts, action.context),
+        latestComparisonContextId: action.context.comparisonContextId,
+      };
+    case "comparison_context_failed":
+      return {
+        ...state,
+        comparisonContexts: state.comparisonContexts.map((context) => (
+          context.comparisonContextId === action.comparisonContextId
+            ? {
+                ...context,
+                status: "failed",
+                summary: action.summary,
+              }
+            : context
+        )),
+        latestComparisonContextId: action.comparisonContextId,
+      };
+    case "comparison_context_dismissed": {
+      const remaining = state.comparisonContexts.filter((context) => (
+        context.comparisonContextId !== action.comparisonContextId
+      ));
+
+      return {
+        ...state,
+        comparisonContexts: remaining,
+        latestComparisonContextId: state.latestComparisonContextId === action.comparisonContextId
+          ? remaining[remaining.length - 1]?.comparisonContextId
+          : state.latestComparisonContextId,
       };
     }
     case "action_confirmation_requested":

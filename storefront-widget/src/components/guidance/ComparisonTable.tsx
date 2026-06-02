@@ -19,8 +19,11 @@ export function ComparisonTable({ block }: ComparisonTableProps) {
       <div className="cm-comparison-table" role="table" aria-label={model.title}>
         <div className="cm-comparison-row cm-comparison-row--header" role="row">
           <span role="columnheader">Category</span>
-          {model.headings.map((heading) => (
-            <span key={heading} role="columnheader">{heading}</span>
+          {model.headings.map((heading, index) => (
+            <span key={heading} role="columnheader">
+              {heading}
+              {model.recommendedColumnIndex === index ? " (Recommended)" : ""}
+            </span>
           ))}
         </div>
         {model.rows.map((row) => (

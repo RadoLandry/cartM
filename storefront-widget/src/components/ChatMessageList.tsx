@@ -11,6 +11,7 @@ interface ChatMessageListProps {
   assistantGreeting: string;
   pendingActionId?: string;
   onApproveAction: (action: CartToolAction) => void;
+  onApproveActionSelection: (action: CartToolAction, selection: { productId: string; variantId?: string }) => void;
   onDeclineAction: (action: CartToolAction) => void;
 }
 
@@ -32,6 +33,7 @@ export function ChatMessageList({
   assistantGreeting,
   pendingActionId,
   onApproveAction,
+  onApproveActionSelection,
   onDeclineAction,
 }: ChatMessageListProps) {
   if (messages.length === 0) {
@@ -59,6 +61,7 @@ export function ChatMessageList({
               action={action}
               isSubmitting={pendingActionId === action.actionId}
               onApprove={onApproveAction}
+              onApproveSelection={onApproveActionSelection}
               onDecline={onDeclineAction}
             />
           ))}

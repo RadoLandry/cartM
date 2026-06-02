@@ -8,10 +8,13 @@ import {
 import {
   getCartToolActionIdempotentReplay,
   getCartToolActionRecord,
+  getProductComparisonContext,
   isCartToolActionTerminalStatus,
   transitionCartToolActionRecord,
+  validateProductComparisonContextScope,
 } from "../lib/ai/storefront-chat";
 import { storefrontCartMutationAdapter } from "../lib/shopify/storefront-cart";
+import { applyComparisonSelectionToCart } from "../lib/shopify/cart";
 
 const ConfirmCartActionRequestSchema = z.object({
   shop: z.string().min(1),
@@ -19,6 +22,10 @@ const ConfirmCartActionRequestSchema = z.object({
   actionId: z.string().min(1),
   confirmationToken: z.string().min(1),
   decision: z.enum(["approve", "decline"]),
+  actionType: z.enum(["cart_tool", "comparison_select"]).default("cart_tool"),
+  comparisonContextId: z.string().min(1).optional(),
+  selectedProductId: z.string().min(1).optional(),
+  selectedVariantId: z.string().min(1).optional(),
   cart: z.object({
     cartId: z.string().min(1).optional(),
     currencyCode: z.string().length(3).default("USD"),
@@ -153,6 +160,182 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   if (parsed.data.decision === "approve") {
+    if (parsed.data.actionType === "comparison_select") {
+      if (!parsed.data.comparisonContextId || !parsed.data.selectedProductId) {
+        return Response.json(
+          {
+            ok: false,
+            error: {
+              code: "INVALID_PAYLOAD",
+              message: "comparisonContextId and selectedProductId are required for comparison selections.",
+            },
+          },
+          { status: 400 },
+        );
+      }
+
+      const contextScope = validateProductComparisonContextScope({
+        comparisonContextId: parsed.data.comparisonContextId,
+        shop: parsed.data.shop,
+        sessionKey: parsed.data.sessionKey,
+      });
+
+      if (!contextScope.ok) {
+        const failedTransition = transitionCartToolActionRecord({
+          actionId: parsed.data.actionId,
+          nextStatus: "failed",
+          summary: contextScope.message,
+        });
+
+        return Response.json(
+          {
+            ok: false,
+            error: {
+              code: contextScope.code,
+              message: failedTransition.ok ? failedTransition.record.summary : contextScope.message,
+            },
+          },
+          { status: 404 },
+        );
+      }
+
+      const comparisonContext = getProductComparisonContext(parsed.data.comparisonContextId);
+      const comparisonResult = comparisonContext?.result;
+
+      if (!comparisonResult) {
+        const failedTransition = transitionCartToolActionRecord({
+          actionId: parsed.data.actionId,
+          nextStatus: "failed",
+          summary: "Comparison result is no longer available. Please run comparison again.",
+        });
+
+        return Response.json(
+          {
+            ok: false,
+            error: {
+              code: "COMPARISON_STALE",
+              message: failedTransition.ok
+                ? failedTransition.record.summary
+                : "Comparison result is no longer available. Please run comparison again.",
+              recoveryOptions: [
+                "Ask CartMind to compare products again",
+                "Refresh cart and retry",
+              ],
+            },
+          },
+          { status: 409 },
+        );
+      }
+
+      const selectedSnapshot = comparisonResult.products.find((product) => (
+        product.productId === parsed.data.selectedProductId
+      ));
+
+      if (!selectedSnapshot) {
+        const failedTransition = transitionCartToolActionRecord({
+          actionId: parsed.data.actionId,
+          nextStatus: "failed",
+          summary: "Selected product is not part of this comparison context.",
+        });
+
+        return Response.json(
+          {
+            ok: false,
+            error: {
+              code: "INVALID_SELECTION",
+              message: failedTransition.ok
+                ? failedTransition.record.summary
+                : "Selected product is not part of this comparison context.",
+            },
+          },
+          { status: 422 },
+        );
+      }
+
+      if (selectedSnapshot.availability === "unavailable") {
+        const failedTransition = transitionCartToolActionRecord({
+          actionId: parsed.data.actionId,
+          nextStatus: "failed",
+          summary: "Selected product is currently unavailable.",
+        });
+
+        return Response.json(
+          {
+            ok: false,
+            error: {
+              code: "PRODUCT_UNAVAILABLE",
+              message: failedTransition.ok ? failedTransition.record.summary : "Selected product is currently unavailable.",
+            },
+          },
+          { status: 422 },
+        );
+      }
+
+      const payload = record.payload as {
+        actionType?: string;
+        recommended?: { productId: string; variantId?: string };
+      };
+
+      const mutationOutcome = await applyComparisonSelectionToCart({
+        actionId: parsed.data.actionId,
+        cartId: record.cartId || parsed.data.cart?.cartId,
+        selectedProductId: parsed.data.selectedProductId,
+        selectedVariantId: parsed.data.selectedVariantId || selectedSnapshot.variantId,
+        fallbackVariantId: payload.recommended?.variantId,
+        cart: {
+          cartId: parsed.data.cart?.cartId,
+          currencyCode: parsed.data.cart?.currencyCode || "USD",
+          items: parsed.data.cart?.items.map((item) => ({
+            lineId: item.lineId || item.productId,
+            productId: item.productId,
+            variantId: item.variantId,
+            quantity: item.quantity,
+          })) || [],
+          subtotal: parsed.data.cart?.subtotal,
+        },
+      });
+
+      if (!mutationOutcome.ok) {
+        const failedTransition = transitionCartToolActionRecord({
+          actionId: parsed.data.actionId,
+          nextStatus: "failed",
+          summary: mutationOutcome.message,
+        });
+
+        return Response.json(
+          {
+            ok: false,
+            error: {
+              code: mutationOutcome.code || "MUTATION_ERROR",
+              message: failedTransition.ok ? failedTransition.record.summary : mutationOutcome.message,
+            },
+          },
+          { status: 422 },
+        );
+      }
+
+      const executedTransition = transitionCartToolActionRecord({
+        actionId: parsed.data.actionId,
+        nextStatus: "executed",
+        summary: `Applied comparison selection for ${selectedSnapshot.title} (${selectedSnapshot.price} ${selectedSnapshot.currencyCode}).`,
+      });
+
+      return Response.json({
+        ok: true,
+        result: {
+          actionId: parsed.data.actionId,
+          status: executedTransition.ok ? executedTransition.record.status : "executed",
+          summary: executedTransition.ok
+            ? executedTransition.record.summary
+            : `Applied comparison selection for ${selectedSnapshot.title}.`,
+          comparisonContextId: parsed.data.comparisonContextId,
+          selectedProductId: parsed.data.selectedProductId,
+          ...(parsed.data.selectedVariantId ? { selectedVariantId: parsed.data.selectedVariantId } : {}),
+          cart: mutationOutcome.cart,
+        },
+      });
+    }
+
     const executingTransition = transitionCartToolActionRecord({
       actionId: parsed.data.actionId,
       nextStatus: "executing",

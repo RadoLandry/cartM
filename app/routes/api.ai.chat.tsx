@@ -1,8 +1,22 @@
 import type { ActionFunctionArgs } from "react-router";
 
 import { StorefrontChatRequestSchema } from "../lib/ai/schemas";
-import { buildStorefrontChatStreamParts } from "../lib/ai/storefront-chat";
-import { buildCartToolActionProposal } from "../lib/ai/tools";
+import {
+  buildProductComparisonDataError,
+  buildStorefrontChatStreamParts,
+  createProductComparisonContext,
+  normalizeProductComparisonResult,
+  setProductComparisonContextError,
+  setProductComparisonContextResult,
+} from "../lib/ai/storefront-chat";
+import {
+  buildCartToolActionProposal,
+  buildCompareProductsToolRequest,
+  buildComparisonSelectionActionProposal,
+  createComparisonContextId,
+  getCompareProductsValidationError,
+} from "../lib/ai/tools";
+import { fetchComparisonProducts } from "../lib/shopify/cart";
 import {
   assertAllowedStorefrontOrigin,
   verifyStorefrontChatToken,
@@ -74,17 +88,126 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   const streamParts = buildStorefrontChatStreamParts(parsed.data);
+  const comparisonValidationError = getCompareProductsValidationError(parsed.data);
+  const comparisonRequest = buildCompareProductsToolRequest(parsed.data);
+  const comparisonParts = [] as Array<(typeof streamParts)[number]>;
+  let comparisonActionProposal: ReturnType<typeof buildComparisonSelectionActionProposal> | null = null;
+
+  if (comparisonValidationError) {
+    comparisonParts.push({
+      type: "comparison.error",
+      error: {
+        comparisonContextId: "comparison-validation",
+        code: comparisonValidationError.code,
+        message: comparisonValidationError.message,
+        retryable: true,
+        suggestedNextStep: comparisonValidationError.suggestedNextStep,
+      },
+    });
+  }
+
+  if (comparisonRequest && !comparisonValidationError) {
+    const comparisonContextId = createComparisonContextId(comparisonRequest.requestId);
+    createProductComparisonContext({
+      comparisonContextId,
+      request: comparisonRequest,
+    });
+
+    comparisonParts.push({
+      type: "comparison.proposed",
+      comparison: {
+        comparisonContextId,
+        request: comparisonRequest,
+      },
+    });
+
+    const comparisonFetch = await fetchComparisonProducts({
+      shop: comparisonRequest.shop,
+      productRefs: comparisonRequest.productRefs,
+      cart: parsed.data.cart,
+    });
+
+    const dataError = buildProductComparisonDataError({
+      comparisonContextId,
+      requestedRefs: comparisonRequest.productRefs,
+      snapshots: comparisonFetch.items,
+    });
+
+    if (dataError) {
+      setProductComparisonContextError({
+        comparisonContextId,
+        error: dataError,
+      });
+
+      comparisonParts.push({
+        type: "comparison.error",
+        error: dataError,
+      });
+    } else if (comparisonFetch.items.length >= 2) {
+      const comparisonResult = normalizeProductComparisonResult({
+        comparisonContextId,
+        request: comparisonRequest,
+        fetchedAt: comparisonFetch.fetchedAt,
+        snapshots: comparisonFetch.items,
+      });
+
+      setProductComparisonContextResult({
+        comparisonContextId,
+        result: comparisonResult,
+      });
+
+      comparisonParts.push({
+        type: "comparison.result",
+        comparison: comparisonResult,
+      });
+
+      comparisonActionProposal = buildComparisonSelectionActionProposal({
+        shop: parsed.data.shop,
+        sessionKey: parsed.data.sessionKey,
+        cartId: parsed.data.cart.cartId,
+        comparison: comparisonResult,
+      });
+    } else {
+      const comparisonError = {
+        comparisonContextId,
+        code: "INSUFFICIENT_PRODUCTS" as const,
+        message: "Please select at least two products to compare.",
+        retryable: true,
+        suggestedNextStep: "Add one more distinct product and ask to compare again.",
+      };
+
+      setProductComparisonContextError({
+        comparisonContextId,
+        error: comparisonError,
+      });
+
+      comparisonParts.push({
+        type: "comparison.error",
+        error: comparisonError,
+      });
+    }
+  }
+
   const actionProposal = buildCartToolActionProposal(parsed.data);
-  const partsWithToolEvents = actionProposal
+  const toolActionEvents = [actionProposal, comparisonActionProposal]
+    .filter((action): action is NonNullable<typeof action> => Boolean(action))
+    .map((action) => ({
+      type: "tool-action-proposed" as const,
+      action,
+    }));
+
+  const partsWithToolEvents = toolActionEvents.length > 0
     ? [
       ...streamParts.filter((part) => part.type !== "message-complete"),
-      {
-        type: "tool-action-proposed" as const,
-        action: actionProposal,
-      },
+      ...comparisonParts,
+      ...toolActionEvents,
       ...streamParts.filter((part) => part.type === "message-complete"),
     ]
-    : streamParts;
+    : [
+      ...streamParts.filter((part) => part.type !== "message-complete"),
+      ...comparisonParts,
+      ...streamParts.filter((part) => part.type === "message-complete"),
+    ];
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream<Uint8Array>({

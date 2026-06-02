@@ -15,7 +15,9 @@ interface ChatPanelProps {
   onDraftChange: (draft: string) => void;
   onSubmit: () => void;
   onRetry: () => void;
+  onDismissComparisonContext: (comparisonContextId: string) => void;
   onApproveAction: (action: CartToolAction) => void;
+  onApproveActionSelection: (action: CartToolAction, selection: { productId: string; variantId?: string }) => void;
   onDeclineAction: (action: CartToolAction) => void;
 }
 
@@ -31,7 +33,9 @@ export function ChatPanel({
   onDraftChange,
   onSubmit,
   onRetry,
+  onDismissComparisonContext,
   onApproveAction,
+  onApproveActionSelection,
   onDeclineAction,
 }: ChatPanelProps) {
   if (!state.isOpen) {
@@ -73,6 +77,7 @@ export function ChatPanel({
             assistantGreeting={assistantGreeting}
             pendingActionId={state.pendingActionId}
             onApproveAction={onApproveAction}
+            onApproveActionSelection={onApproveActionSelection}
             onDeclineAction={onDeclineAction}
           />
           {state.actionHistory.length > 0 ? (
@@ -89,6 +94,28 @@ export function ChatPanel({
                   </li>
                 ))}
               </ul>
+            </section>
+          ) : null}
+          {state.latestComparisonContextId ? (
+            <section className="cm-guidance cm-guidance--fallback" aria-label="Latest comparison">
+              <header>
+                <strong>Latest comparison</strong>
+              </header>
+              {state.comparisonContexts
+                .filter((context) => context.comparisonContextId === state.latestComparisonContextId)
+                .map((context) => (
+                  <div key={context.comparisonContextId}>
+                    <p>
+                      {context.status}: {context.summary || "Comparison context saved for follow-up actions."}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => onDismissComparisonContext(context.comparisonContextId)}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                ))}
             </section>
           ) : null}
           <ChatComposer

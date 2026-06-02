@@ -112,6 +112,7 @@ export const CartToolActionTypeSchema = z.enum([
   "remove",
   "change_quantity",
   "swap_variant",
+  "comparison_select",
 ]);
 
 export const CartToolActionPayloadSchema = z.discriminatedUnion("actionType", [
@@ -135,6 +136,20 @@ export const CartToolActionPayloadSchema = z.discriminatedUnion("actionType", [
     newMerchandiseId: z.string().min(1),
     quantity: z.coerce.number().int().min(1).optional(),
   }),
+  z.object({
+    actionType: z.literal("comparison_select"),
+    comparisonContextId: z.string().min(1),
+    recommended: z.object({
+      productId: z.string().min(1),
+      variantId: z.string().min(1).optional(),
+      title: z.string().min(1),
+    }),
+    alternatives: z.array(z.object({
+      productId: z.string().min(1),
+      variantId: z.string().min(1).optional(),
+      title: z.string().min(1),
+    })).default([]),
+  }),
 ]);
 
 export const CartToolActionStatusSchema = z.enum([
@@ -149,7 +164,7 @@ export const CartToolActionStatusSchema = z.enum([
 
 export const CartToolActionSchema = z.object({
   actionId: z.string().min(1),
-  toolName: z.enum(["addToCart", "removeFromCart", "changeQuantity", "swapVariant"]),
+  toolName: z.enum(["addToCart", "removeFromCart", "changeQuantity", "swapVariant", "compareProducts"]),
   shop: z.string().min(1),
   sessionKey: z.string().min(1),
   cartId: z.string().min(1).optional(),
@@ -173,6 +188,70 @@ export const CartToolActionStatusEventSchema = z.object({
     items: z.array(StorefrontCartLineSchema).default([]),
     subtotal: z.string().min(1).optional(),
   }).optional(),
+});
+
+export const ProductComparisonRequestSchema = z.object({
+  requestId: z.string().min(1),
+  shop: z.string().min(1),
+  sessionKey: z.string().min(1),
+  productRefs: z.array(z.string().min(1)).min(2).max(5),
+  dimensions: z.array(z.string().min(1)).default([]),
+  requestedAt: z.string().datetime(),
+});
+
+export const ProductComparisonSnapshotSchema = z.object({
+  productId: z.string().min(1),
+  variantId: z.string().min(1).optional(),
+  title: z.string().min(1),
+  imageUrl: z.string().url().optional(),
+  price: z.string().min(1),
+  currencyCode: z.string().length(3).default("USD"),
+  availability: z.enum(["available", "unavailable", "limited", "unknown"]),
+  attributes: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).default({}),
+});
+
+export const ProductComparisonDimensionSchema = z.object({
+  key: z.string().min(1),
+  label: z.string().min(1),
+  values: z.record(z.union([z.string(), z.number(), z.boolean(), z.null(), z.literal("not_available")])),
+});
+
+export const ProductComparisonResultSchema = z.object({
+  comparisonContextId: z.string().min(1),
+  requestId: z.string().min(1),
+  generatedAt: z.string().datetime(),
+  freshness: z.object({
+    priceCheckedAt: z.string().datetime(),
+    availabilityCheckedAt: z.string().datetime(),
+  }),
+  products: z.array(ProductComparisonSnapshotSchema).min(2),
+  dimensions: z.array(ProductComparisonDimensionSchema).min(1),
+  recommendation: z.object({
+    recommendedProductId: z.string().min(1),
+    rationale: z.string().min(1),
+    confidence: z.number().min(0).max(1),
+  }).optional(),
+});
+
+export const ProductComparisonProposedSchema = z.object({
+  comparisonContextId: z.string().min(1),
+  request: ProductComparisonRequestSchema,
+});
+
+export const ProductComparisonErrorSchema = z.object({
+  comparisonContextId: z.string().min(1),
+  code: z.enum([
+    "INSUFFICIENT_PRODUCTS",
+    "DUPLICATE_PRODUCTS",
+    "UNRESOLVED_PRODUCT_REF",
+    "UNAVAILABLE_VARIANT",
+    "PARTIAL_DATA",
+    "UPSTREAM_RATE_LIMIT",
+    "UNKNOWN",
+  ]),
+  message: z.string().min(1),
+  retryable: z.boolean().default(true),
+  suggestedNextStep: z.string().min(1).optional(),
 });
 
 export const StorefrontChatRequestSchema = z.object({
@@ -204,6 +283,18 @@ export const StorefrontChatStreamPartSchema = z.discriminatedUnion("type", [
     cart: CartToolActionStatusEventSchema.shape.cart.optional(),
   }),
   z.object({
+    type: z.literal("comparison.proposed"),
+    comparison: ProductComparisonProposedSchema,
+  }),
+  z.object({
+    type: z.literal("comparison.result"),
+    comparison: ProductComparisonResultSchema,
+  }),
+  z.object({
+    type: z.literal("comparison.error"),
+    error: ProductComparisonErrorSchema,
+  }),
+  z.object({
     type: z.literal("guidance-block"),
     block: StructuredGuidanceBlockSchema,
   }),
@@ -230,5 +321,11 @@ export type CartToolActionPayload = z.infer<typeof CartToolActionPayloadSchema>;
 export type CartToolActionStatus = z.infer<typeof CartToolActionStatusSchema>;
 export type CartToolAction = z.infer<typeof CartToolActionSchema>;
 export type CartToolActionStatusEvent = z.infer<typeof CartToolActionStatusEventSchema>;
+export type ProductComparisonRequest = z.infer<typeof ProductComparisonRequestSchema>;
+export type ProductComparisonSnapshot = z.infer<typeof ProductComparisonSnapshotSchema>;
+export type ProductComparisonDimension = z.infer<typeof ProductComparisonDimensionSchema>;
+export type ProductComparisonResult = z.infer<typeof ProductComparisonResultSchema>;
+export type ProductComparisonProposed = z.infer<typeof ProductComparisonProposedSchema>;
+export type ProductComparisonError = z.infer<typeof ProductComparisonErrorSchema>;
 export type StorefrontChatRequest = z.infer<typeof StorefrontChatRequestSchema>;
 export type StorefrontChatStreamPart = z.infer<typeof StorefrontChatStreamPartSchema>;

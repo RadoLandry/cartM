@@ -104,8 +104,14 @@ export function CartMindChat({ config }: CartMindChatProps) {
       onRetry={() => {
         void retryLastMessage();
       }}
+      onDismissComparisonContext={(comparisonContextId) => {
+        dispatch({ type: "comparison_context_dismissed", comparisonContextId });
+      }}
       onApproveAction={(action) => {
         void submitActionConfirmation(action, "approve");
+      }}
+      onApproveActionSelection={(action, selection) => {
+        void submitActionConfirmation(action, "approve", selection);
       }}
       onDeclineAction={(action) => {
         void submitActionConfirmation(action, "decline");
