@@ -46,6 +46,18 @@ export interface ApplyBudgetOptimizationSelectionInput {
   cart: StorefrontCartSnapshot;
 }
 
+export interface ColorwayPreviewLineResolutionInput {
+  selectedLineId: string;
+  proposedVariantId: string;
+  cart: StorefrontChatRequest["cart"];
+}
+
+export interface ColorwayPreviewLineResolutionResult {
+  valid: boolean;
+  reason?: "line_not_found" | "same_variant" | "missing_variant";
+  selectedLine?: StorefrontChatRequest["cart"]["items"][number];
+}
+
 function estimateLinePrice(item: StorefrontChatRequest["cart"]["items"][number], index: number) {
   const estimated = (index + 1) * 18;
   return Math.round(estimated * Math.max(item.quantity, 1) * 100) / 100;
@@ -57,6 +69,40 @@ function findCartItemByRef(input: FetchComparisonProductsInput, ref: string) {
     || item.variantId === ref
     || item.lineId === ref
   ));
+}
+
+export function resolveColorwayPreviewLine(
+  input: ColorwayPreviewLineResolutionInput,
+): ColorwayPreviewLineResolutionResult {
+  const selectedLine = input.cart.items.find((item) => item.lineId === input.selectedLineId);
+
+  if (!selectedLine) {
+    return {
+      valid: false,
+      reason: "line_not_found",
+    };
+  }
+
+  if (!selectedLine.variantId) {
+    return {
+      valid: false,
+      reason: "missing_variant",
+      selectedLine,
+    };
+  }
+
+  if (selectedLine.variantId === input.proposedVariantId) {
+    return {
+      valid: false,
+      reason: "same_variant",
+      selectedLine,
+    };
+  }
+
+  return {
+    valid: true,
+    selectedLine,
+  };
 }
 
 function buildSnapshotFromCartItem(ref: string, item?: StorefrontChatRequest["cart"]["items"][number]): ProductComparisonSnapshot {

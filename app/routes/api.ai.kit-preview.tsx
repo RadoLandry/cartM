@@ -1,40 +1,39 @@
 import type { ActionFunctionArgs } from "react-router";
-import { z } from "zod";
-
-import { composeKitPreview } from "../lib/visual/compositor";
-import { resolveLayoutProfile } from "../lib/visual/templates";
-import { normalizeStorefrontCartForPreview } from "../lib/shopify/storefront-cart";
+import { resolveColorwayPreviewLine } from "../lib/shopify/cart";
+import {
+  ColorwayPreviewRequestSchema,
+  parseColorwayPreviewRequestInput,
+} from "../lib/visual/colorway-preview.types";
+import { generateColorwayPreview } from "../lib/visual/colorway-preview";
 
 export const runtime = "nodejs";
-
-const PreviewLineSchema = z.object({
-  lineId: z.string().min(1).optional(),
-  productId: z.string().min(1).optional(),
-  variantId: z.string().min(1).optional(),
-  productTitle: z.string().min(1).optional(),
-  variantTitle: z.string().min(1).optional(),
-  quantity: z.coerce.number().int().min(1).default(1),
-  imageUrl: z.string().url().optional(),
-  discipline: z.string().min(1).optional(),
-});
-
-const KitPreviewRequestSchema = z.object({
-  shop: z.string().min(1),
-  sessionId: z.string().min(1),
-  cartId: z.string().min(1),
-  surface: z.enum(["cart_drawer", "cart_page", "chat"]),
-  viewportHint: z.enum(["mobile", "desktop", "unknown"]).optional(),
-  currencyCode: z.string().min(3).max(3).default("USD"),
-  forceRegenerate: z.boolean().optional(),
-  cart: z.object({
-    items: z.array(PreviewLineSchema).default([]),
-  }),
-});
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const requestId = crypto.randomUUID();
   const body = await request.json().catch(() => null);
-  const parsed = KitPreviewRequestSchema.safeParse(body);
+  const normalizedBody = {
+    ...(body && typeof body === "object" ? body : {}),
+    shopDomain:
+      body && typeof body === "object" && "shopDomain" in body
+        ? body.shopDomain
+        : body && typeof body === "object" && "shop" in body
+          ? body.shop
+          : undefined,
+    selectedLineId:
+      body && typeof body === "object" && "selectedLineId" in body
+        ? body.selectedLineId
+        : body && typeof body === "object" && "lineId" in body
+          ? body.lineId
+          : undefined,
+    proposedVariantId:
+      body && typeof body === "object" && "proposedVariantId" in body
+        ? body.proposedVariantId
+        : body && typeof body === "object" && "variantId" in body
+          ? body.variantId
+          : undefined,
+  };
+
+  const parsed = ColorwayPreviewRequestSchema.safeParse(normalizedBody);
 
   if (!parsed.success) {
     return Response.json(
@@ -48,32 +47,53 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     );
   }
 
-  const snapshot = normalizeStorefrontCartForPreview({
-    cartId: parsed.data.cartId,
-    currencyCode: parsed.data.currencyCode,
-    items: parsed.data.cart.items,
-  });
-
-  const layoutProfile = resolveLayoutProfile(
-    snapshot.inferredDiscipline,
-    snapshot.items.length,
-  );
-
-  const composition = composeKitPreview({
-    snapshot,
-    layoutProfile,
-    forceRegenerate: parsed.data.forceRegenerate,
-  });
-
-  return Response.json({
-    ok: composition.status !== "error",
-    status: composition.status,
-    requestId,
-    preview: composition.preview,
-    context: composition.context,
-    omissions: composition.omissions,
-    diagnostics: {
-      generationMs: composition.diagnostics.generationMs,
+  const lineResolution = resolveColorwayPreviewLine({
+    selectedLineId: parsed.data.selectedLineId,
+    proposedVariantId: parsed.data.proposedVariantId,
+    cart: {
+      currencyCode: parsed.data.currencyCode,
+      items: parsed.data.cart.items,
     },
   });
+
+  if (!lineResolution.valid) {
+    return Response.json(
+      {
+        ok: false,
+        status: "invalid",
+        requestId,
+        error: lineResolution.reason,
+      },
+      { status: lineResolution.reason === "line_not_found" ? 404 : 422 },
+    );
+  }
+
+  try {
+    const preview = await generateColorwayPreview(
+      parseColorwayPreviewRequestInput(parsed.data),
+    );
+
+    return Response.json({
+      ok: preview.status !== "error",
+      status: preview.status,
+      requestId,
+      comparison: preview.comparison,
+      change: preview.change,
+      context: preview.context,
+      omissions: preview.omissions,
+      diagnostics: {
+        generationMs: preview.diagnostics.generationMs,
+      },
+    });
+  } catch (error) {
+    return Response.json(
+      {
+        ok: false,
+        status: "error",
+        requestId,
+        error: error instanceof Error ? error.message : "Unexpected preview failure",
+      },
+      { status: 500 },
+    );
+  }
 };

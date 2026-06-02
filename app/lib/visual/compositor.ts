@@ -51,6 +51,41 @@ interface ComposeKitPreviewInput {
   outputFormat?: "png" | "webp";
 }
 
+interface ComposeColorwayComparisonInput {
+  snapshot: StorefrontKitPreviewSnapshot;
+  layoutProfile: LayoutProfile;
+  selectedLineId: string;
+  currentVariantId: string;
+  proposedVariantId: string;
+  forceRegenerate?: boolean;
+  outputFormat?: "png" | "webp";
+}
+
+export interface ColorwayComparisonPreview {
+  currentAssetUrl: string | null;
+  proposedAssetUrl: string | null;
+  comparisonAssetUrl: string | null;
+  mimeType: "image/png" | "image/webp" | null;
+  width: number | null;
+  height: number | null;
+  reused: boolean;
+}
+
+export interface ColorwayComparisonResult {
+  status: "ok" | "partial" | "fallback" | "error";
+  comparison: ColorwayComparisonPreview;
+  context: {
+    inferredDiscipline: string | null;
+    layoutId: string;
+    templateVersion: string;
+  };
+  omissions: OmissionEntry[];
+  diagnostics: {
+    cacheKey: string;
+    generationMs: number | null;
+  };
+}
+
 const previewCache = new Map<string, CacheRecord>();
 
 export function buildPreviewCacheKey(input: {
@@ -168,6 +203,77 @@ export function composeKitPreview(input: ComposeKitPreviewInput): KitComposition
     diagnostics: {
       cacheKey,
       generationMs: Date.now() - startedAt,
+    },
+  };
+}
+
+function withQueryParam(url: string | null, key: string, value: string): string | null {
+  if (!url) {
+    return null;
+  }
+
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}${key}=${encodeURIComponent(value)}`;
+}
+
+function buildProposedSnapshot(input: ComposeColorwayComparisonInput): StorefrontKitPreviewSnapshot {
+  const nextItems = input.snapshot.items.map((item) => {
+    if (item.lineId !== input.selectedLineId) {
+      return item;
+    }
+
+    return {
+      ...item,
+      variantId: input.proposedVariantId,
+    };
+  });
+
+  return {
+    ...input.snapshot,
+    items: nextItems,
+    signatureSeed: `${input.snapshot.signatureSeed}::swap:${input.selectedLineId}:${input.currentVariantId}->${input.proposedVariantId}`,
+  };
+}
+
+export function composeColorwayComparison(input: ComposeColorwayComparisonInput): ColorwayComparisonResult {
+  const current = composeKitPreview({
+    snapshot: input.snapshot,
+    layoutProfile: input.layoutProfile,
+    forceRegenerate: input.forceRegenerate,
+    outputFormat: input.outputFormat,
+  });
+
+  const proposed = composeKitPreview({
+    snapshot: buildProposedSnapshot(input),
+    layoutProfile: input.layoutProfile,
+    forceRegenerate: input.forceRegenerate,
+    outputFormat: input.outputFormat,
+  });
+
+  const status = [current.status, proposed.status].includes("error")
+    ? "error"
+    : [current.status, proposed.status].includes("fallback")
+      ? "fallback"
+      : [current.status, proposed.status].includes("partial")
+        ? "partial"
+        : "ok";
+
+  return {
+    status,
+    comparison: {
+      currentAssetUrl: current.preview.assetUrl,
+      proposedAssetUrl: proposed.preview.assetUrl,
+      comparisonAssetUrl: withQueryParam(proposed.preview.assetUrl, "compare_to", "current"),
+      mimeType: proposed.preview.mimeType,
+      width: proposed.preview.width,
+      height: proposed.preview.height,
+      reused: current.preview.reused && proposed.preview.reused,
+    },
+    context: proposed.context,
+    omissions: [...current.omissions, ...proposed.omissions],
+    diagnostics: {
+      cacheKey: proposed.diagnostics.cacheKey,
+      generationMs: (current.diagnostics.generationMs ?? 0) + (proposed.diagnostics.generationMs ?? 0),
     },
   };
 }

@@ -32,13 +32,21 @@ interface UseStorefrontChatOptions {
 
 interface KitPreviewResponse {
   ok: boolean;
-  status: "ok" | "partial" | "fallback" | "error";
-  preview: {
-    assetUrl: string | null;
+  status: "ok" | "partial" | "invalid" | "fallback" | "error";
+  comparison: {
+    currentAssetUrl: string | null;
+    proposedAssetUrl: string | null;
+    comparisonAssetUrl: string | null;
     mimeType: string | null;
     width: number | null;
     height: number | null;
     reused: boolean;
+  };
+  change: {
+    selectedLineId: string;
+    fromVariantId: string;
+    toVariantId: string;
+    changedLabel: string;
   };
   context: {
     inferredDiscipline: string | null;
@@ -52,6 +60,25 @@ interface KitPreviewResponse {
   }>;
   diagnostics: {
     generationMs: number | null;
+  };
+}
+
+function buildColorwaySelection(cart: StorefrontCartSnapshot) {
+  const selectedLine = cart.items.find((item) => item.lineId && item.variantId) ?? cart.items[0];
+
+  if (!selectedLine) {
+    return {
+      selectedLineId: "",
+      proposedVariantId: "",
+    };
+  }
+
+  const selectedLineId = selectedLine.lineId || selectedLine.productId || "";
+  const currentVariantId = selectedLine.variantId || selectedLine.productId || "";
+
+  return {
+    selectedLineId,
+    proposedVariantId: `preview-${currentVariantId}`,
   };
 }
 
@@ -198,15 +225,19 @@ export function useStorefrontChat({
     const requestUrl = new URL(config.bootstrapUrl);
     const previewUrl = new URL("/api/ai/kit-preview", requestUrl.origin);
 
+    const selection = buildColorwaySelection(cart);
+
     const response = await fetchImpl(previewUrl.toString(), {
       method: "POST",
       headers: {
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        shop: config.shop,
+        shopDomain: config.shop,
         sessionId: stateRef.current.sessionId,
         cartId: cart.cartId || "anonymous-cart",
+        selectedLineId: selection.selectedLineId,
+        proposedVariantId: selection.proposedVariantId,
         surface: config.surface,
         viewportHint: "unknown",
         currencyCode: cart.currencyCode,
