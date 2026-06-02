@@ -30,6 +30,31 @@ interface UseStorefrontChatOptions {
   resolveCartSnapshot?: () => Promise<StorefrontCartSnapshot>;
 }
 
+interface KitPreviewResponse {
+  ok: boolean;
+  status: "ok" | "partial" | "fallback" | "error";
+  preview: {
+    assetUrl: string | null;
+    mimeType: string | null;
+    width: number | null;
+    height: number | null;
+    reused: boolean;
+  };
+  context: {
+    inferredDiscipline: string | null;
+    layoutId: string;
+    templateVersion: string;
+  };
+  omissions: Array<{
+    lineId: string;
+    reasonCode: string;
+    reasonDetail?: string;
+  }>;
+  diagnostics: {
+    generationMs: number | null;
+  };
+}
+
 function buildBootstrapRequest(config: StorefrontChatMountConfig, state: ChatSessionState, cart: StorefrontCartSnapshot) {
   return {
     shop: config.shop,
@@ -112,6 +137,8 @@ export function useStorefrontChat({
 }: UseStorefrontChatOptions) {
   const stateRef = useRef(state);
   const lastCartFingerprintRef = useRef("");
+  const lastPreviewFingerprintRef = useRef("");
+  const lastKitPreviewResultRef = useRef<KitPreviewResponse | null>(null);
 
   useEffect(() => {
     stateRef.current = state;
@@ -167,6 +194,45 @@ export function useStorefrontChat({
     return config.cart;
   }
 
+  async function requestKitPreview(cart: StorefrontCartSnapshot, forceRegenerate = false) {
+    const requestUrl = new URL(config.bootstrapUrl);
+    const previewUrl = new URL("/api/ai/kit-preview", requestUrl.origin);
+
+    const response = await fetchImpl(previewUrl.toString(), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        shop: config.shop,
+        sessionId: stateRef.current.sessionId,
+        cartId: cart.cartId || "anonymous-cart",
+        surface: config.surface,
+        viewportHint: "unknown",
+        currencyCode: cart.currencyCode,
+        forceRegenerate,
+        cart: {
+          items: cart.items.map((item) => ({
+            lineId: item.lineId,
+            productId: item.productId,
+            variantId: item.variantId,
+            productTitle: item.productTitle,
+            variantTitle: item.variantTitle,
+            quantity: item.quantity,
+          })),
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Kit preview request failed with status ${response.status}.`);
+    }
+
+    const payload = await response.json() as KitPreviewResponse;
+    lastKitPreviewResultRef.current = payload;
+    return payload;
+  }
+
   async function streamAssistantReply(assistantMessageId: string, pendingUserMessage: string) {
     const currentState = stateRef.current;
     const currentCart = await getCurrentCartSnapshot();
@@ -174,9 +240,19 @@ export function useStorefrontChat({
 
     if (lastCartFingerprintRef.current && lastCartFingerprintRef.current !== currentFingerprint) {
       dispatch({ type: "bootstrap_reset" });
+
+      if (lastPreviewFingerprintRef.current !== currentFingerprint) {
+        void requestKitPreview(currentCart, true).catch(() => undefined);
+        lastPreviewFingerprintRef.current = currentFingerprint;
+      }
     }
 
     lastCartFingerprintRef.current = currentFingerprint;
+
+    if (!lastPreviewFingerprintRef.current) {
+      void requestKitPreview(currentCart).catch(() => undefined);
+      lastPreviewFingerprintRef.current = currentFingerprint;
+    }
 
     const bootstrap = await ensureBootstrap(currentCart);
     const response = await fetchImpl(bootstrap.chatUrl, {
@@ -445,5 +521,7 @@ export function useStorefrontChat({
     submitMessage,
     retryLastMessage,
     submitActionConfirmation,
+    requestKitPreview,
+    getLastKitPreviewResult: () => lastKitPreviewResultRef.current,
   };
 }

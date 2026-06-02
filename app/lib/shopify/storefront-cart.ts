@@ -19,6 +19,26 @@ export interface StorefrontCartSnapshot {
   subtotal?: string;
 }
 
+export interface StorefrontKitPreviewSnapshotItem {
+  lineId: string;
+  productId?: string;
+  variantId?: string;
+  productTitle?: string;
+  variantTitle?: string;
+  quantity: number;
+  imageUrl?: string;
+  discipline?: string;
+  renderEligible: boolean;
+}
+
+export interface StorefrontKitPreviewSnapshot {
+  cartId?: string;
+  currencyCode: string;
+  inferredDiscipline: string | null;
+  items: StorefrontKitPreviewSnapshotItem[];
+  signatureSeed: string;
+}
+
 export interface CartMutationOutcome {
   ok: boolean;
   status: "executed" | "failed";
@@ -27,12 +47,89 @@ export interface CartMutationOutcome {
   cart: StorefrontCartSnapshot;
 }
 
+interface StorefrontKitPreviewSnapshotInput {
+  cartId?: string;
+  currencyCode: string;
+  items?: Array<{
+    lineId?: string;
+    productId?: string;
+    variantId?: string;
+    productTitle?: string;
+    variantTitle?: string;
+    quantity?: number;
+    imageUrl?: string;
+    discipline?: string;
+  }>;
+}
+
 function normalizeCart(input: Partial<StorefrontCartSnapshot> & Pick<StorefrontCartSnapshot, "currencyCode">): StorefrontCartSnapshot {
   return {
     ...(input.cartId ? { cartId: input.cartId } : {}),
     currencyCode: input.currencyCode,
     items: input.items ?? [],
     ...(input.subtotal ? { subtotal: input.subtotal } : {}),
+  };
+}
+
+function normalizeDiscipline(values: Array<string | undefined>): string | null {
+  const normalized = Array.from(new Set(
+    values
+      .map((value) => value?.trim().toLowerCase().replace(/\s+/g, "_"))
+      .filter((value): value is string => Boolean(value)),
+  ));
+
+  return normalized.length === 1 ? normalized[0] : null;
+}
+
+function normalizePreviewLineId(index: number, lineId?: string): string {
+  if (lineId && lineId.trim().length > 0) {
+    return lineId;
+  }
+
+  return `preview-line-${index + 1}`;
+}
+
+export function normalizeStorefrontCartForPreview(
+  input: StorefrontKitPreviewSnapshotInput,
+): StorefrontKitPreviewSnapshot {
+  const items = (input.items ?? []).map((item, index) => {
+    const quantity = Number.isFinite(item.quantity) && (item.quantity ?? 0) > 0
+      ? Math.floor(item.quantity as number)
+      : 1;
+    const lineId = normalizePreviewLineId(index, item.lineId);
+    const imageUrl = item.imageUrl?.trim();
+
+    return {
+      lineId,
+      ...(item.productId ? { productId: item.productId } : {}),
+      ...(item.variantId ? { variantId: item.variantId } : {}),
+      ...(item.productTitle ? { productTitle: item.productTitle } : {}),
+      ...(item.variantTitle ? { variantTitle: item.variantTitle } : {}),
+      quantity,
+      ...(imageUrl ? { imageUrl } : {}),
+      ...(item.discipline ? { discipline: item.discipline } : {}),
+      renderEligible: Boolean(imageUrl),
+    };
+  });
+
+  const sortedItems = [...items].sort((a, b) => a.lineId.localeCompare(b.lineId));
+  const inferredDiscipline = normalizeDiscipline(sortedItems.map((item) => item.discipline));
+  const signatureSeed = sortedItems
+    .map((item) => [
+      item.lineId,
+      item.productId ?? "",
+      item.variantId ?? "",
+      item.quantity.toString(),
+      item.imageUrl ?? "",
+    ].join("|"))
+    .join("::");
+
+  return {
+    ...(input.cartId ? { cartId: input.cartId } : {}),
+    currencyCode: input.currencyCode,
+    inferredDiscipline,
+    items: sortedItems,
+    signatureSeed: `${inferredDiscipline ?? "mixed"}::${signatureSeed}`,
   };
 }
 
