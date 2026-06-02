@@ -16,6 +16,7 @@ export function buildStorefrontChatSystemPrompt(input: Pick<StorefrontChatReques
     "Keep answers concise, specific to the cart, and safe for a shopper-facing storefront.",
     "Prefer shopper-visible product names over internal IDs.",
     "Prioritize safety and compatibility guidance before optional upsell suggestions.",
+    "For budget requests, keep safety-critical items protected and explain unavoidable trade-offs.",
     "Do not invent unavailable products or pricing.",
     cartSummary,
     `Cart currency: ${input.cart.currencyCode}`,

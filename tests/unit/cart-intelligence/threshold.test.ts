@@ -84,11 +84,20 @@ describe("threshold evaluation", () => {
       79.99,
     );
 
+    if (!request) {
+      throw new Error("Expected threshold evaluation request to be generated.");
+    }
+
     expect(listActiveThresholdRules).toHaveBeenCalledWith(TEST_SHOP);
     expect(listThresholdCandidateProducts).toHaveBeenCalledWith(TEST_SHOP, freeShippingRule, 50);
     expect(request.thresholdRules).toHaveLength(2);
     expect(request.candidates).toHaveLength(2);
-    expect(request.candidates[0]).toMatchObject({
+
+    if (!request.candidates) {
+      throw new Error("Expected threshold candidates to be defined.");
+    }
+
+    expect(request.candidates[0]!).toMatchObject({
       productId: "prod-mouthguard",
       wouldOvershoot: false,
     });

@@ -835,7 +835,7 @@ function mapProductRecordToCartVisualItem(product: {
     dominantColors: (product.visualProfile.dominantColors as string[]) ?? [],
     detectedColorwayKeys: product.visualProfile.detectedColorwayKeys,
     overrideColorwayKeys: product.visualProfile.overrideColorwayKeys,
-    detectedCollections: (product.visualProfile.detectedCollections as CollectionSummary[]) ?? [],
+    detectedCollections: (product.visualProfile.detectedCollections as unknown as CollectionSummary[]) ?? [],
     overrideCollections: (product.visualProfile.overrideCollections as CollectionSummary[] | null) ?? null,
     visualConfidence: product.visualProfile.visualConfidence,
     reviewStatus: product.visualProfile.reviewStatus,
@@ -1007,7 +1007,7 @@ export async function listStyleCandidateProducts(
         productId: product.id,
         variantId: variant.id,
       }))
-      .filter((item): item is CartVisualItem => Boolean(item) && item.availableForSale);
+      .filter((item): item is CartVisualItem => item != null && item.availableForSale);
   });
 
   const seen = new Set<string>();
@@ -2660,7 +2660,7 @@ export interface ReplenishmentShopperSummary {
   reminderSuppressedUntil?: string;
 }
 
-function asJsonRecord(value: Prisma.JsonValue | null | undefined): JsonRecord {
+function asJsonRecord(value: unknown): JsonRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {};
   }

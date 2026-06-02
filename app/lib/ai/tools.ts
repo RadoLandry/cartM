@@ -1,6 +1,13 @@
 import crypto from "node:crypto";
 
-import type { CartToolAction, ProductComparisonRequest, ProductComparisonResult, StorefrontChatRequest } from "./schemas";
+import type {
+  BudgetOptimizationRequest,
+  BudgetOptimizationResult,
+  CartToolAction,
+  ProductComparisonRequest,
+  ProductComparisonResult,
+  StorefrontChatRequest,
+} from "./schemas";
 import { createCartToolActionRecord, getCartToolActionRecord, isCartToolActionTerminalStatus } from "./storefront-chat";
 import { issueActionConfirmationToken } from "../shopify/app-proxy";
 
@@ -12,8 +19,32 @@ function createComparisonRequestId() {
   return crypto.randomUUID();
 }
 
+function createBudgetOptimizationRequestId() {
+  return crypto.randomUUID();
+}
+
 export function createComparisonContextId(requestId: string) {
   return `cmp_${requestId}`;
+}
+
+export function createBudgetOptimizationContextId(requestId: string) {
+  return `bgt_${requestId}`;
+}
+
+function parseBudgetAmountFromMessage(content: string) {
+  const normalized = content.replace(/,/g, "");
+  const amountMatch = normalized.match(/(?:\$|€|£)?\s*(\d+(?:\.\d{1,2})?)/);
+
+  if (!amountMatch) {
+    return null;
+  }
+
+  const amount = Number(amountMatch[1]);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return null;
+  }
+
+  return amount;
 }
 
 function inferToolFromMessage(input: StorefrontChatRequest): {
@@ -190,6 +221,55 @@ export function buildComparisonSelectionActionProposal(input: {
   return action;
 }
 
+export function buildBudgetOptimizationSelectionActionProposal(input: {
+  shop: string;
+  sessionKey: string;
+  cartId?: string;
+  optimization: BudgetOptimizationResult;
+}): CartToolAction | null {
+  if (input.optimization.candidates.length === 0) {
+    return null;
+  }
+
+  const actionId = createActionId();
+  const token = issueActionConfirmationToken({
+    actionId,
+    shop: input.shop,
+    sessionKey: input.sessionKey,
+    cartId: input.cartId,
+  });
+
+  const action: CartToolAction = {
+    actionId,
+    toolName: "optimizeBudget",
+    shop: input.shop,
+    sessionKey: input.sessionKey,
+    ...(input.cartId ? { cartId: input.cartId } : {}),
+    payload: {
+      actionType: "budget_optimization_select",
+      optimizationContextId: input.optimization.optimizationContextId,
+      candidateIds: input.optimization.candidates.map((candidate) => candidate.candidateId),
+      projectedSubtotal: input.optimization.projectedSubtotal,
+      projectedGapAmount: input.optimization.projectedGapAmount,
+    },
+    preview: {
+      after: `Apply budget plan (${input.optimization.candidates.length} change${input.optimization.candidates.length > 1 ? "s" : ""})`,
+    },
+    confirmationToken: token.token,
+    expiresAt: token.expiresAt,
+  };
+
+  createCartToolActionRecord({
+    actionId,
+    shop: action.shop,
+    sessionKey: action.sessionKey,
+    cartId: action.cartId,
+    payload: action.payload,
+  });
+
+  return action;
+}
+
 export function resolveCartToolActionById(actionId: string) {
   const record = getCartToolActionRecord(actionId);
 
@@ -244,14 +324,67 @@ export function getCompareProductsValidationError(input: StorefrontChatRequest) 
   const uniqueRefs = Array.from(new Set(allRefs));
 
   if (uniqueRefs.length < 2) {
+    const code: "DUPLICATE_PRODUCTS" | "INSUFFICIENT_PRODUCTS" = allRefs.length > uniqueRefs.length
+      ? "DUPLICATE_PRODUCTS"
+      : "INSUFFICIENT_PRODUCTS";
+
     return {
-      code: (allRefs.length > uniqueRefs.length ? "DUPLICATE_PRODUCTS" : "INSUFFICIENT_PRODUCTS") as const,
+      code,
       message: allRefs.length > uniqueRefs.length
         ? "Please choose two different products for comparison."
         : "Please add at least two products before asking for a comparison.",
       suggestedNextStep: allRefs.length > uniqueRefs.length
         ? "Select another product from your cart and compare again."
         : "Add one more product to your cart, then ask CartMind to compare.",
+    };
+  }
+
+  return null;
+}
+
+export function buildBudgetOptimizationToolRequest(input: StorefrontChatRequest): BudgetOptimizationRequest | null {
+  const latest = input.messages[input.messages.length - 1]?.content.toLowerCase() ?? "";
+
+  if (!latest.includes("budget") && !latest.includes("optimiz")) {
+    return null;
+  }
+
+  const targetBudgetAmount = parseBudgetAmountFromMessage(latest);
+  if (!targetBudgetAmount) {
+    return null;
+  }
+
+  return {
+    requestId: createBudgetOptimizationRequestId(),
+    shop: input.shop,
+    sessionKey: input.sessionKey,
+    targetBudgetAmount,
+    currencyCode: input.cart.currencyCode,
+    requestedAt: new Date().toISOString(),
+  };
+}
+
+export function getBudgetOptimizationValidationError(input: StorefrontChatRequest) {
+  const latest = input.messages[input.messages.length - 1]?.content.toLowerCase() ?? "";
+
+  if (!latest.includes("budget") && !latest.includes("optimiz")) {
+    return null;
+  }
+
+  if (input.cart.items.length === 0) {
+    return {
+      code: "EMPTY_CART" as const,
+      message: "Add at least one product before asking for budget optimization.",
+      suggestedNextStep: "Add products to your cart, then share your target budget.",
+    };
+  }
+
+  const parsedBudget = parseBudgetAmountFromMessage(latest);
+  if (!parsedBudget) {
+    return {
+      code: "INVALID_TARGET_BUDGET" as const,
+      message: "Please provide a target budget amount, for example: optimize this cart for $120.",
+      suggestedNextStep: "Include a numeric budget amount and retry.",
     };
   }
 

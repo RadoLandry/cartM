@@ -1,4 +1,7 @@
 import type {
+  BudgetOptimizationError,
+  BudgetOptimizationRequest,
+  BudgetOptimizationResult,
   ProductComparisonDimension,
   ProductComparisonError,
   ProductComparisonRequest,
@@ -60,6 +63,22 @@ export interface ProductComparisonContextRecord {
 }
 
 const productComparisonContextStore = new Map<string, ProductComparisonContextRecord>();
+
+export interface BudgetOptimizationContextRecord {
+  optimizationContextId: string;
+  requestId: string;
+  shop: string;
+  sessionKey: string;
+  status: "generated" | "failed" | "expired" | "action_pending" | "action_executed" | "action_failed";
+  targetBudgetAmount: number;
+  currencyCode: string;
+  createdAt: string;
+  updatedAt: string;
+  result?: BudgetOptimizationResult;
+  error?: BudgetOptimizationError;
+}
+
+const budgetOptimizationContextStore = new Map<string, BudgetOptimizationContextRecord>();
 
 export function createCartToolActionRecord(input: {
   actionId: string;
@@ -408,6 +427,91 @@ export function setProductComparisonContextError(input: {
   return updated;
 }
 
+export function createBudgetOptimizationContext(input: {
+  optimizationContextId: string;
+  request: BudgetOptimizationRequest;
+}) {
+  const now = new Date().toISOString();
+  const record: BudgetOptimizationContextRecord = {
+    optimizationContextId: input.optimizationContextId,
+    requestId: input.request.requestId,
+    shop: input.request.shop,
+    sessionKey: input.request.sessionKey,
+    status: "generated",
+    targetBudgetAmount: input.request.targetBudgetAmount,
+    currencyCode: input.request.currencyCode,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  budgetOptimizationContextStore.set(record.optimizationContextId, record);
+  return record;
+}
+
+export function getBudgetOptimizationContext(optimizationContextId: string) {
+  return budgetOptimizationContextStore.get(optimizationContextId);
+}
+
+export function validateBudgetOptimizationContextScope(input: {
+  optimizationContextId: string;
+  shop: string;
+  sessionKey: string;
+}) {
+  const record = getBudgetOptimizationContext(input.optimizationContextId);
+
+  if (!record) {
+    return { ok: false as const, code: "CONTEXT_NOT_FOUND", message: "Budget optimization context was not found." };
+  }
+
+  if (record.shop !== input.shop || record.sessionKey !== input.sessionKey) {
+    return { ok: false as const, code: "CONTEXT_SCOPE_MISMATCH", message: "Budget optimization context does not match this session." };
+  }
+
+  return { ok: true as const, record };
+}
+
+export function setBudgetOptimizationContextResult(input: {
+  optimizationContextId: string;
+  result: BudgetOptimizationResult;
+}) {
+  const current = getBudgetOptimizationContext(input.optimizationContextId);
+
+  if (!current) {
+    return null;
+  }
+
+  const updated: BudgetOptimizationContextRecord = {
+    ...current,
+    status: "generated",
+    result: input.result,
+    updatedAt: new Date().toISOString(),
+  };
+
+  budgetOptimizationContextStore.set(updated.optimizationContextId, updated);
+  return updated;
+}
+
+export function setBudgetOptimizationContextError(input: {
+  optimizationContextId: string;
+  error: BudgetOptimizationError;
+}) {
+  const current = getBudgetOptimizationContext(input.optimizationContextId);
+
+  if (!current) {
+    return null;
+  }
+
+  const updated: BudgetOptimizationContextRecord = {
+    ...current,
+    status: "failed",
+    error: input.error,
+    updatedAt: new Date().toISOString(),
+  };
+
+  budgetOptimizationContextStore.set(updated.optimizationContextId, updated);
+  return updated;
+}
+
 export function buildProductComparisonDataError(input: {
   comparisonContextId: string;
   requestedRefs: string[];
@@ -517,5 +621,61 @@ export function normalizeProductComparisonResult(input: {
     products: input.snapshots,
     dimensions,
     ...(recommendation ? { recommendation } : {}),
+  };
+}
+
+function roundCurrency(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+export function normalizeBudgetOptimizationResult(
+  result: BudgetOptimizationResult,
+): BudgetOptimizationResult {
+  return {
+    ...result,
+    baselineSubtotal: roundCurrency(result.baselineSubtotal),
+    targetBudgetAmount: roundCurrency(result.targetBudgetAmount),
+    projectedSubtotal: roundCurrency(result.projectedSubtotal),
+    projectedGapAmount: roundCurrency(result.projectedGapAmount),
+    candidates: result.candidates.map((candidate) => ({
+      ...candidate,
+      estimatedSavings: roundCurrency(candidate.estimatedSavings),
+    })),
+  };
+}
+
+export function mapBudgetOptimizationToGuidanceBlock(input: {
+  optimization: BudgetOptimizationResult;
+  currencyCode: string;
+}): Extract<StructuredGuidanceBlock, { type: "budget_optimization" }> {
+  const summaryByStatus: Record<BudgetOptimizationResult["status"], string> = {
+    within_budget: "Your current cart already fits the target budget.",
+    optimized: "This ranked plan reaches your target budget.",
+    constraint_blocked: "This plan reduces total cost, but constraints prevent fully reaching the target.",
+    insufficient_candidates: "No viable candidate changes were found to reduce this cart safely.",
+  };
+
+  return {
+    blockId: `budget-${input.optimization.optimizationContextId}`,
+    type: "budget_optimization",
+    title: "Budget optimization plan",
+    summary: summaryByStatus[input.optimization.status],
+    priority: 1,
+    status: input.optimization.status,
+    currencyCode: input.currencyCode,
+    baselineSubtotal: input.optimization.baselineSubtotal,
+    targetBudgetAmount: input.optimization.targetBudgetAmount,
+    projectedSubtotal: input.optimization.projectedSubtotal,
+    projectedGapAmount: input.optimization.projectedGapAmount,
+    constraints: input.optimization.constraints,
+    candidates: input.optimization.candidates.map((candidate) => ({
+      candidateId: candidate.candidateId,
+      changeType: candidate.changeType,
+      sourceProductId: candidate.sourceProductId,
+      ...(candidate.targetProductId ? { targetProductId: candidate.targetProductId } : {}),
+      estimatedSavings: candidate.estimatedSavings,
+      safetyCriticalImpact: candidate.safetyCriticalImpact,
+      rationale: candidate.rationale,
+    })),
   };
 }

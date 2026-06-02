@@ -38,6 +38,27 @@ export type GuidanceRenderModel =
       kind: "fallback_notice";
       title: string;
       summary: string;
+    }
+  | {
+      kind: "budget_optimization";
+      title: string;
+      summary: string;
+      status: "within_budget" | "optimized" | "constraint_blocked" | "insufficient_candidates";
+      currencyCode: string;
+      baselineSubtotal: number;
+      targetBudgetAmount: number;
+      projectedSubtotal: number;
+      projectedGapAmount: number;
+      constraints: string[];
+      candidates: Array<{
+        candidateId: string;
+        changeType: "swap" | "remove" | "downgrade" | "defer";
+        sourceProductId: string;
+        targetProductId?: string;
+        estimatedSavings: number;
+        safetyCriticalImpact: "none" | "reduced_protection" | "critical_removal";
+        rationale: string;
+      }>;
     };
 
 export function getGuidanceRenderModel(block: StructuredGuidanceBlock): GuidanceRenderModel {
@@ -85,6 +106,20 @@ export function getGuidanceRenderModel(block: StructuredGuidanceBlock): Guidance
         kind: "fallback_notice",
         title: block.title,
         summary: block.summary,
+      };
+    case "budget_optimization":
+      return {
+        kind: "budget_optimization",
+        title: block.title,
+        summary: block.summary,
+        status: block.status,
+        currencyCode: block.currencyCode,
+        baselineSubtotal: block.baselineSubtotal,
+        targetBudgetAmount: block.targetBudgetAmount,
+        projectedSubtotal: block.projectedSubtotal,
+        projectedGapAmount: block.projectedGapAmount,
+        constraints: block.constraints,
+        candidates: block.candidates,
       };
   }
 }

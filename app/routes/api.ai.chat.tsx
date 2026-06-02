@@ -3,20 +3,29 @@ import type { ActionFunctionArgs } from "react-router";
 import { StorefrontChatRequestSchema } from "../lib/ai/schemas";
 import {
   buildProductComparisonDataError,
+  createBudgetOptimizationContext,
   buildStorefrontChatStreamParts,
   createProductComparisonContext,
+  normalizeBudgetOptimizationResult,
   normalizeProductComparisonResult,
+  setBudgetOptimizationContextError,
+  setBudgetOptimizationContextResult,
   setProductComparisonContextError,
   setProductComparisonContextResult,
 } from "../lib/ai/storefront-chat";
 import {
+  buildBudgetOptimizationSelectionActionProposal,
+  buildBudgetOptimizationToolRequest,
   buildCartToolActionProposal,
   buildCompareProductsToolRequest,
   buildComparisonSelectionActionProposal,
+  createBudgetOptimizationContextId,
   createComparisonContextId,
+  getBudgetOptimizationValidationError,
   getCompareProductsValidationError,
 } from "../lib/ai/tools";
-import { fetchComparisonProducts } from "../lib/shopify/cart";
+import { buildBudgetOptimizationProposal } from "../lib/cart-intelligence/budget-optimization";
+import { fetchBudgetOptimizationCandidates, fetchComparisonProducts } from "../lib/shopify/cart";
 import {
   assertAllowedStorefrontOrigin,
   verifyStorefrontChatToken,
@@ -92,6 +101,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const comparisonRequest = buildCompareProductsToolRequest(parsed.data);
   const comparisonParts = [] as Array<(typeof streamParts)[number]>;
   let comparisonActionProposal: ReturnType<typeof buildComparisonSelectionActionProposal> | null = null;
+  const budgetValidationError = getBudgetOptimizationValidationError(parsed.data);
+  const budgetRequest = buildBudgetOptimizationToolRequest(parsed.data);
+  const budgetParts = [] as Array<(typeof streamParts)[number]>;
+  let budgetActionProposal: ReturnType<typeof buildBudgetOptimizationSelectionActionProposal> | null = null;
 
   if (comparisonValidationError) {
     comparisonParts.push({
@@ -104,6 +117,87 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         suggestedNextStep: comparisonValidationError.suggestedNextStep,
       },
     });
+  }
+
+  if (budgetValidationError) {
+    budgetParts.push({
+      type: "budget-optimization.error",
+      error: {
+        optimizationContextId: "budget-validation",
+        code: budgetValidationError.code,
+        message: budgetValidationError.message,
+        retryable: true,
+        suggestedNextStep: budgetValidationError.suggestedNextStep,
+      },
+    });
+  }
+
+  if (budgetRequest && !budgetValidationError) {
+    const optimizationContextId = createBudgetOptimizationContextId(budgetRequest.requestId);
+    createBudgetOptimizationContext({
+      optimizationContextId,
+      request: budgetRequest,
+    });
+
+    budgetParts.push({
+      type: "budget-optimization.proposed",
+      optimization: {
+        optimizationContextId,
+        request: budgetRequest,
+      },
+    });
+
+    const candidateFetch = await fetchBudgetOptimizationCandidates({
+      shop: budgetRequest.shop,
+      request: budgetRequest,
+      cart: parsed.data.cart,
+    });
+
+    if (candidateFetch.items.length === 0) {
+      const budgetError = {
+        optimizationContextId,
+        code: "NO_ELIGIBLE_CANDIDATES" as const,
+        message: "No eligible budget optimization candidates were found for this cart.",
+        retryable: true,
+        suggestedNextStep: "Try increasing your budget target or adding alternatives to your cart.",
+      };
+
+      setBudgetOptimizationContextError({
+        optimizationContextId,
+        error: budgetError,
+      });
+
+      budgetParts.push({
+        type: "budget-optimization.error",
+        error: budgetError,
+      });
+    } else {
+      const budgetResult = normalizeBudgetOptimizationResult(buildBudgetOptimizationProposal({
+        optimizationContextId,
+        requestId: budgetRequest.requestId,
+        baselineSubtotal: candidateFetch.baselineSubtotal,
+        targetBudgetAmount: budgetRequest.targetBudgetAmount,
+        candidates: candidateFetch.items,
+        fetchedAt: candidateFetch.fetchedAt,
+      }));
+
+      setBudgetOptimizationContextResult({
+        optimizationContextId,
+        result: budgetResult,
+      });
+
+      budgetParts.push({
+        type: "budget-optimization.result",
+        optimization: budgetResult,
+      });
+
+      budgetActionProposal = buildBudgetOptimizationSelectionActionProposal({
+        shop: parsed.data.shop,
+        sessionKey: parsed.data.sessionKey,
+        cartId: parsed.data.cart.cartId,
+        optimization: budgetResult,
+      });
+    }
   }
 
   if (comparisonRequest && !comparisonValidationError) {
@@ -189,7 +283,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   const actionProposal = buildCartToolActionProposal(parsed.data);
-  const toolActionEvents = [actionProposal, comparisonActionProposal]
+  const toolActionEvents = [actionProposal, comparisonActionProposal, budgetActionProposal]
     .filter((action): action is NonNullable<typeof action> => Boolean(action))
     .map((action) => ({
       type: "tool-action-proposed" as const,
@@ -200,12 +294,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     ? [
       ...streamParts.filter((part) => part.type !== "message-complete"),
       ...comparisonParts,
+      ...budgetParts,
       ...toolActionEvents,
       ...streamParts.filter((part) => part.type === "message-complete"),
     ]
     : [
       ...streamParts.filter((part) => part.type !== "message-complete"),
       ...comparisonParts,
+      ...budgetParts,
       ...streamParts.filter((part) => part.type === "message-complete"),
     ];
   const encoder = new TextEncoder();

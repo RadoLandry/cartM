@@ -20,6 +20,8 @@ function getActionLabel(action: CartToolAction) {
       return "Swap item variant";
     case "compareProducts":
       return "Apply comparison choice";
+    case "optimizeBudget":
+      return "Apply budget optimization";
   }
 }
 
@@ -30,7 +32,9 @@ export function CartToolActionCard({
   onApproveSelection,
   onDecline,
 }: CartToolActionCardProps) {
-  const isComparisonSelection = action.payload.actionType === "comparison_select";
+  const comparisonPayload = action.payload.actionType === "comparison_select"
+    ? action.payload
+    : null;
 
   return (
     <section className="cm-guidance cm-guidance--fallback" data-action-id={action.actionId}>
@@ -43,19 +47,19 @@ export function CartToolActionCard({
           ? `${action.preview.before} -> ${action.preview.after}`
           : "Review and confirm this cart action before execution."}
       </p>
-      {isComparisonSelection ? (
+      {comparisonPayload ? (
         <div className="cm-guidance__actions">
           <button
             type="button"
             onClick={() => onApproveSelection(action, {
-              productId: action.payload.recommended.productId,
-              variantId: action.payload.recommended.variantId,
+              productId: comparisonPayload.recommended.productId,
+              variantId: comparisonPayload.recommended.variantId,
             })}
             disabled={isSubmitting}
           >
-            {isSubmitting ? "Applying..." : `Choose ${action.payload.recommended.title}`}
+            {isSubmitting ? "Applying..." : `Choose ${comparisonPayload.recommended.title}`}
           </button>
-          {action.payload.alternatives.map((alternative) => (
+          {comparisonPayload.alternatives.map((alternative) => (
             <button
               key={`${action.actionId}-${alternative.productId}`}
               type="button"

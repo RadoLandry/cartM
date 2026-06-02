@@ -432,9 +432,12 @@ export function buildVisualRecommendations(
 ): VisualRecommendationPayload {
   const opportunities = result.suggestions.map((suggestion, index) => {
     const candidate = candidates.find((item) => item.productId === suggestion.candidateProductId);
+    const opportunityType: "collection_completion" | "swap" = suggestion.type === "add"
+      ? "collection_completion"
+      : "swap";
 
     return {
-      type: suggestion.type === "add" ? "collection_completion" : "swap",
+      type: opportunityType,
       productId: suggestion.candidateProductId,
       variantId: suggestion.candidateVariantId,
       title: candidate?.title ?? suggestion.candidateProductId,
@@ -514,7 +517,9 @@ export function buildReplenishmentRecommendations(
   }
 
   const visibleCandidates = candidates.filter(
-    (candidate) => candidate.dueState === "approaching" || candidate.dueState === "due",
+    (candidate): candidate is ReplenishmentCandidate & { dueState: "approaching" | "due" } => (
+      candidate.dueState === "approaching" || candidate.dueState === "due"
+    ),
   );
   const dueCount = visibleCandidates.filter((candidate) => candidate.dueState === "due").length;
   const approachingCount = visibleCandidates.filter((candidate) => candidate.dueState === "approaching").length;

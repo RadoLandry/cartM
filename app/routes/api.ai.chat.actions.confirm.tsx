@@ -6,15 +6,17 @@ import {
   verifyActionConfirmationToken,
 } from "../lib/shopify/app-proxy";
 import {
+  getBudgetOptimizationContext,
   getCartToolActionIdempotentReplay,
   getCartToolActionRecord,
   getProductComparisonContext,
   isCartToolActionTerminalStatus,
   transitionCartToolActionRecord,
+  validateBudgetOptimizationContextScope,
   validateProductComparisonContextScope,
 } from "../lib/ai/storefront-chat";
 import { storefrontCartMutationAdapter } from "../lib/shopify/storefront-cart";
-import { applyComparisonSelectionToCart } from "../lib/shopify/cart";
+import { applyBudgetOptimizationSelectionToCart, applyComparisonSelectionToCart } from "../lib/shopify/cart";
 
 const ConfirmCartActionRequestSchema = z.object({
   shop: z.string().min(1),
@@ -22,10 +24,12 @@ const ConfirmCartActionRequestSchema = z.object({
   actionId: z.string().min(1),
   confirmationToken: z.string().min(1),
   decision: z.enum(["approve", "decline"]),
-  actionType: z.enum(["cart_tool", "comparison_select"]).default("cart_tool"),
+  actionType: z.enum(["cart_tool", "comparison_select", "budget_optimization_select"]).default("cart_tool"),
   comparisonContextId: z.string().min(1).optional(),
+  optimizationContextId: z.string().min(1).optional(),
   selectedProductId: z.string().min(1).optional(),
   selectedVariantId: z.string().min(1).optional(),
+  candidateIds: z.array(z.string().min(1)).optional(),
   cart: z.object({
     cartId: z.string().min(1).optional(),
     currencyCode: z.string().length(3).default("USD"),
@@ -331,6 +335,160 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           comparisonContextId: parsed.data.comparisonContextId,
           selectedProductId: parsed.data.selectedProductId,
           ...(parsed.data.selectedVariantId ? { selectedVariantId: parsed.data.selectedVariantId } : {}),
+          cart: mutationOutcome.cart,
+        },
+      });
+    }
+
+    if (parsed.data.actionType === "budget_optimization_select") {
+      if (!parsed.data.optimizationContextId) {
+        return Response.json(
+          {
+            ok: false,
+            error: {
+              code: "INVALID_PAYLOAD",
+              message: "optimizationContextId is required for budget optimization selections.",
+            },
+          },
+          { status: 400 },
+        );
+      }
+
+      const contextScope = validateBudgetOptimizationContextScope({
+        optimizationContextId: parsed.data.optimizationContextId,
+        shop: parsed.data.shop,
+        sessionKey: parsed.data.sessionKey,
+      });
+
+      if (!contextScope.ok) {
+        const failedTransition = transitionCartToolActionRecord({
+          actionId: parsed.data.actionId,
+          nextStatus: "failed",
+          summary: contextScope.message,
+        });
+
+        return Response.json(
+          {
+            ok: false,
+            error: {
+              code: contextScope.code,
+              message: failedTransition.ok ? failedTransition.record.summary : contextScope.message,
+            },
+          },
+          { status: 404 },
+        );
+      }
+
+      const optimizationContext = getBudgetOptimizationContext(parsed.data.optimizationContextId);
+      const optimizationResult = optimizationContext?.result;
+
+      if (!optimizationResult) {
+        const failedTransition = transitionCartToolActionRecord({
+          actionId: parsed.data.actionId,
+          nextStatus: "failed",
+          summary: "Budget optimization result is no longer available. Please run optimization again.",
+        });
+
+        return Response.json(
+          {
+            ok: false,
+            error: {
+              code: "OPTIMIZATION_STALE",
+              message: failedTransition.ok
+                ? failedTransition.record.summary
+                : "Budget optimization result is no longer available. Please run optimization again.",
+            },
+          },
+          { status: 409 },
+        );
+      }
+
+      const payload = record.payload as {
+        actionType?: string;
+        optimizationContextId?: string;
+        candidateIds?: string[];
+      };
+
+      const requestedCandidateIds = parsed.data.candidateIds?.length
+        ? parsed.data.candidateIds
+        : payload.candidateIds || [];
+      const availableCandidateIds = new Set(optimizationResult.candidates.map((candidate) => candidate.candidateId));
+      const selectedCandidateIds = requestedCandidateIds.filter((candidateId) => availableCandidateIds.has(candidateId));
+
+      if (selectedCandidateIds.length === 0) {
+        const failedTransition = transitionCartToolActionRecord({
+          actionId: parsed.data.actionId,
+          nextStatus: "failed",
+          summary: "Selected budget candidates are no longer valid for this optimization context.",
+        });
+
+        return Response.json(
+          {
+            ok: false,
+            error: {
+              code: "INVALID_SELECTION",
+              message: failedTransition.ok
+                ? failedTransition.record.summary
+                : "Selected budget candidates are no longer valid for this optimization context.",
+            },
+          },
+          { status: 422 },
+        );
+      }
+
+      const mutationOutcome = await applyBudgetOptimizationSelectionToCart({
+        actionId: parsed.data.actionId,
+        optimizationContextId: parsed.data.optimizationContextId,
+        candidateIds: selectedCandidateIds,
+        cart: {
+          cartId: parsed.data.cart?.cartId,
+          currencyCode: parsed.data.cart?.currencyCode || "USD",
+          items: parsed.data.cart?.items.map((item) => ({
+            lineId: item.lineId || item.productId,
+            productId: item.productId,
+            variantId: item.variantId,
+            quantity: item.quantity,
+          })) || [],
+          subtotal: parsed.data.cart?.subtotal,
+        },
+      });
+
+      if (!mutationOutcome.ok) {
+        const failedTransition = transitionCartToolActionRecord({
+          actionId: parsed.data.actionId,
+          nextStatus: "failed",
+          summary: mutationOutcome.message,
+        });
+
+        return Response.json(
+          {
+            ok: false,
+            error: {
+              code: mutationOutcome.code || "MUTATION_ERROR",
+              message: failedTransition.ok ? failedTransition.record.summary : mutationOutcome.message,
+            },
+          },
+          { status: 422 },
+        );
+      }
+
+      const executedTransition = transitionCartToolActionRecord({
+        actionId: parsed.data.actionId,
+        nextStatus: "executed",
+        summary: `Applied budget optimization with ${selectedCandidateIds.length} change${selectedCandidateIds.length > 1 ? "s" : ""}.`,
+      });
+
+      return Response.json({
+        ok: true,
+        result: {
+          actionId: parsed.data.actionId,
+          status: executedTransition.ok ? executedTransition.record.status : "executed",
+          summary: executedTransition.ok
+            ? executedTransition.record.summary
+            : `Applied budget optimization with ${selectedCandidateIds.length} change${selectedCandidateIds.length > 1 ? "s" : ""}.`,
+          optimizationContextId: parsed.data.optimizationContextId,
+          projectedSubtotal: optimizationResult.projectedSubtotal,
+          projectedGapAmount: optimizationResult.projectedGapAmount,
           cart: mutationOutcome.cart,
         },
       });

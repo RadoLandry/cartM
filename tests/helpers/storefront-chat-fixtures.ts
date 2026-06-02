@@ -139,7 +139,7 @@ export function makeStorefrontChatSessionState(
 ): ChatSessionState {
   const surface = (overrides.surface as StorefrontChatSurface | undefined) ?? "cart_drawer";
 
-  return {
+  const state = {
     shop: TEST_SHOP,
     surface,
     sessionId: TEST_SESSION_ID,
@@ -160,4 +160,11 @@ export function makeStorefrontChatSessionState(
     pendingActionId: undefined,
     ...overrides,
   };
+
+  return {
+    ...state,
+    comparisonContexts: overrides.comparisonContexts ?? state.comparisonContexts ?? [],
+    actionHistory: overrides.actionHistory ?? state.actionHistory ?? [],
+    messages: overrides.messages ?? state.messages ?? [],
+  } as ChatSessionState;
 }

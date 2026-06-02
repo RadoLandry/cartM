@@ -95,11 +95,36 @@ export const FallbackNoticeBlockSchema = z.object({
   priority: z.number().int().nonnegative(),
 });
 
+export const BudgetOptimizationBlockSchema = z.object({
+  blockId: z.string().min(1),
+  type: z.literal("budget_optimization"),
+  title: z.string().min(1),
+  summary: z.string().min(1),
+  priority: z.number().int().nonnegative(),
+  status: z.enum(["within_budget", "optimized", "constraint_blocked", "insufficient_candidates"]),
+  currencyCode: z.string().length(3).default("USD"),
+  baselineSubtotal: z.number().nonnegative(),
+  targetBudgetAmount: z.number().positive(),
+  projectedSubtotal: z.number().nonnegative(),
+  projectedGapAmount: z.number().nonnegative(),
+  constraints: z.array(z.string().min(1)).default([]),
+  candidates: z.array(z.object({
+    candidateId: z.string().min(1),
+    changeType: z.enum(["swap", "remove", "downgrade", "defer"]),
+    sourceProductId: z.string().min(1),
+    targetProductId: z.string().min(1).optional(),
+    estimatedSavings: z.number().nonnegative(),
+    safetyCriticalImpact: z.enum(["none", "reduced_protection", "critical_removal"]),
+    rationale: z.string().min(1),
+  })).default([]),
+});
+
 export const StructuredGuidanceBlockSchema = z.discriminatedUnion("type", [
   RecommendationListBlockSchema,
   ComparisonTableBlockSchema,
   SizeSummaryBlockSchema,
   FallbackNoticeBlockSchema,
+  BudgetOptimizationBlockSchema,
 ]);
 
 export const StorefrontChatMessageSchema = z.object({
@@ -113,6 +138,7 @@ export const CartToolActionTypeSchema = z.enum([
   "change_quantity",
   "swap_variant",
   "comparison_select",
+  "budget_optimization_select",
 ]);
 
 export const CartToolActionPayloadSchema = z.discriminatedUnion("actionType", [
@@ -150,6 +176,13 @@ export const CartToolActionPayloadSchema = z.discriminatedUnion("actionType", [
       title: z.string().min(1),
     })).default([]),
   }),
+  z.object({
+    actionType: z.literal("budget_optimization_select"),
+    optimizationContextId: z.string().min(1),
+    candidateIds: z.array(z.string().min(1)).default([]),
+    projectedSubtotal: z.number().nonnegative().optional(),
+    projectedGapAmount: z.number().nonnegative().optional(),
+  }),
 ]);
 
 export const CartToolActionStatusSchema = z.enum([
@@ -164,7 +197,7 @@ export const CartToolActionStatusSchema = z.enum([
 
 export const CartToolActionSchema = z.object({
   actionId: z.string().min(1),
-  toolName: z.enum(["addToCart", "removeFromCart", "changeQuantity", "swapVariant", "compareProducts"]),
+  toolName: z.enum(["addToCart", "removeFromCart", "changeQuantity", "swapVariant", "compareProducts", "optimizeBudget"]),
   shop: z.string().min(1),
   sessionKey: z.string().min(1),
   cartId: z.string().min(1).optional(),
@@ -207,13 +240,13 @@ export const ProductComparisonSnapshotSchema = z.object({
   price: z.string().min(1),
   currencyCode: z.string().length(3).default("USD"),
   availability: z.enum(["available", "unavailable", "limited", "unknown"]),
-  attributes: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).default({}),
+  attributes: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).default({}),
 });
 
 export const ProductComparisonDimensionSchema = z.object({
   key: z.string().min(1),
   label: z.string().min(1),
-  values: z.record(z.union([z.string(), z.number(), z.boolean(), z.null(), z.literal("not_available")])),
+  values: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null(), z.literal("not_available")])),
 });
 
 export const ProductComparisonResultSchema = z.object({
@@ -246,6 +279,67 @@ export const ProductComparisonErrorSchema = z.object({
     "UNRESOLVED_PRODUCT_REF",
     "UNAVAILABLE_VARIANT",
     "PARTIAL_DATA",
+    "UPSTREAM_RATE_LIMIT",
+    "UNKNOWN",
+  ]),
+  message: z.string().min(1),
+  retryable: z.boolean().default(true),
+  suggestedNextStep: z.string().min(1).optional(),
+});
+
+export const BudgetOptimizationRequestSchema = z.object({
+  requestId: z.string().min(1),
+  shop: z.string().min(1),
+  sessionKey: z.string().min(1),
+  targetBudgetAmount: z.number().positive(),
+  currencyCode: z.string().length(3).default("USD"),
+  requestedAt: z.string().datetime(),
+});
+
+export const BudgetOptimizationCandidateSchema = z.object({
+  candidateId: z.string().min(1),
+  changeType: z.enum(["swap", "remove", "downgrade", "defer"]),
+  sourceLineId: z.string().min(1),
+  sourceProductId: z.string().min(1),
+  sourceVariantId: z.string().min(1).optional(),
+  targetProductId: z.string().min(1).optional(),
+  targetVariantId: z.string().min(1).optional(),
+  estimatedSavings: z.number().nonnegative(),
+  safetyCriticalImpact: z.enum(["none", "reduced_protection", "critical_removal"]),
+  rationale: z.string().min(1),
+  disciplineFitScore: z.number().min(0).max(1),
+  availability: z.enum(["available", "unavailable", "unknown"]),
+});
+
+export const BudgetOptimizationResultSchema = z.object({
+  optimizationContextId: z.string().min(1),
+  requestId: z.string().min(1),
+  generatedAt: z.string().datetime(),
+  baselineSubtotal: z.number().nonnegative(),
+  targetBudgetAmount: z.number().positive(),
+  projectedSubtotal: z.number().nonnegative(),
+  projectedGapAmount: z.number().nonnegative(),
+  status: z.enum(["within_budget", "optimized", "constraint_blocked", "insufficient_candidates"]),
+  candidates: z.array(BudgetOptimizationCandidateSchema),
+  constraints: z.array(z.string().min(1)).default([]),
+  freshness: z.object({
+    priceCheckedAt: z.string().datetime(),
+    availabilityCheckedAt: z.string().datetime(),
+  }),
+});
+
+export const BudgetOptimizationProposedSchema = z.object({
+  optimizationContextId: z.string().min(1),
+  request: BudgetOptimizationRequestSchema,
+});
+
+export const BudgetOptimizationErrorSchema = z.object({
+  optimizationContextId: z.string().min(1),
+  code: z.enum([
+    "INVALID_TARGET_BUDGET",
+    "EMPTY_CART",
+    "NO_ELIGIBLE_CANDIDATES",
+    "CONSTRAINT_BLOCKED",
     "UPSTREAM_RATE_LIMIT",
     "UNKNOWN",
   ]),
@@ -295,6 +389,18 @@ export const StorefrontChatStreamPartSchema = z.discriminatedUnion("type", [
     error: ProductComparisonErrorSchema,
   }),
   z.object({
+    type: z.literal("budget-optimization.proposed"),
+    optimization: BudgetOptimizationProposedSchema,
+  }),
+  z.object({
+    type: z.literal("budget-optimization.result"),
+    optimization: BudgetOptimizationResultSchema,
+  }),
+  z.object({
+    type: z.literal("budget-optimization.error"),
+    error: BudgetOptimizationErrorSchema,
+  }),
+  z.object({
     type: z.literal("guidance-block"),
     block: StructuredGuidanceBlockSchema,
   }),
@@ -327,5 +433,10 @@ export type ProductComparisonDimension = z.infer<typeof ProductComparisonDimensi
 export type ProductComparisonResult = z.infer<typeof ProductComparisonResultSchema>;
 export type ProductComparisonProposed = z.infer<typeof ProductComparisonProposedSchema>;
 export type ProductComparisonError = z.infer<typeof ProductComparisonErrorSchema>;
+export type BudgetOptimizationRequest = z.infer<typeof BudgetOptimizationRequestSchema>;
+export type BudgetOptimizationCandidate = z.infer<typeof BudgetOptimizationCandidateSchema>;
+export type BudgetOptimizationResult = z.infer<typeof BudgetOptimizationResultSchema>;
+export type BudgetOptimizationProposed = z.infer<typeof BudgetOptimizationProposedSchema>;
+export type BudgetOptimizationError = z.infer<typeof BudgetOptimizationErrorSchema>;
 export type StorefrontChatRequest = z.infer<typeof StorefrontChatRequestSchema>;
 export type StorefrontChatStreamPart = z.infer<typeof StorefrontChatStreamPartSchema>;

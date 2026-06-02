@@ -6,6 +6,7 @@ import {
   StorefrontChatBootstrapResponseSchema,
   StorefrontChatStreamPartSchema,
 } from "../../../app/lib/ai/schemas";
+import { mapBudgetOptimizationToGuidanceBlock } from "../../../app/lib/ai/storefront-chat";
 import type { StorefrontChatMountConfig } from "../types";
 import {
   buildChatThreadMessage,
@@ -288,6 +289,31 @@ export function useStorefrontChat({
               },
             });
             break;
+          case "budget-optimization.proposed":
+            break;
+          case "budget-optimization.result":
+            dispatch({
+              type: "guidance_block_added",
+              messageId: assistantMessageId,
+              block: mapBudgetOptimizationToGuidanceBlock({
+                optimization: part.optimization,
+                currencyCode: currentCart.currencyCode,
+              }),
+            });
+            break;
+          case "budget-optimization.error":
+            dispatch({
+              type: "guidance_block_added",
+              messageId: assistantMessageId,
+              block: {
+                blockId: `budget-error-${part.error.optimizationContextId}`,
+                type: "fallback_notice",
+                title: "Budget optimization unavailable",
+                summary: part.error.suggestedNextStep || part.error.message,
+                priority: 1,
+              },
+            });
+            break;
           case "guidance-block":
             dispatch({ type: "guidance_block_added", messageId: assistantMessageId, block: part.block });
             break;
@@ -377,6 +403,12 @@ export function useStorefrontChat({
                 selectedProductId: selection?.productId || action.payload.recommended.productId,
                 selectedVariantId: selection?.variantId || action.payload.recommended.variantId,
               }
+            : action.payload.actionType === "budget_optimization_select"
+              ? {
+                  actionType: "budget_optimization_select",
+                  optimizationContextId: action.payload.optimizationContextId,
+                  candidateIds: action.payload.candidateIds,
+                }
             : {}),
           cart: currentCart,
         }),

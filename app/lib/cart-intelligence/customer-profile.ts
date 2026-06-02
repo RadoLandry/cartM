@@ -144,7 +144,10 @@ export function mergeProfileInput(
   storedExplicitProfile: Record<string, unknown> = {},
   explicitInput?: ProfileInput,
 ): Record<string, unknown> {
-  return mergeSummaryRecords(storedExplicitProfile, explicitInput ?? {});
+  return mergeSummaryRecords(
+    storedExplicitProfile,
+    (explicitInput ?? {}) as Partial<Record<string, unknown>>,
+  );
 }
 
 export function mergeKnownSizes(

@@ -1,5 +1,6 @@
 import type { CartToolAction, StructuredGuidanceBlock } from "../../../app/lib/ai/schemas";
 import type { ChatThreadMessage } from "../hooks/useChatSessionState";
+import { BudgetOptimizationCard } from "./guidance/BudgetOptimizationCard";
 import { ComparisonTable } from "./guidance/ComparisonTable";
 import { CartToolActionCard } from "./guidance/CartToolActionCard";
 import { FallbackNotice } from "./guidance/FallbackNotice";
@@ -25,6 +26,8 @@ function renderGuidanceBlock(block: StructuredGuidanceBlock) {
       return <SizeSummary key={block.blockId} block={block} />;
     case "fallback_notice":
       return <FallbackNotice key={block.blockId} block={block} />;
+    case "budget_optimization":
+      return <BudgetOptimizationCard key={block.blockId} block={block} />;
   }
 }
 

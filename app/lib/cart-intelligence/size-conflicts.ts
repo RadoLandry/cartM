@@ -154,7 +154,7 @@ function buildConflict(
         itemB.variantId,
         itemB.sizeValue,
         expectedSizeForB,
-        severity === "ERROR" ? 0.95 : 0.85,
+        0.85,
         `${itemA.categoryTag} size ${itemA.sizeValue} maps to ${itemB.categoryTag} size ${expectedSizeForB}.`,
       ),
     ]);
@@ -167,7 +167,7 @@ function buildConflict(
         itemA.variantId,
         itemA.sizeValue,
         expectedSizeForA ?? itemA.sizeValue,
-        severity === "ERROR" ? 0.95 : 0.85,
+        0.85,
         `${itemB.categoryTag} size ${itemB.sizeValue} maps to ${itemA.categoryTag} size ${expectedSizeForA}.`,
       ),
     ]);
