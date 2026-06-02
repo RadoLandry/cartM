@@ -1,4 +1,7 @@
 import {
+  AnalyticsCustomerType,
+  AnalyticsEventSource,
+  AnalyticsEventType,
   Prisma,
   BundleComponentMatchMode,
   BundleDiscountType,
@@ -31,6 +34,8 @@ import {
   KnowledgeGraphChangeAction,
   KnowledgeGraphEntityType,
   KnowledgeGraphOverrideDimension,
+  ExportReportFormat,
+  ExportReportStatus,
 } from "@prisma/client";
 import db from "../../db.server";
 import type {
@@ -51,6 +56,224 @@ import type {
   ThresholdCandidateProduct,
   ThresholdRuleRecord,
 } from "../knowledge-graph/thresholds";
+
+export interface UpsertAnalyticsEventInput {
+  shop: string;
+  eventType: AnalyticsEventType;
+  occurredAt: Date;
+  source: AnalyticsEventSource;
+  idempotencyKey: string;
+  sourceEventId?: string | null;
+  sessionId?: string | null;
+  customerId?: string | null;
+  customerType?: AnalyticsCustomerType | null;
+  payload?: Record<string, unknown> | null;
+}
+
+export async function upsertAnalyticsEvent(input: UpsertAnalyticsEventInput) {
+  const {
+    shop,
+    eventType,
+    occurredAt,
+    source,
+    idempotencyKey,
+    sourceEventId,
+    sessionId,
+    customerId,
+    customerType,
+    payload,
+  } = input;
+
+  return await db.analyticsEvent.upsert({
+    where: {
+      shop_idempotencyKey: {
+        shop,
+        idempotencyKey,
+      },
+    },
+    update: {
+      eventType,
+      occurredAt,
+      source,
+      sourceEventId,
+      sessionId,
+      customerId,
+      customerType,
+      payload: payload ? (payload as Prisma.InputJsonValue) : undefined,
+      receivedAt: new Date(),
+    },
+    create: {
+      shop,
+      eventType,
+      occurredAt,
+      source,
+      idempotencyKey,
+      sourceEventId,
+      sessionId,
+      customerId,
+      customerType,
+      payload: payload ? (payload as Prisma.InputJsonValue) : undefined,
+    },
+  });
+}
+
+export interface UpsertKpiSnapshotInput {
+  shop: string;
+  kpiKey: string;
+  periodStart: Date;
+  periodEnd: Date;
+  granularity: "DAY" | "WEEK" | "MONTH";
+  value: Prisma.Decimal | number | string;
+  sampleSize?: number;
+  segment?: Record<string, unknown> | null;
+  dataFreshUntil?: Date | null;
+}
+
+export async function upsertKpiSnapshot(input: UpsertKpiSnapshotInput) {
+  const {
+    shop,
+    kpiKey,
+    periodStart,
+    periodEnd,
+    granularity,
+    value,
+    sampleSize = 0,
+    segment,
+    dataFreshUntil,
+  } = input;
+
+  return await db.kpiSnapshot.upsert({
+    where: {
+      shop_kpiKey_periodStart_periodEnd: {
+        shop,
+        kpiKey,
+        periodStart,
+        periodEnd,
+      },
+    },
+    update: {
+      granularity,
+      value: new Prisma.Decimal(value),
+      sampleSize,
+      segment: segment ? (segment as Prisma.InputJsonValue) : undefined,
+      dataFreshUntil,
+      computedAt: new Date(),
+    },
+    create: {
+      shop,
+      kpiKey,
+      periodStart,
+      periodEnd,
+      granularity,
+      value: new Prisma.Decimal(value),
+      sampleSize,
+      segment: segment ? (segment as Prisma.InputJsonValue) : undefined,
+      dataFreshUntil,
+    },
+  });
+}
+
+export async function getKpiSnapshots(
+  shop: string,
+  startDate: Date,
+  endDate: Date,
+  kpiKeys?: string[],
+) {
+  return await db.kpiSnapshot.findMany({
+    where: {
+      shop,
+      periodStart: {
+        gte: startDate,
+      },
+      periodEnd: {
+        lte: endDate,
+      },
+      ...(kpiKeys && kpiKeys.length > 0 ? { kpiKey: { in: kpiKeys } } : {}),
+    },
+    orderBy: [{ periodStart: "asc" }, { kpiKey: "asc" }],
+  });
+}
+
+export interface CreateAttributionRecordInput {
+  shop: string;
+  attributionType: "RECOMMENDATION" | "CHAT" | "BUNDLE";
+  sourceEventId: string;
+  outcomeEventId: string;
+  attributionWindowMinutes: number;
+  confidence: Prisma.Decimal | number | string;
+  sessionId?: string | null;
+  customerId?: string | null;
+}
+
+export async function createAttributionRecord(input: CreateAttributionRecordInput) {
+  return await db.attributionRecord.create({
+    data: {
+      shop: input.shop,
+      attributionType: input.attributionType,
+      sourceEventId: input.sourceEventId,
+      outcomeEventId: input.outcomeEventId,
+      attributionWindowMinutes: input.attributionWindowMinutes,
+      confidence: new Prisma.Decimal(input.confidence),
+      sessionId: input.sessionId,
+      customerId: input.customerId,
+    },
+  });
+}
+
+export interface CreateExportReportInput {
+  shop: string;
+  requestedBy: string;
+  periodStart: Date;
+  periodEnd: Date;
+  format?: ExportReportFormat;
+  filters?: Record<string, unknown> | null;
+}
+
+export async function createExportReport(input: CreateExportReportInput) {
+  return await db.exportReport.create({
+    data: {
+      shop: input.shop,
+      requestedBy: input.requestedBy,
+      periodStart: input.periodStart,
+      periodEnd: input.periodEnd,
+      format: input.format ?? ExportReportFormat.CSV,
+      filters: input.filters ? (input.filters as Prisma.InputJsonValue) : undefined,
+      status: ExportReportStatus.PENDING,
+    },
+  });
+}
+
+export async function updateExportReportStatus(
+  id: string,
+  status: ExportReportStatus,
+  options?: {
+    downloadUrl?: string | null;
+    expiresAt?: Date | null;
+    errorCode?: string | null;
+    completedAt?: Date | null;
+  },
+) {
+  return await db.exportReport.update({
+    where: { id },
+    data: {
+      status,
+      downloadUrl: options?.downloadUrl,
+      expiresAt: options?.expiresAt,
+      errorCode: options?.errorCode,
+      completedAt: options?.completedAt,
+      updatedAt: new Date(),
+    },
+  });
+}
+
+export async function getExportReportById(id: string, shop: string) {
+  return await db.exportReport.findFirst({
+    where: {
+      id,
+      shop,
+    },
+  });
+}
 
 export async function createSyncJob(shop: string) {
   return await db.syncJob.create({

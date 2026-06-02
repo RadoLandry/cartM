@@ -1,0 +1,283 @@
+openapi: 3.0.3
+info:
+  title: CartMind Analytics Dashboard API
+  version: 0.1.0
+  description: Contract for analytics dashboard data retrieval and export operations.
+servers:
+  - url: /api
+paths:
+  /analytics/dashboard:
+    get:
+      summary: Fetch analytics dashboard payload
+      operationId: getAnalyticsDashboard
+      parameters:
+        - in: query
+          name: startDate
+          required: true
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: endDate
+          required: true
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: baselineMode
+          required: false
+          schema:
+            type: string
+            enum: [previous_period, custom]
+            default: previous_period
+        - in: query
+          name: baselineStartDate
+          required: false
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: baselineEndDate
+          required: false
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: customerType
+          required: false
+          schema:
+            type: string
+            enum: [ALL, ANONYMOUS, LOGGED_IN]
+            default: ALL
+      responses:
+        '200':
+          description: Analytics dashboard data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyticsDashboardResponse'
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /analytics/export:
+    post:
+      summary: Request analytics export generation
+      operationId: createAnalyticsExport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateExportRequest'
+      responses:
+        '202':
+          description: Export accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportAcceptedResponse'
+        '400':
+          description: Invalid export request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /analytics/export/{exportId}:
+    get:
+      summary: Get export status
+      operationId: getAnalyticsExportStatus
+      parameters:
+        - in: path
+          name: exportId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Export status payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportStatusResponse'
+        '404':
+          description: Export not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+components:
+  schemas:
+    AnalyticsDashboardResponse:
+      type: object
+      required: [period, baseline, metrics, recommendationPerformance, bundlePerformance, chatPerformance, funnel, metricDefinitions]
+      properties:
+        period:
+          $ref: '#/components/schemas/Period'
+        baseline:
+          $ref: '#/components/schemas/Period'
+        metrics:
+          type: array
+          items:
+            $ref: '#/components/schemas/KpiMetric'
+        recommendationPerformance:
+          type: array
+          items:
+            $ref: '#/components/schemas/CategoryPerformance'
+        bundlePerformance:
+          $ref: '#/components/schemas/BundlePerformance'
+        chatPerformance:
+          $ref: '#/components/schemas/ChatPerformance'
+        funnel:
+          $ref: '#/components/schemas/FunnelMetrics'
+        metricDefinitions:
+          type: array
+          items:
+            $ref: '#/components/schemas/MetricDefinition'
+    Period:
+      type: object
+      required: [startDate, endDate]
+      properties:
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+    KpiMetric:
+      type: object
+      required: [key, value, baselineValue, absoluteDelta, percentDelta]
+      properties:
+        key:
+          type: string
+        value:
+          type: number
+        baselineValue:
+          type: number
+        absoluteDelta:
+          type: number
+        percentDelta:
+          type: number
+    CategoryPerformance:
+      type: object
+      required: [category, impressions, interactions, interactionRate, conversionContribution]
+      properties:
+        category:
+          type: string
+        impressions:
+          type: integer
+        interactions:
+          type: integer
+        interactionRate:
+          type: number
+        conversionContribution:
+          type: number
+    BundlePerformance:
+      type: object
+      required: [opportunities, completions, completionRate, valueImpact]
+      properties:
+        opportunities:
+          type: integer
+        completions:
+          type: integer
+        completionRate:
+          type: number
+        valueImpact:
+          type: number
+    ChatPerformance:
+      type: object
+      required: [sessions, engagementRate, cartModifications, resolutionDistribution]
+      properties:
+        sessions:
+          type: integer
+        engagementRate:
+          type: number
+        cartModifications:
+          type: integer
+        resolutionDistribution:
+          type: object
+          additionalProperties:
+            type: integer
+    FunnelMetrics:
+      type: object
+      required: [exposure, interaction, cartChange, purchaseCompletion]
+      properties:
+        exposure:
+          type: integer
+        interaction:
+          type: integer
+        cartChange:
+          type: integer
+        purchaseCompletion:
+          type: integer
+    MetricDefinition:
+      type: object
+      required: [key, displayName, description, formula]
+      properties:
+        key:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        formula:
+          type: string
+        caveats:
+          type: array
+          items:
+            type: string
+    CreateExportRequest:
+      type: object
+      required: [startDate, endDate, format]
+      properties:
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+        customerType:
+          type: string
+          enum: [ALL, ANONYMOUS, LOGGED_IN]
+          default: ALL
+        format:
+          type: string
+          enum: [CSV]
+    ExportAcceptedResponse:
+      type: object
+      required: [exportId, status]
+      properties:
+        exportId:
+          type: string
+        status:
+          type: string
+          enum: [PENDING, RUNNING]
+    ExportStatusResponse:
+      type: object
+      required: [exportId, status]
+      properties:
+        exportId:
+          type: string
+        status:
+          type: string
+          enum: [PENDING, RUNNING, READY, FAILED, EXPIRED]
+        downloadUrl:
+          type: string
+          nullable: true
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+        errorCode:
+          type: string
+          nullable: true
+    ErrorResponse:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+        message:
+          type: string

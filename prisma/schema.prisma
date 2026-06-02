@@ -725,3 +725,145 @@ model KnowledgeGraphChangeLog {
   @@index([shop, createdAt])
   @@index([bulkOperationId])
 }
+
+// ---------------------------------------------------------------------------
+// Analytics Dashboard
+// ---------------------------------------------------------------------------
+
+enum AnalyticsEventType {
+  RECOMMENDATION_SHOWN
+  RECOMMENDATION_CLICKED
+  CHAT_STARTED
+  CHAT_CART_MODIFICATION
+  BUNDLE_OPPORTUNITY_DETECTED
+  BUNDLE_COMPLETED
+  PURCHASE_COMPLETED
+  CART_UPDATED
+  RETURN_RECORDED
+}
+
+enum AnalyticsEventSource {
+  WEBHOOK
+  CHAT_TOOL
+  APP_ROUTE
+  JOB
+}
+
+enum AnalyticsCustomerType {
+  ANONYMOUS
+  LOGGED_IN
+}
+
+enum ExportReportFormat {
+  CSV
+}
+
+enum ExportReportStatus {
+  PENDING
+  RUNNING
+  READY
+  FAILED
+  EXPIRED
+}
+
+model AnalyticsEvent {
+  id             String                @id @default(cuid())
+  shop           String
+  eventType      AnalyticsEventType
+  occurredAt     DateTime
+  receivedAt     DateTime              @default(now())
+  source         AnalyticsEventSource
+  sourceEventId  String?
+  idempotencyKey String
+  sessionId      String?
+  customerId     String?
+  customerType   AnalyticsCustomerType?
+  payload        Json?
+  createdAt      DateTime              @default(now())
+
+  sourceAttributions AttributionRecord[] @relation("AttributionSourceEvent")
+  outcomeAttributions AttributionRecord[] @relation("AttributionOutcomeEvent")
+
+  @@unique([shop, idempotencyKey])
+  @@index([shop, eventType, occurredAt])
+  @@index([shop, customerType, occurredAt])
+}
+
+model KpiDefinition {
+  id                  String        @id @default(cuid())
+  key                 String        @unique
+  displayName         String
+  description         String
+  formula             String
+  numeratorDefinition String
+  denominatorDefinition String?
+  caveats             Json?
+  isRate              Boolean       @default(false)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  snapshots           KpiSnapshot[]
+}
+
+model KpiSnapshot {
+  id            String      @id @default(cuid())
+  shop          String
+  periodStart   DateTime
+  periodEnd     DateTime
+  granularity   String
+  segment       Json?
+  kpiKey        String
+  value         Decimal     @db.Decimal(20, 6)
+  sampleSize    Int         @default(0)
+  computedAt    DateTime    @default(now())
+  dataFreshUntil DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  definition    KpiDefinition @relation(fields: [kpiKey], references: [key], onDelete: Cascade)
+
+  @@unique([shop, kpiKey, periodStart, periodEnd])
+  @@index([shop, periodStart, periodEnd])
+  @@index([shop, kpiKey, periodStart])
+  @@index([shop, computedAt])
+}
+
+model AttributionRecord {
+  id                      String      @id @default(cuid())
+  shop                    String
+  sessionId               String?
+  customerId              String?
+  attributionType         String
+  sourceEventId           String
+  outcomeEventId          String
+  attributionWindowMinutes Int
+  confidence              Decimal     @db.Decimal(5, 4)
+  createdAt               DateTime    @default(now())
+
+  sourceEvent             AnalyticsEvent @relation("AttributionSourceEvent", fields: [sourceEventId], references: [id], onDelete: Cascade)
+  outcomeEvent            AnalyticsEvent @relation("AttributionOutcomeEvent", fields: [outcomeEventId], references: [id], onDelete: Cascade)
+
+  @@index([shop, attributionType, createdAt])
+  @@index([sourceEventId])
+  @@index([outcomeEventId])
+}
+
+model ExportReport {
+  id           String            @id @default(cuid())
+  shop         String
+  requestedBy  String
+  format       ExportReportFormat @default(CSV)
+  periodStart  DateTime
+  periodEnd    DateTime
+  filters      Json?
+  status       ExportReportStatus @default(PENDING)
+  downloadUrl  String?
+  expiresAt    DateTime?
+  errorCode    String?
+  createdAt    DateTime           @default(now())
+  completedAt  DateTime?
+  updatedAt    DateTime           @updatedAt
+
+  @@index([shop, status, createdAt])
+  @@index([shop, periodStart, periodEnd])
+}
