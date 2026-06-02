@@ -18,6 +18,8 @@ import {
 } from "@prisma/client";
 import {
   upsertCandidateRelationship,
+  upsertMerchantRelationship,
+  deactivateRelationshipRule,
   invalidateRelationshipsForProduct,
   getActiveRelationshipsForProduct,
   getProductSnapshotsForShop,
@@ -131,6 +133,35 @@ export function getDirectionality(type: RelationshipType): RelationshipDirection
   return SYMMETRIC_TYPES.has(type)
     ? RelationshipDirectionality.SYMMETRIC
     : RelationshipDirectionality.DIRECTIONAL;
+}
+
+export async function upsertMerchantRelationshipRule(input: {
+  shop: string;
+  sourceProductId: string;
+  targetProductId: string;
+  relationshipType: RelationshipType;
+  strength: number;
+  evidenceSummary?: Record<string, unknown>;
+}) {
+  const { sourceProductId, targetProductId } = canonicalizePair(
+    input.sourceProductId,
+    input.targetProductId,
+    input.relationshipType,
+  );
+
+  return await upsertMerchantRelationship({
+    shop: input.shop,
+    sourceProductId,
+    targetProductId,
+    relationshipType: input.relationshipType,
+    directionality: getDirectionality(input.relationshipType),
+    strength: Math.max(0, Math.min(1, input.strength)),
+    evidenceSummary: input.evidenceSummary,
+  });
+}
+
+export async function removeRelationshipRule(shop: string, relationshipId: string) {
+  return await deactivateRelationshipRule(shop, relationshipId);
 }
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,12 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { useLoaderData, useSubmit, Form, useFetcher } from "react-router";
+import {
+  useLoaderData,
+  useSubmit,
+  Form,
+  useFetcher,
+  useRouteError,
+  isRouteErrorResponse,
+} from "react-router";
 import { authenticate } from "../shopify.server";
 import {
   getLowConfidenceProducts,
@@ -53,6 +60,12 @@ import {
   Frame,
 } from "@shopify/polaris";
 import { useState, useCallback } from "react";
+import { KnowledgeGraphEditorShell } from "../components/admin/KnowledgeGraphEditorShell";
+import {
+  createKnowledgeGraphEditorSnapshot,
+  createKnowledgeGraphRouteScaffold,
+  KNOWLEDGE_GRAPH_EDITOR_ROUTE_INTENTS,
+} from "../lib/knowledge-graph/editor";
 
 type TaxonomyProduct = {
   id: string;
@@ -272,6 +285,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
+
+  if (
+    typeof intent !== "string" ||
+    !KNOWLEDGE_GRAPH_EDITOR_ROUTE_INTENTS.includes(
+      intent as (typeof KNOWLEDGE_GRAPH_EDITOR_ROUTE_INTENTS)[number],
+    )
+  ) {
+    return { ok: false, error: "Unknown intent" };
+  }
 
   if (intent === "override-taxonomy") {
     const shopifyProductId = formData.get("shopifyProductId");
@@ -946,6 +968,15 @@ export default function KnowledgeGraphPage() {
   const [selectedTab, setSelectedTab] = useState(0);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
 
+  const editorScaffold = createKnowledgeGraphRouteScaffold();
+  const editorSnapshot = createKnowledgeGraphEditorSnapshot({
+    lowConfidenceCount,
+    totalProductsCount: allProducts.length,
+    visualProfilesCount: visualProfiles.length,
+    sizeChartsCount: sizeCharts.length,
+    availableCategoryTagsCount: categoryTags.length,
+  });
+
   const tabs = [
     {
       id: "needs-review",
@@ -1041,6 +1072,13 @@ export default function KnowledgeGraphPage() {
         )}
 
         <Layout.Section>
+          <KnowledgeGraphEditorShell
+            scaffold={editorScaffold}
+            snapshot={editorSnapshot}
+          />
+        </Layout.Section>
+
+        <Layout.Section>
           <Card>
             <Tabs
               tabs={tabs}
@@ -1094,6 +1132,30 @@ export default function KnowledgeGraphPage() {
         </Layout.Section>
       </Layout>
     </Page>
+    </Frame>
+  );
+}
+
+export function ErrorBoundary() {
+  const error = useRouteError();
+
+  const message = isRouteErrorResponse(error)
+    ? `${error.status} ${error.statusText}`
+    : error instanceof Error
+      ? error.message
+      : "An unexpected error occurred while loading the Knowledge Graph editor.";
+
+  return (
+    <Frame>
+      <Page title="Knowledge Graph" subtitle="Editor unavailable">
+        <Layout>
+          <Layout.Section>
+            <Banner title="Unable to load Knowledge Graph editor" tone="critical">
+              <p>{message}</p>
+            </Banner>
+          </Layout.Section>
+        </Layout>
+      </Page>
     </Frame>
   );
 }

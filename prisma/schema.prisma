@@ -53,6 +53,7 @@ model Product {
   updatedAt        DateTime               @updatedAt
   variants         ProductVariant[]
   visualProfile    ProductVisualProfile?
+  classificationOverrides ProductClassificationOverride[]
 
   @@index([shop])
   @@index([status])
@@ -605,4 +606,97 @@ model ThresholdRule {
 
   @@unique([shop, key])
   @@index([shop, status, priority])
+}
+
+enum KnowledgeGraphOverrideDimension {
+  DISCIPLINE
+  CATEGORY
+}
+
+enum KnowledgeGraphEntityType {
+  PRODUCT_INTELLIGENCE
+  CLASSIFICATION_OVERRIDE
+  RELATIONSHIP_RULE
+  SIZE_MAPPING_RULE
+  BULK_OPERATION
+}
+
+enum KnowledgeGraphChangeAction {
+  CREATE
+  UPDATE
+  DELETE
+  ACTIVATE
+  DEACTIVATE
+  BULK_APPLY
+}
+
+enum KnowledgeGraphBulkOperationType {
+  RECLASSIFY
+  RELATIONSHIP_UPDATE
+  TAG_APPLY
+  TAG_REMOVE
+}
+
+enum KnowledgeGraphBulkOperationStatus {
+  PREVIEWED
+  CONFIRMED
+  RUNNING
+  PARTIAL
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model ProductClassificationOverride {
+  id             String                         @id @default(cuid())
+  shop           String
+  productId      String
+  dimension      KnowledgeGraphOverrideDimension
+  overrideValues String[]
+  isActive       Boolean                        @default(true)
+  createdBy      String?
+  supersededAt   DateTime?
+  createdAt      DateTime                       @default(now())
+  updatedAt      DateTime                       @updatedAt
+  product        Product                        @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([shop, productId])
+  @@index([shop, isActive, dimension])
+}
+
+model KnowledgeGraphBulkOperation {
+  id            String                           @id @default(cuid())
+  shop          String
+  operationType KnowledgeGraphBulkOperationType
+  targetCount   Int
+  previewHash   String
+  initiatedBy   String?
+  status        KnowledgeGraphBulkOperationStatus @default(PREVIEWED)
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  createdAt     DateTime                         @default(now())
+  updatedAt     DateTime                         @updatedAt
+  changeLogs    KnowledgeGraphChangeLog[]
+
+  @@index([shop, status])
+  @@index([shop, operationType])
+}
+
+model KnowledgeGraphChangeLog {
+  id               String                   @id @default(cuid())
+  shop             String
+  actorId          String?
+  entityType       KnowledgeGraphEntityType
+  entityId         String
+  action           KnowledgeGraphChangeAction
+  beforeSnapshot   Json?
+  afterSnapshot    Json?
+  reason           String?
+  bulkOperationId  String?
+  createdAt        DateTime                 @default(now())
+  bulkOperation    KnowledgeGraphBulkOperation? @relation(fields: [bulkOperationId], references: [id], onDelete: SetNull)
+
+  @@index([shop, entityType, entityId])
+  @@index([shop, createdAt])
+  @@index([bulkOperationId])
 }

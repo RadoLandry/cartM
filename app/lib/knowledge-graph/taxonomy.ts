@@ -23,6 +23,13 @@ export const CATEGORIES = [
 export type Discipline = (typeof DISCIPLINES)[number];
 export type Category = (typeof CATEGORIES)[number];
 
+import {
+  applyMerchantTaxonomyOverride,
+  createProductClassificationOverride,
+  findProductByShopifyId,
+} from "../db/queries";
+import { KnowledgeGraphOverrideDimension } from "@prisma/client";
+
 /** Fuzzy alias map: normalized lower-case input → canonical discipline */
 const DISCIPLINE_ALIASES: Record<string, Discipline> = {
   boxing: "Boxing",
@@ -119,4 +126,49 @@ export function normalizeCategories(raws: string[]): Category[] {
     .map(normalizeCategory)
     .filter((c): c is Category => c !== null);
   return Array.from(new Set(results));
+}
+
+export async function upsertMerchantClassificationOverride(input: {
+  shopifyProductId: string;
+  disciplineTags: string[];
+  categoryTags: string[];
+  actorId?: string;
+}) {
+  const normalizedDisciplines = normalizeDisciplines(input.disciplineTags);
+  const normalizedCategories = normalizeCategories(input.categoryTags);
+
+  await applyMerchantTaxonomyOverride(
+    input.shopifyProductId,
+    normalizedDisciplines,
+    normalizedCategories,
+  );
+
+  const product = await findProductByShopifyId(input.shopifyProductId);
+  if (!product) {
+    return { ok: false as const, reason: "product-not-found" };
+  }
+
+  await Promise.all([
+    createProductClassificationOverride({
+      shop: product.shop,
+      productId: product.id,
+      dimension: KnowledgeGraphOverrideDimension.DISCIPLINE,
+      overrideValues: normalizedDisciplines,
+      createdBy: input.actorId,
+    }),
+    createProductClassificationOverride({
+      shop: product.shop,
+      productId: product.id,
+      dimension: KnowledgeGraphOverrideDimension.CATEGORY,
+      overrideValues: normalizedCategories,
+      createdBy: input.actorId,
+    }),
+  ]);
+
+  return {
+    ok: true as const,
+    productId: product.id,
+    disciplines: normalizedDisciplines,
+    categories: normalizedCategories,
+  };
 }

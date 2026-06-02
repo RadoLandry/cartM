@@ -26,6 +26,11 @@ import {
   SizeConflictSeverity,
   VisualProfileSource,
   VisualReviewStatus,
+  KnowledgeGraphBulkOperationStatus,
+  KnowledgeGraphBulkOperationType,
+  KnowledgeGraphChangeAction,
+  KnowledgeGraphEntityType,
+  KnowledgeGraphOverrideDimension,
 } from "@prisma/client";
 import db from "../../db.server";
 import type {
@@ -453,6 +458,77 @@ export async function upsertCandidateRelationship(
     }
 
     return rel;
+  });
+}
+
+export async function upsertMerchantRelationship(input: {
+  shop: string;
+  sourceProductId: string;
+  targetProductId: string;
+  relationshipType: RelationshipType;
+  directionality: RelationshipDirectionality;
+  strength: number;
+  evidenceSummary?: Record<string, unknown>;
+}) {
+  const {
+    shop,
+    sourceProductId,
+    targetProductId,
+    relationshipType,
+    directionality,
+    strength,
+    evidenceSummary,
+  } = input;
+
+  return await db.productRelationship.upsert({
+    where: {
+      shop_sourceProductId_targetProductId_relationshipType: {
+        shop,
+        sourceProductId,
+        targetProductId,
+        relationshipType,
+      },
+    },
+    update: {
+      directionality,
+      strength,
+      status: RelationshipStatus.ACTIVE,
+      origin: RelationshipOrigin.MERCHANT,
+      evidenceSummary: evidenceSummary
+        ? (evidenceSummary as Prisma.InputJsonValue)
+        : Prisma.JsonNull,
+      reviewedAt: new Date(),
+      invalidatedAt: null,
+      updatedAt: new Date(),
+    },
+    create: {
+      shop,
+      sourceProductId,
+      targetProductId,
+      relationshipType,
+      directionality,
+      strength,
+      status: RelationshipStatus.ACTIVE,
+      origin: RelationshipOrigin.MERCHANT,
+      evidenceSummary: evidenceSummary
+        ? (evidenceSummary as Prisma.InputJsonValue)
+        : Prisma.JsonNull,
+      reviewedAt: new Date(),
+    },
+  });
+}
+
+export async function deactivateRelationshipRule(shop: string, relationshipId: string) {
+  return await db.productRelationship.updateMany({
+    where: {
+      id: relationshipId,
+      shop,
+    },
+    data: {
+      status: RelationshipStatus.INACTIVE,
+      invalidatedAt: new Date(),
+      updatedAt: new Date(),
+    },
   });
 }
 
@@ -1379,6 +1455,141 @@ export async function getDistinctDisciplineTagsForShop(shop: string): Promise<st
   }
 
   return Array.from(tagSet).sort();
+}
+
+// ---------------------------------------------------------------------------
+// Knowledge Graph Editor — foundational query helpers
+// ---------------------------------------------------------------------------
+
+export async function createProductClassificationOverride(input: {
+  shop: string;
+  productId: string;
+  dimension: KnowledgeGraphOverrideDimension;
+  overrideValues: string[];
+  createdBy?: string | null;
+}) {
+  return await db.$transaction(async (tx) => {
+    await tx.productClassificationOverride.updateMany({
+      where: {
+        shop: input.shop,
+        productId: input.productId,
+        dimension: input.dimension,
+        isActive: true,
+      },
+      data: {
+        isActive: false,
+        supersededAt: new Date(),
+        updatedAt: new Date(),
+      },
+    });
+
+    return await tx.productClassificationOverride.create({
+      data: {
+        shop: input.shop,
+        productId: input.productId,
+        dimension: input.dimension,
+        overrideValues: input.overrideValues,
+        createdBy: input.createdBy ?? null,
+      },
+    });
+  });
+}
+
+export async function listActiveProductClassificationOverrides(
+  shop: string,
+  productIds: string[],
+) {
+  if (productIds.length === 0) {
+    return [];
+  }
+
+  return await db.productClassificationOverride.findMany({
+    where: {
+      shop,
+      productId: { in: productIds },
+      isActive: true,
+    },
+    orderBy: { updatedAt: "desc" },
+  });
+}
+
+export async function createKnowledgeGraphBulkOperation(input: {
+  shop: string;
+  operationType: KnowledgeGraphBulkOperationType;
+  targetCount: number;
+  previewHash: string;
+  initiatedBy?: string | null;
+}) {
+  return await db.knowledgeGraphBulkOperation.create({
+    data: {
+      shop: input.shop,
+      operationType: input.operationType,
+      targetCount: input.targetCount,
+      previewHash: input.previewHash,
+      initiatedBy: input.initiatedBy ?? null,
+      status: KnowledgeGraphBulkOperationStatus.PREVIEWED,
+    },
+  });
+}
+
+export async function updateKnowledgeGraphBulkOperationStatus(input: {
+  id: string;
+  status: KnowledgeGraphBulkOperationStatus;
+  startedAt?: Date | null;
+  finishedAt?: Date | null;
+}) {
+  return await db.knowledgeGraphBulkOperation.update({
+    where: { id: input.id },
+    data: {
+      status: input.status,
+      startedAt: input.startedAt ?? undefined,
+      finishedAt: input.finishedAt ?? undefined,
+      updatedAt: new Date(),
+    },
+  });
+}
+
+export async function createKnowledgeGraphChangeLog(input: {
+  shop: string;
+  actorId?: string | null;
+  entityType: KnowledgeGraphEntityType;
+  entityId: string;
+  action: KnowledgeGraphChangeAction;
+  beforeSnapshot?: Prisma.InputJsonValue | null;
+  afterSnapshot?: Prisma.InputJsonValue | null;
+  reason?: string | null;
+  bulkOperationId?: string | null;
+}) {
+  return await db.knowledgeGraphChangeLog.create({
+    data: {
+      shop: input.shop,
+      actorId: input.actorId ?? null,
+      entityType: input.entityType,
+      entityId: input.entityId,
+      action: input.action,
+      beforeSnapshot: input.beforeSnapshot ?? Prisma.JsonNull,
+      afterSnapshot: input.afterSnapshot ?? Prisma.JsonNull,
+      reason: input.reason ?? null,
+      bulkOperationId: input.bulkOperationId ?? null,
+    },
+  });
+}
+
+export async function listKnowledgeGraphChangeLogForEntity(input: {
+  shop: string;
+  entityType: KnowledgeGraphEntityType;
+  entityId: string;
+  take?: number;
+}) {
+  return await db.knowledgeGraphChangeLog.findMany({
+    where: {
+      shop: input.shop,
+      entityType: input.entityType,
+      entityId: input.entityId,
+    },
+    orderBy: { createdAt: "desc" },
+    take: input.take ?? 50,
+  });
 }
 
 // ---------------------------------------------------------------------------
