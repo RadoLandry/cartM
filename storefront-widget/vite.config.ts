@@ -14,6 +14,11 @@ export default defineConfig({
     },
     outDir: path.resolve(__dirname, "../public/storefront"),
     rollupOptions: {
+      external: [
+        "@prisma/client",
+        ".prisma/client",
+        ".prisma/client/index-browser",
+      ],
       output: {
         assetFileNames: "cartmind-chat-app.[ext]",
       },

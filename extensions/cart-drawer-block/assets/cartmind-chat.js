@@ -45,13 +45,38 @@
   }
 
   function bootstrapWidgetLoad() {
-    document.querySelectorAll("[data-cartmind-chat-root]").forEach((element) => {
+    const roots = document.querySelectorAll("[data-cartmind-chat-root]");
+    console.log("[CartMind] bootstrapWidgetLoad fired, readyState:", document.readyState, "roots found:", roots.length);
+
+    roots.forEach((element) => {
+      const configId = element.dataset.configId;
+      console.log("[CartMind] element found, configId:", configId);
+
+      const configElement = document.getElementById(configId);
+      console.log("[CartMind] config element:", configElement ? "found" : "NOT FOUND");
+
+      if (configElement) {
+        try {
+          const parsed = JSON.parse(configElement.textContent);
+          console.log("[CartMind] parsed config appBaseUrl:", parsed.appBaseUrl);
+        } catch (e) {
+          console.error("[CartMind] JSON parse error:", e);
+        }
+      }
+
       const config = readConfig(element);
 
       if (config) {
+        console.log("[CartMind] Loading bundle from:", config.appBaseUrl + APP_ASSET_PATH);
         loadBundle(config);
+      } else {
+        console.warn("[CartMind] readConfig returned null for element:", element);
       }
     });
+
+    if (roots.length === 0) {
+      console.warn("[CartMind] No [data-cartmind-chat-root] elements found in DOM");
+    }
   }
 
   if (document.readyState === "loading") {

@@ -1,4 +1,5 @@
 import type { VisualRecommendationPayload } from "../knowledge-graph/colorways";
+import type { StorefrontGuidancePayload, StructuredGuidanceBlock } from "../ai/schemas";
 import type { BundleDetectionResult } from "./bundles";
 import type { KitAssessment, KitAssessmentReason } from "../knowledge-graph/kits";
 import type { ThresholdEvaluationResult } from "./threshold";
@@ -557,5 +558,64 @@ export function buildReplenishmentRecommendations(
           }
         : {}),
     })),
+  };
+}
+
+export function buildStorefrontGuidanceFromBlocks(input: {
+  payloadId: string;
+  generatedAt: string;
+  cartId?: string;
+  blocks: StructuredGuidanceBlock[];
+  bootstrapPath?: string;
+}): StorefrontGuidancePayload {
+  const recommendations = input.blocks.flatMap((block) => {
+    if (block.type !== "recommendation_list") {
+      return [];
+    }
+
+    return block.items.map((item, index) => ({
+      guidanceId: `${block.blockId}:${index}`,
+      title: item.title,
+      message: item.reason,
+      priority: block.priority + index,
+      action: item.action,
+      ...(item.productId ? { productId: item.productId } : {}),
+      ...(item.variantId ? { variantId: item.variantId } : {}),
+      ...(item.priceLabel ? { priceLabel: item.priceLabel } : {}),
+    }));
+  });
+  const sizeWarnings = input.blocks.flatMap((block) => {
+    if (block.type !== "size_summary") {
+      return [];
+    }
+
+    return [{
+      warningId: block.blockId,
+      title: block.title,
+      message: block.summary,
+      severity: block.confidence >= 0.85 ? "warning" as const : "info" as const,
+      relatedLineIds: [],
+    }];
+  });
+  const fallbackBlock = input.blocks.find((block) => block.type === "fallback_notice");
+
+  return {
+    payloadId: input.payloadId,
+    generatedAt: input.generatedAt,
+    ...(input.cartId ? { cartId: input.cartId } : {}),
+    recommendations,
+    sizeWarnings,
+    chatEntry: {
+      available: true,
+      ...(input.bootstrapPath ? { bootstrapPath: input.bootstrapPath } : {}),
+    },
+    ...(fallbackBlock && fallbackBlock.type === "fallback_notice"
+      ? {
+          fallbackNotice: {
+            title: fallbackBlock.title,
+            message: fallbackBlock.summary,
+          },
+        }
+      : {}),
   };
 }

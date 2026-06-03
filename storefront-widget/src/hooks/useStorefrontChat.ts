@@ -6,7 +6,7 @@ import {
   StorefrontChatBootstrapResponseSchema,
   StorefrontChatStreamPartSchema,
 } from "../../../app/lib/ai/schemas";
-import { mapBudgetOptimizationToGuidanceBlock } from "../../../app/lib/ai/storefront-chat";
+import { mapBudgetOptimizationToGuidanceBlock } from "../../../app/lib/ai/storefront-chat-client";
 import type { StorefrontChatMountConfig } from "../types";
 import {
   buildChatThreadMessage,

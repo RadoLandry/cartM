@@ -262,17 +262,42 @@ All touchpoints where the app injects into the merchant's online store.
 
 #### Feature: Cart Drawer App Block (Theme App Extension)
 
-- **Description**: Theme App Extension that injects the AI cart UI into the store's cart drawer or cart page.
-- **Inputs**: Cart state from Storefront API, AI backend responses
+- **Description**: Theme App Extension configured as an **App Embed Block** (global script) that injects the AI cart UI into both custom AJAX side-cart drawers and standard cart pages.
+- **Inputs**: Cart state from `/cart.js` API polling + MutationObserver signals, AI backend responses via App Proxy
 - **Outputs**: Rendered UI components: recommendation cards, kit completeness bar, size warnings, chat toggle
-- **Behavior**: App Embed Block that activates on cart drawer open/cart page load. Fetches recommendations from AI backend on cart change. The storefront widget is mounted inside a **Shadow DOM** to ensure full CSS isolation from the merchant's theme — this prevents Tailwind/shadcn styles from leaking into or being overridden by theme stylesheets. Responsive design for mobile/desktop. Lazy-loads chat sidebar on toggle. Theme App Extension assets are served via Shopify's CDN; updates require a new app version push via Shopify CLI.
+- **Behavior**: Deployed as an **App Embed Block** (not a section block) — this ensures the script loads globally on every page without requiring the merchant to place a block in their theme editor. The widget targets two surfaces:
+  1. **Custom AJAX side-cart drawers** (e.g., Dawn-derived themes with custom `side-cart.js` that loads cart content via `$.ajax('/cart?view=sidecart')` and replaces `.js-menu__context` innerHTML on every update). The widget must:
+     - Use a `MutationObserver` on the drawer container to detect when the drawer opens and when AJAX replaces its content.
+     - Mount itself **outside** the AJAX-replaced zone (e.g., appended to the drawer wrapper, not inside the content container) to survive re-renders.
+     - Re-read cart state from `/cart.js` after each detected DOM mutation rather than relying on stale data.
+     - Detect drawer open/close via class changes (e.g., `.js-menu__expanded`) on the menu wrapper.
+  2. **Standard cart page** (`/cart`): Injects via `@app` block in `main-cart-footer` section (OS 2.0 themes support this natively).
+
+  The storefront widget is mounted inside a **Shadow DOM** to ensure full CSS isolation from the merchant's theme — this prevents Tailwind/shadcn styles from leaking into or being overridden by theme stylesheets (critical given themes with aggressive global jQuery + custom CSS). Responsive design for mobile/desktop. Lazy-loads chat sidebar on toggle. Theme App Extension assets are served via Shopify's CDN; updates require a new app version push via Shopify CLI.
+
+  **Cart state synchronization**: Since custom drawers have no pub/sub event system, the widget polls `/cart.js` on: (a) MutationObserver callback, (b) `fetch` interception for `/cart/change.js` and `/cart/add.js` endpoints, (c) periodic fallback (every 5s when drawer is open). This ensures the widget always reflects the current cart regardless of how the theme updates it.
+
+  **Third-party app coexistence**: The theme already runs Fast Simon (search + upsell widget injected into the drawer), Flits (loyalty/wishlist), and KiwiSizing. The CartMind widget must not conflict with these apps' DOM nodes or event listeners. Specifically: (a) do not query or modify DOM elements owned by Fast Simon (`.fs-*` selectors), (b) mount CartMind's container adjacent to — not wrapping — Fast Simon's upsell section, (c) use unique `data-cartmind-*` attributes for all DOM targeting to avoid selector collisions.
+
+  **Body scroll lock**: The theme applies `$("body").addClass("popup")` and a `headerBodyScrollLock` mechanism when the drawer opens. The CartMind widget must not interfere with this — specifically, it must not add its own scroll lock when the drawer is already open, and must not remove the `popup` class on cleanup. If the chat sidebar opens within the drawer, scroll should be contained to the sidebar panel itself (via `overflow-y: auto` on the Shadow DOM root) without touching `<body>` styles.
+
+  **Cart notification handling**: When a product is added to cart, the theme shows a temporary `CartNotification` popup (Web Component) without opening the drawer. The widget should listen for `cart/add.js` fetch interception to update its internal cart state even when the drawer is closed, so that when the drawer eventually opens, recommendations are already fresh. The widget does **not** inject UI into the notification popup itself — it only activates visually inside the drawer or on the cart page.
+
+  **Performance budget**: The theme already loads jQuery, Fast Simon, Flits, KiwiSizing, and CookieYes. The CartMind storefront bundle (the `cartmind-chat-app.js` loaded by the App Embed Block) must stay under **50KB gzipped** for initial load. Lazy-load the chat sidebar module (~30KB additional) only on user interaction (chat toggle click). Total widget footprint including lazy chunks must not exceed **100KB gzipped**. Use tree-shaking aggressively — no full Tailwind runtime in the storefront bundle (use extracted CSS in Shadow DOM).
+
+  **Non-regression contract (existing functionality + design)**: New storefront capabilities must preserve current theme behavior and visual hierarchy.
+  - Do not remove, replace, or restyle existing drawer sections (Fast Simon upsell, subtotal, checkout CTA, quantity controls).
+  - Do not change existing open/close drawer mechanics, keyboard behavior, or `headerBodyScrollLock` semantics.
+  - Keep CartMind styles strictly scoped to Shadow DOM; no global CSS reset, no overrides on theme selectors, and no mutations of third-party widget containers.
+  - If CartMind fails to load, the cart drawer and cart page must continue to function exactly as before (graceful no-op fallback).
+  - Ensure mobile and desktop layout breakpoints from the theme remain unchanged; CartMind must adapt to available space rather than forcing layout shifts.
 
 #### Feature: Checkout UI Extension
 
 - **Description**: Shopify Checkout UI Extension that displays critical warnings and bundle offers at checkout.
 - **Inputs**: Cart data from Checkout API, size conflict analysis, bundle detection
 - **Outputs**: Checkout UI blocks: size conflict warnings, bundle completion offers, kit completeness nudge
-- **Behavior**: All UI must be built **exclusively with `@shopify/checkout-ui-extensions-react` components** (Banner, BlockStack, Text, Button, etc.). Custom HTML, CSS, external component libraries (including shadcn/ui, Tailwind, Radix) are **not permitted** — the extension renderer is a sandboxed remote UI, not a browser DOM. The extension's React environment is managed by Shopify's runtime; the host app's React 19 does not apply. Receives pre-computed analysis results from the app backend via metafields or session storage to stay within the 64KB bundle limit. Respects Shopify Plus requirements for information/shipping/payment step placement.
+- **Behavior**: All UI must be built **exclusively with `@shopify/checkout-ui-extensions-react` components** (Banner, BlockStack, Text, Button, etc.). Custom HTML, CSS, external component libraries (including shadcn/ui, Tailwind, Radix) are **not permitted** — the extension renderer is a sandboxed remote UI, not a browser DOM. The extension's React environment is managed by Shopify's runtime; the host app's React 19 does not apply. Receives pre-computed analysis results from the app backend via metafields or session storage to stay within the 64KB bundle limit. Available on all Shopify plans (Basic, Shopify, Advanced, Plus) but placement options vary: on non-Plus plans, extensions render only in the `purchase.checkout.block.render` target (single-page checkout); on **Shopify Plus**, extensions can target specific steps (information/shipping/payment) for more granular placement.
 
 #### Feature: Discount Function (Shopify Functions)
 
@@ -354,7 +379,7 @@ cartmind/
 ├── extensions/
 │   ├── cart-drawer-block/            # Theme App Extension
 │   │   ├── blocks/
-│   │   │   └── ai-cart.liquid        # Main app block
+│   │   │   └── ai-cart.liquid        # Fallback cart-page app block (App Embed handles drawer)
 │   │   ├── assets/
 │   │   │   ├── ai-cart.js            # Storefront JS bundle
 │   │   │   └── ai-cart.css           # Storefront styles
@@ -482,7 +507,7 @@ No dependencies — these are built first.
 
 ### Integration Layer (Phase 4)
 - **Storefront Widget Bundle**: Depends on [AI Chat Tools, Recommendation Orchestrator, Visual Kit Compositor]. Standalone React bundle for injection into storefront.
-- **Theme App Extension**: Depends on [Storefront Widget Bundle]. Liquid block that loads the widget.
+- **Theme App Extension**: Depends on [Storefront Widget Bundle]. App Embed loads the widget globally; optional cart-page app block is used as fallback.
 - **Checkout UI Extension**: Depends on [Size Conflict Detector, Bundle Detection Engine]. Preact-based checkout warnings and offers.
 - **Discount Shopify Function**: Depends on [Bundle Detection Engine]. Wasm-compiled discount logic.
 - **Cart Transform Shopify Function**: Depends on [Bundle Detection Engine]. Wasm-compiled cart transform.
@@ -658,9 +683,9 @@ No dependencies — these are built first.
   - Acceptance criteria: Composite images render within 500ms, correct layout per discipline
   - Test strategy: Generate previews for 5 discipline-specific carts, visual QA
 
-- [ ] Create Theme App Extension (depends on: [Storefront widget])
-  - Acceptance criteria: App block appears in theme editor, activates on cart open
-  - Test strategy: Install on dev store, configure via theme editor
+- [ ] Create Theme App Extension (App Embed + cart-page fallback block) (depends on: [Storefront widget])
+  - Acceptance criteria: App Embed appears in theme editor and loads globally; widget activates on cart drawer open. Optional cart-page `@app` block fallback is available in `main-cart-footer`.
+  - Test strategy: Install on dev store, enable App Embed, verify drawer activation on custom AJAX side-cart, then verify cart-page fallback block rendering.
 
 - [ ] Create Checkout UI Extension (depends on: [Size Conflicts, Bundles])
   - Acceptance criteria: Size warnings display at checkout, bundle offers render, bundle under 64KB
@@ -771,6 +796,13 @@ No dependencies — these are built first.
 **Error cases**: Extension fails to load (graceful fallback), Shopify Function execution error
 **Integration**: Cart with issues → checkout → extension renders → customer action → resolution
 
+### Storefront Theme Compatibility (Non-Regression)
+**Happy path**: Cart drawer opens with existing theme behavior; CartMind renders without altering Fast Simon upsell, subtotal, checkout CTA, or quantity controls.
+**Edge cases**: Product added with cart-notification only (drawer closed), then drawer opened later; CartMind recommendations are already synchronized.
+**Error cases**: CartMind bundle fails to load or times out; drawer and cart page continue to work unchanged with no JS errors.
+**Integration**: Open drawer → Fast Simon + CartMind coexistence verified → close/open cycles preserve body scroll lock and no duplicated mount nodes.
+**Performance**: Validate storefront bundle budget (< 50KB gzipped initial, < 100KB total with lazy chunks) and no measurable CLS/layout regression on cart drawer open.
+
 ### Shopify Functions
 **Happy path**: Full bundle in cart → discount applied automatically
 **Edge cases**: Partial bundle (no discount), two overlapping bundles, bundle + discount code simultaneously
@@ -800,7 +832,7 @@ No dependencies — these are built first.
 │  ┌──────────────────┐   ┌──────────────────────────┐    │
 │  │ Theme App        │   │ Checkout UI Extension    │    │
 │  │ Extension        │   │ (size warnings,          │    │
-│  │ (ai-cart block   │   │  bundle offers)          │    │
+│  │ (App Embed       │   │  bundle offers)          │    │
 │  │  loads widget)   │   │                          │    │
 │  └────────┬─────────┘   └────────────┬─────────────┘    │
 │           │                          │                   │

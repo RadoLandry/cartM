@@ -1,7 +1,7 @@
 import type { ActionFunctionArgs } from "react-router";
 
 import { StorefrontChatBootstrapRequestSchema } from "../lib/ai/schemas";
-import { issueStorefrontChatToken } from "../lib/shopify/app-proxy";
+import { buildAppProxyStorefrontMountConfig, issueStorefrontChatToken } from "../lib/shopify/app-proxy";
 import { authenticate } from "../shopify.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -32,5 +32,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       ...bootstrap,
       chatUrl: new URL("/api/ai/chat", appUrl).toString(),
     },
+    integration: buildAppProxyStorefrontMountConfig({
+      shop: parsed.data.shop,
+      surface: parsed.data.surface,
+      appBaseUrl: appUrl,
+      cart: {
+        ...(parsed.data.cartId ? { cartId: parsed.data.cartId } : {}),
+        currencyCode: parsed.data.currencyCode,
+        items: [],
+      },
+    }),
   });
 };

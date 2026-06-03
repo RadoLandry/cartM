@@ -3,10 +3,12 @@ package.json
 .vscode
 node_modules
 build
+dist
 coverage
 prisma
 public
 .shopify
+.env*
 package-lock.json
 yarn.lock
 pnpm-lock.yaml

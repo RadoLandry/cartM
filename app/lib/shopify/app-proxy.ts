@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 
-import type { StorefrontChatBootstrapRequest } from "../ai/schemas";
+import type { StorefrontChatBootstrapRequest, StorefrontWidgetMountConfig } from "../ai/schemas";
+import { buildStorefrontWidgetMountConfig } from "./storefront-integration";
 
 const STREAM_TOKEN_TTL_MS = 5 * 60 * 1000;
 
@@ -185,4 +186,31 @@ export function verifyActionConfirmationToken(token: string) {
   }
 
   return { ok: true as const, payload };
+}
+
+export function buildAppProxyStorefrontMountConfig(input: {
+  shop: string;
+  surface: StorefrontWidgetMountConfig["surface"];
+  placementId?: string;
+  appBaseUrl: string;
+  bootstrapPath?: string;
+  recommendationsPath?: string;
+  cart: StorefrontWidgetMountConfig["cart"];
+  labels?: StorefrontWidgetMountConfig["labels"];
+  features?: StorefrontWidgetMountConfig["features"];
+}) {
+  const bootstrapPath = input.bootstrapPath ?? "/apps/cartmind-chat/chat-bootstrap";
+
+  return buildStorefrontWidgetMountConfig({
+    shop: input.shop,
+    surface: input.surface,
+    placementId: input.placementId ?? `${input.surface}:default`,
+    appBaseUrl: input.appBaseUrl,
+    bootstrapPath,
+    bootstrapUrl: new URL(bootstrapPath, input.appBaseUrl).toString(),
+    recommendationsPath: input.recommendationsPath ?? "/api/ai/recommendations",
+    cart: input.cart,
+    labels: input.labels,
+    features: input.features,
+  });
 }

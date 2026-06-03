@@ -1,6 +1,8 @@
 <div
   class="cartmind-chat-block"
   data-cartmind-chat-root
+  data-cartmind-autodiscover="true"
+  data-cartmind-placement="{{ block.settings.surface }}"
   data-config-id="cartmind-chat-config-{{ block.id }}"
   {{ block.shopify_attributes }}
 ></div>
@@ -9,11 +11,22 @@
   {
     "shop": {{ shop.permanent_domain | json }},
     "surface": {{ block.settings.surface | json }},
+    "placementId": {{ block.id | json }},
     "appBaseUrl": {{ block.settings.app_base_url | json }},
-    "bootstrapUrl": {{ block.settings.bootstrap_path | json }},
-    "launcherLabel": {{ block.settings.launcher_label | json }},
-    "assistantGreeting": {{ block.settings.assistant_greeting | json }},
-    "panelTitle": {{ block.settings.panel_title | json }},
+    "bootstrapPath": {{ block.settings.bootstrap_path | json }},
+    "recommendationsPath": {{ block.settings.recommendations_path | json }},
+    "labels": {
+      "launcherLabel": {{ block.settings.launcher_label | json }},
+      "assistantGreeting": {{ block.settings.assistant_greeting | json }},
+      "panelTitle": {{ block.settings.panel_title | json }},
+      "fallbackMessage": {{ block.settings.fallback_message | json }}
+    },
+    "features": {
+      "showRecommendations": {{ block.settings.show_recommendations | json }},
+      "showKitCompleteness": {{ block.settings.show_kit_completeness | json }},
+      "showSizeWarnings": {{ block.settings.show_size_warnings | json }},
+      "showChatEntry": {{ block.settings.show_chat_entry | json }}
+    },
     "cart": {
       "cartId": {{ cart.id | json }},
       "currencyCode": {{ cart.currency.iso_code | default: shop.currency | json }},
@@ -35,7 +48,7 @@
 {% schema %}
 {
   "name": "CartMind chat",
-  "target": "section",
+  "target": "body",
   "javascript": "cartmind-chat.js",
   "settings": [
     {
@@ -62,6 +75,12 @@
     },
     {
       "type": "text",
+      "id": "recommendations_path",
+      "label": "Recommendations path",
+      "default": "/api/ai/recommendations"
+    },
+    {
+      "type": "text",
       "id": "launcher_label",
       "label": "Launcher label",
       "default": "Ask CartMind"
@@ -77,6 +96,36 @@
       "id": "assistant_greeting",
       "label": "Greeting",
       "default": "Ask about fit, comparisons, or what works well with the items already in your cart."
+    },
+    {
+      "type": "textarea",
+      "id": "fallback_message",
+      "label": "Fallback message",
+      "default": "CartMind guidance is temporarily unavailable. Your cart still works normally."
+    },
+    {
+      "type": "checkbox",
+      "id": "show_recommendations",
+      "label": "Show recommendation cards",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "show_kit_completeness",
+      "label": "Show kit completeness",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "show_size_warnings",
+      "label": "Show size warnings",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "show_chat_entry",
+      "label": "Show chat entry",
+      "default": true
     }
   ]
 }

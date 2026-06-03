@@ -1,3 +1,5 @@
 {
-  "name": "CartMind Chat"
+  "name": "CartMind Chat",
+  "cart_page_fallback": "Cart page fallback",
+  "cart_drawer_embed": "Cart drawer embed"
 }

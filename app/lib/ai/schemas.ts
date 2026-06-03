@@ -2,6 +2,28 @@ import { z } from "zod";
 
 export const StorefrontChatSurfaceSchema = z.enum(["cart_drawer", "cart_page"]);
 
+export const StorefrontIntegrationPlacementStatusSchema = z.enum(["enabled", "disabled", "unavailable"]);
+export const StorefrontIntegrationPlacementStrategySchema = z.enum([
+  "app_embed",
+  "app_block",
+  "checkout_extension",
+  "function_projection",
+]);
+
+export const StorefrontIntegrationFeatureFlagsSchema = z.object({
+  showRecommendations: z.boolean().default(true),
+  showKitCompleteness: z.boolean().default(true),
+  showSizeWarnings: z.boolean().default(true),
+  showChatEntry: z.boolean().default(true),
+});
+
+export const StorefrontIntegrationLabelsSchema = z.object({
+  launcherLabel: z.string().min(1).optional(),
+  panelTitle: z.string().min(1).optional(),
+  assistantGreeting: z.string().min(1).optional(),
+  fallbackMessage: z.string().min(1).optional(),
+});
+
 export const StorefrontCartLineSchema = z.object({
   lineId: z.string().min(1).optional(),
   productId: z.string().min(1),
@@ -9,6 +31,181 @@ export const StorefrontCartLineSchema = z.object({
   variantId: z.string().min(1).optional(),
   variantTitle: z.string().min(1).optional(),
   quantity: z.coerce.number().int().min(1).default(1),
+});
+
+export const StorefrontCartSnapshotSchema = z.object({
+  cartId: z.string().min(1).optional(),
+  currencyCode: z.string().length(3).default("USD"),
+  items: z.array(StorefrontCartLineSchema).default([]),
+});
+
+export const StorefrontWidgetMountConfigSchema = z.object({
+  shop: z.string().min(1),
+  surface: StorefrontChatSurfaceSchema,
+  placementId: z.string().min(1).default("cartmind-default"),
+  appBaseUrl: z.string().url().optional(),
+  bootstrapPath: z.string().min(1).default("/apps/cartmind-chat/chat-bootstrap"),
+  bootstrapUrl: z.string().min(1).optional(),
+  recommendationsPath: z.string().min(1).default("/api/ai/recommendations"),
+  cart: StorefrontCartSnapshotSchema,
+  labels: StorefrontIntegrationLabelsSchema.default({}),
+  features: StorefrontIntegrationFeatureFlagsSchema.default({
+    showRecommendations: true,
+    showKitCompleteness: true,
+    showSizeWarnings: true,
+    showChatEntry: true,
+  }),
+});
+
+export const StorefrontIntegrationPlacementSchema = z.object({
+  placementId: z.string().min(1),
+  shop: z.string().min(1),
+  surface: StorefrontChatSurfaceSchema.or(z.literal("checkout")),
+  status: StorefrontIntegrationPlacementStatusSchema,
+  strategy: StorefrontIntegrationPlacementStrategySchema,
+  priority: z.number().int().nonnegative().default(0),
+  settings: z.record(z.string(), z.unknown()).default({}),
+  updatedAt: z.string().datetime(),
+});
+
+export const StorefrontGuidanceRecommendationSchema = z.object({
+  guidanceId: z.string().min(1),
+  title: z.string().min(1),
+  message: z.string().min(1),
+  priority: z.number().int().nonnegative().default(0),
+  action: z.enum(["keep", "add", "remove", "swap", "size_adjust", "open_chat"]).default("open_chat"),
+  productId: z.string().min(1).optional(),
+  variantId: z.string().min(1).optional(),
+  priceLabel: z.string().min(1).optional(),
+});
+
+export const StorefrontGuidanceKitCompletenessSchema = z.object({
+  discipline: z.string().min(1).optional(),
+  score: z.number().min(0).max(1),
+  missingCount: z.number().int().nonnegative(),
+  summary: z.string().min(1),
+});
+
+export const StorefrontGuidanceSizeWarningSchema = z.object({
+  warningId: z.string().min(1),
+  title: z.string().min(1),
+  message: z.string().min(1),
+  severity: z.enum(["info", "warning", "critical"]),
+  relatedLineIds: z.array(z.string().min(1)).default([]),
+});
+
+export const StorefrontGuidancePayloadSchema = z.object({
+  payloadId: z.string().min(1),
+  generatedAt: z.string().datetime(),
+  cartId: z.string().min(1).optional(),
+  recommendations: z.array(StorefrontGuidanceRecommendationSchema).default([]),
+  kitCompleteness: StorefrontGuidanceKitCompletenessSchema.optional(),
+  sizeWarnings: z.array(StorefrontGuidanceSizeWarningSchema).default([]),
+  chatEntry: z.object({
+    available: z.boolean(),
+    bootstrapPath: z.string().min(1).optional(),
+    reasonUnavailable: z.string().min(1).optional(),
+  }).optional(),
+  fallbackNotice: z.object({
+    title: z.string().min(1),
+    message: z.string().min(1),
+  }).optional(),
+});
+
+export const StorefrontCartSyncSourceSchema = z.enum([
+  "initial_config",
+  "cart_js",
+  "fetch_intercept",
+  "mutation_observer",
+  "fallback_poll",
+]);
+
+export const StorefrontGuidanceRequestSchema = z.object({
+  shop: z.string().min(1),
+  surface: StorefrontChatSurfaceSchema,
+  placementId: z.string().min(1),
+  sessionId: z.string().min(1),
+  cart: StorefrontCartSnapshotSchema,
+  syncSource: StorefrontCartSyncSourceSchema,
+  requestedAt: z.string().datetime(),
+});
+
+export const StorefrontGuidanceResponseSchema = z.discriminatedUnion("ok", [
+  z.object({
+    ok: z.literal(true),
+    payload: StorefrontGuidancePayloadSchema,
+  }),
+  z.object({
+    ok: z.literal(false),
+    error: z.enum(["invalid_request", "guidance_unavailable", "cart_snapshot_stale", "rate_limited", "unknown"]),
+    retryAfterMs: z.number().int().positive().optional(),
+  }),
+]);
+
+export const CheckoutGuidanceItemSchema = z.object({
+  guidanceId: z.string().min(1),
+  type: z.enum(["size_warning", "bundle_offer", "kit_nudge"]),
+  severity: z.enum(["info", "warning", "critical"]),
+  priority: z.number().int(),
+  title: z.string().min(1),
+  message: z.string().min(1),
+  relatedLineIds: z.array(z.string().min(1)).default([]),
+  action: z.object({
+    type: z.enum(["review_cart", "change_size", "add_item", "acknowledge"]),
+    label: z.string().min(1),
+    target: z.string().min(1).optional(),
+  }).optional(),
+  expiresAt: z.string().datetime().optional(),
+});
+
+export const BundleStorefrontOutcomeSchema = z.object({
+  outcomeId: z.string().min(1),
+  ruleId: z.string().min(1),
+  ruleVersion: z.number().int().nonnegative(),
+  status: z.enum(["qualified", "partial", "ineligible", "expired", "conflict"]),
+  priority: z.number().int().nonnegative(),
+  qualifiedLineIds: z.array(z.string().min(1)).default([]),
+  missingRequirements: z.array(z.object({
+    productId: z.string().min(1).optional(),
+    variantId: z.string().min(1).optional(),
+    quantityRequired: z.number().int().min(1),
+    quantityPresent: z.number().int().min(0),
+    label: z.string().min(1).optional(),
+  })).default([]),
+  discount: z.object({
+    type: z.enum(["percentage", "fixed"]),
+    value: z.number().positive(),
+    currencyCode: z.string().length(3).optional(),
+    displayLabel: z.string().min(1),
+  }).optional(),
+  presentation: z.object({
+    bundleTitle: z.string().min(1),
+    componentSummary: z.string().min(1),
+    savingsSummary: z.string().min(1).optional(),
+    lineMergeEligible: z.boolean(),
+  }).optional(),
+  expiresAt: z.string().datetime().optional(),
+});
+
+export const IntegrationHealthEventSchema = z.object({
+  eventId: z.string().min(1),
+  shop: z.string().min(1),
+  sessionId: z.string().min(1).optional(),
+  eventType: z.enum([
+    "widget_rendered",
+    "widget_failed",
+    "cart_sync_started",
+    "cart_sync_completed",
+    "cart_sync_failed",
+    "guidance_impressed",
+    "checkout_guidance_rendered",
+    "bundle_outcome_evaluated",
+    "fallback_used",
+  ]),
+  surface: StorefrontChatSurfaceSchema.or(z.literal("checkout")).or(z.literal("function")),
+  cartToken: z.string().min(1).optional(),
+  details: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).default({}),
+  createdAt: z.string().datetime(),
 });
 
 export const StorefrontChatBootstrapRequestSchema = z.object({
@@ -513,6 +710,17 @@ export const StorefrontChatStreamPartSchema = z.discriminatedUnion("type", [
 export type StorefrontChatBootstrapRequest = z.infer<typeof StorefrontChatBootstrapRequestSchema>;
 export type StorefrontChatSurface = z.infer<typeof StorefrontChatSurfaceSchema>;
 export type StorefrontCartLine = z.infer<typeof StorefrontCartLineSchema>;
+export type StorefrontCartSnapshot = z.infer<typeof StorefrontCartSnapshotSchema>;
+export type StorefrontWidgetMountConfig = z.infer<typeof StorefrontWidgetMountConfigSchema>;
+export type StorefrontIntegrationPlacement = z.infer<typeof StorefrontIntegrationPlacementSchema>;
+export type StorefrontIntegrationFeatureFlags = z.infer<typeof StorefrontIntegrationFeatureFlagsSchema>;
+export type StorefrontGuidancePayload = z.infer<typeof StorefrontGuidancePayloadSchema>;
+export type StorefrontGuidanceRequest = z.infer<typeof StorefrontGuidanceRequestSchema>;
+export type StorefrontGuidanceResponse = z.infer<typeof StorefrontGuidanceResponseSchema>;
+export type StorefrontCartSyncSource = z.infer<typeof StorefrontCartSyncSourceSchema>;
+export type CheckoutGuidanceItem = z.infer<typeof CheckoutGuidanceItemSchema>;
+export type BundleStorefrontOutcome = z.infer<typeof BundleStorefrontOutcomeSchema>;
+export type IntegrationHealthEvent = z.infer<typeof IntegrationHealthEventSchema>;
 export type StorefrontConversationLimits = z.infer<typeof StorefrontConversationLimitsSchema>;
 export type StorefrontChatBootstrap = z.infer<typeof StorefrontChatBootstrapSchema>;
 export type StorefrontChatBootstrapResponse = z.infer<typeof StorefrontChatBootstrapResponseSchema>;

@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import type { StorefrontChatMountConfig } from "./types";
+import { CartMindSurface } from "./components/integration/CartMindSurface";
 import { ChatPanel } from "./components/ChatPanel";
 import {
   createBrowserSessionId,
@@ -88,34 +89,36 @@ export function CartMindChat({ config }: CartMindChatProps) {
   });
 
   return (
-    <ChatPanel
-      state={state}
-      launcherLabel={config.launcherLabel || "Ask CartMind"}
-      panelTitle={config.panelTitle || "CartMind chat"}
-      assistantGreeting={config.assistantGreeting || "Ask about fit, comparisons, or what works well with the items in your cart."}
-      onOpen={() => dispatch({ type: "panel_opened" })}
-      onClose={() => dispatch({ type: "panel_closed" })}
-      onCollapse={() => dispatch({ type: "panel_collapsed" })}
-      onExpand={() => dispatch({ type: "panel_expanded" })}
-      onDraftChange={(draft) => dispatch({ type: "draft_changed", draft })}
-      onSubmit={() => {
-        void submitMessage(state.draft);
-      }}
-      onRetry={() => {
-        void retryLastMessage();
-      }}
-      onDismissComparisonContext={(comparisonContextId) => {
-        dispatch({ type: "comparison_context_dismissed", comparisonContextId });
-      }}
-      onApproveAction={(action) => {
-        void submitActionConfirmation(action, "approve");
-      }}
-      onApproveActionSelection={(action, selection) => {
-        void submitActionConfirmation(action, "approve", selection);
-      }}
-      onDeclineAction={(action) => {
-        void submitActionConfirmation(action, "decline");
-      }}
-    />
+    <CartMindSurface config={config}>
+      <ChatPanel
+        state={state}
+        launcherLabel={config.labels?.launcherLabel || config.launcherLabel || "Ask CartMind"}
+        panelTitle={config.labels?.panelTitle || config.panelTitle || "CartMind chat"}
+        assistantGreeting={config.labels?.assistantGreeting || config.assistantGreeting || "Ask about fit, comparisons, or what works well with the items in your cart."}
+        onOpen={() => dispatch({ type: "panel_opened" })}
+        onClose={() => dispatch({ type: "panel_closed" })}
+        onCollapse={() => dispatch({ type: "panel_collapsed" })}
+        onExpand={() => dispatch({ type: "panel_expanded" })}
+        onDraftChange={(draft) => dispatch({ type: "draft_changed", draft })}
+        onSubmit={() => {
+          void submitMessage(state.draft);
+        }}
+        onRetry={() => {
+          void retryLastMessage();
+        }}
+        onDismissComparisonContext={(comparisonContextId) => {
+          dispatch({ type: "comparison_context_dismissed", comparisonContextId });
+        }}
+        onApproveAction={(action) => {
+          void submitActionConfirmation(action, "approve");
+        }}
+        onApproveActionSelection={(action, selection) => {
+          void submitActionConfirmation(action, "approve", selection);
+        }}
+        onDeclineAction={(action) => {
+          void submitActionConfirmation(action, "decline");
+        }}
+      />
+    </CartMindSurface>
   );
 }
