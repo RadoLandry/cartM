@@ -7,3 +7,6 @@ coverage
 prisma
 public
 .shopify
+package-lock.json
+yarn.lock
+pnpm-lock.yaml

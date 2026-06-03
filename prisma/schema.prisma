@@ -867,3 +867,115 @@ model ExportReport {
   @@index([shop, status, createdAt])
   @@index([shop, periodStart, periodEnd])
 }
+
+// ---------------------------------------------------------------------------
+// AI Behavior Configuration
+// ---------------------------------------------------------------------------
+
+enum AIBehaviorTone {
+  PROFESSIONAL
+  FRIENDLY
+  CONCISE
+  COACHING
+}
+
+enum AIBehaviorSafetyPriority {
+  SAFETY_FIRST
+  BALANCED
+}
+
+enum AIBehaviorVersionStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum AIBehaviorAuditAction {
+  DRAFT_SAVED
+  PUBLISHED
+  ROLLED_BACK
+}
+
+enum AIBehaviorPreviewStatus {
+  READY
+  RUNNING
+  FAILED
+}
+
+model AIBehaviorDraft {
+  id                  String                   @id @default(cuid())
+  shop                String                   @unique
+  versionToken        String
+  tone                AIBehaviorTone           @default(PROFESSIONAL)
+  aggressiveness      Decimal                  @default(0.350) @db.Decimal(4, 3)
+  safetyPriority      AIBehaviorSafetyPriority @default(SAFETY_FIRST)
+  customGuidance      String?
+  conversationStarters Json?
+  updatedBy           String
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+
+  auditEntries        AIBehaviorAuditEntry[]
+  previewRuns         AIBehaviorPreviewRun[]
+
+  @@index([shop, updatedAt])
+}
+
+model AIBehaviorPublishedVersion {
+  id           String                  @id @default(cuid())
+  shop         String
+  versionNumber Int
+  status       AIBehaviorVersionStatus @default(ACTIVE)
+  snapshot     Json
+  publishedBy  String
+  publishedAt  DateTime                @default(now())
+  archivedAt   DateTime?
+  createdAt    DateTime                @default(now())
+  updatedAt    DateTime                @updatedAt
+
+  auditEntries AIBehaviorAuditEntry[]
+
+  @@unique([shop, versionNumber])
+  @@index([shop, status, publishedAt])
+}
+
+model AIBehaviorAuditEntry {
+  id               String                @id @default(cuid())
+  shop             String
+  actionType       AIBehaviorAuditAction
+  actorId          String
+  draftId          String?
+  targetVersionId  String?
+  beforeSnapshot   Json?
+  afterSnapshot    Json?
+  reason           String?
+  createdAt        DateTime              @default(now())
+
+  draft            AIBehaviorDraft?            @relation(fields: [draftId], references: [id], onDelete: SetNull)
+  targetVersion    AIBehaviorPublishedVersion? @relation(fields: [targetVersionId], references: [id], onDelete: SetNull)
+
+  @@index([shop, createdAt])
+  @@index([draftId])
+  @@index([targetVersionId])
+}
+
+model AIBehaviorPreviewRun {
+  id            String                @id @default(cuid())
+  shop          String
+  draftId       String?
+  status        AIBehaviorPreviewStatus @default(RUNNING)
+  inputSnapshot Json
+  scenarioSet   Json
+  resultPayload Json?
+  errorCode     String?
+  requestedBy   String
+  requestedAt   DateTime              @default(now())
+  completedAt   DateTime?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  draft         AIBehaviorDraft? @relation(fields: [draftId], references: [id], onDelete: SetNull)
+
+  @@index([shop, requestedAt])
+  @@index([shop, status, requestedAt])
+  @@index([draftId])
+}

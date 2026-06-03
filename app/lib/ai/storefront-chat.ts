@@ -12,6 +12,39 @@ import type {
   StructuredGuidanceBlock,
 } from "./schemas";
 import { buildStorefrontChatSystemPrompt } from "./prompts";
+import { getActiveAIBehaviorConfigWithFallback } from "../db/queries";
+import { AI_BEHAVIOR_DEFAULTS, resolveBehaviorPolicyConflict, type AIBehaviorDraftPayload } from "./behavior-config";
+
+export interface StorefrontChatBehaviorResolution {
+  source: "active" | "draft" | "defaults";
+  config: AIBehaviorDraftPayload;
+}
+
+function buildDefaultBehaviorConfig(): AIBehaviorDraftPayload {
+  return {
+    tone: AI_BEHAVIOR_DEFAULTS.tone,
+    aggressiveness: AI_BEHAVIOR_DEFAULTS.aggressiveness,
+    safetyPriority: AI_BEHAVIOR_DEFAULTS.safetyPriority,
+    customGuidance: AI_BEHAVIOR_DEFAULTS.customGuidance,
+    conversationStarters: [...AI_BEHAVIOR_DEFAULTS.conversationStarters],
+  };
+}
+
+export async function resolveStorefrontChatBehavior(shop: string): Promise<StorefrontChatBehaviorResolution> {
+  try {
+    const resolved = await getActiveAIBehaviorConfigWithFallback(shop);
+
+    return {
+      source: resolved.source,
+      config: resolveBehaviorPolicyConflict(resolved.config).adjusted,
+    };
+  } catch {
+    return {
+      source: "defaults",
+      config: resolveBehaviorPolicyConflict(buildDefaultBehaviorConfig()).adjusted,
+    };
+  }
+}
 
 export const CART_TOOL_ACTION_STATUSES = [
   "proposed",
@@ -285,9 +318,15 @@ function buildSizeBlock(): StructuredGuidanceBlock {
   };
 }
 
-export function buildStorefrontChatReply(input: StorefrontChatRequest) {
+export function buildStorefrontChatReply(
+  input: StorefrontChatRequest,
+  behavior?: AIBehaviorDraftPayload,
+) {
   const latestMessage = input.messages[input.messages.length - 1]?.content.toLowerCase() ?? "";
-  const systemPrompt = buildStorefrontChatSystemPrompt(input);
+  const systemPrompt = buildStorefrontChatSystemPrompt({
+    ...input,
+    ...(behavior ? { behavior } : {}),
+  });
 
   if (input.cart.items.length === 0) {
     return {
@@ -323,8 +362,11 @@ export function buildStorefrontChatReply(input: StorefrontChatRequest) {
   };
 }
 
-export function buildStorefrontChatStreamParts(input: StorefrontChatRequest): StorefrontChatStreamPart[] {
-  const reply = buildStorefrontChatReply(input);
+export function buildStorefrontChatStreamParts(
+  input: StorefrontChatRequest,
+  behavior?: AIBehaviorDraftPayload,
+): StorefrontChatStreamPart[] {
+  const reply = buildStorefrontChatReply(input, behavior);
   const messageId = `${input.sessionKey}-assistant-${input.messages.length}`;
 
   return [

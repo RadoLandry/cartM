@@ -1,0 +1,323 @@
+openapi: 3.0.3
+info:
+  title: CartMind AI Behavior Configuration API
+  version: 0.1.0
+  description: Contract for admin behavior configuration, preview, publishing, and rollback.
+servers:
+  - url: /api
+paths:
+  /ai/behavior/config:
+    get:
+      summary: Fetch draft and active AI behavior configuration
+      operationId: getAiBehaviorConfiguration
+      responses:
+        '200':
+          description: Configuration payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetConfigResponse'
+    put:
+      summary: Save draft AI behavior configuration
+      operationId: updateAiBehaviorDraft
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateDraftRequest'
+      responses:
+        '200':
+          description: Draft saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateDraftResponse'
+        '400':
+          description: Invalid payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Version token conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /ai/behavior/preview:
+    post:
+      summary: Preview assistant behavior for draft settings
+      operationId: previewAiBehavior
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PreviewRequest'
+      responses:
+        '200':
+          description: Preview completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreviewReadyResponse'
+        '202':
+          description: Preview accepted and running
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreviewRunningResponse'
+        '400':
+          description: Invalid preview request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /ai/behavior/publish:
+    post:
+      summary: Publish current draft behavior configuration
+      operationId: publishAiBehavior
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PublishRequest'
+      responses:
+        '200':
+          description: Published successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublishResponse'
+        '400':
+          description: Validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /ai/behavior/rollback:
+    post:
+      summary: Roll back to a previous published version
+      operationId: rollbackAiBehavior
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RollbackRequest'
+      responses:
+        '200':
+          description: Rollback completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RollbackResponse'
+        '400':
+          description: Invalid rollback request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Target version not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+components:
+  schemas:
+    BehaviorConfig:
+      type: object
+      required: [tone, aggressiveness, safetyPriority, conversationStarters]
+      properties:
+        tone:
+          type: string
+          enum: [PROFESSIONAL, FRIENDLY, CONCISE, COACHING]
+        aggressiveness:
+          type: number
+          minimum: 0
+          maximum: 1
+        safetyPriority:
+          type: string
+          enum: [SAFETY_FIRST, BALANCED]
+        customGuidance:
+          type: string
+          maxLength: 2000
+        conversationStarters:
+          type: array
+          maxItems: 8
+          items:
+            type: string
+            minLength: 1
+            maxLength: 160
+    BehaviorVersionSummary:
+      type: object
+      required: [id, versionNumber, status, publishedAt, publishedBy]
+      properties:
+        id:
+          type: string
+        versionNumber:
+          type: integer
+        status:
+          type: string
+          enum: [ACTIVE, ARCHIVED]
+        publishedAt:
+          type: string
+          format: date-time
+        publishedBy:
+          type: string
+    GetConfigResponse:
+      type: object
+      required: [ok, draft, active, versionToken, history]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        draft:
+          $ref: '#/components/schemas/BehaviorConfig'
+        active:
+          $ref: '#/components/schemas/BehaviorConfig'
+        versionToken:
+          type: string
+        history:
+          type: array
+          items:
+            $ref: '#/components/schemas/BehaviorVersionSummary'
+    UpdateDraftRequest:
+      type: object
+      required: [versionToken, draft]
+      properties:
+        versionToken:
+          type: string
+        draft:
+          $ref: '#/components/schemas/BehaviorConfig'
+    UpdateDraftResponse:
+      type: object
+      required: [ok, draft, versionToken]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        draft:
+          $ref: '#/components/schemas/BehaviorConfig'
+        versionToken:
+          type: string
+    PreviewScenario:
+      type: object
+      required: [scenarioId, shopperMessage]
+      properties:
+        scenarioId:
+          type: string
+        shopperMessage:
+          type: string
+    PreviewRequest:
+      type: object
+      required: [draft, scenarios]
+      properties:
+        draft:
+          $ref: '#/components/schemas/BehaviorConfig'
+        scenarios:
+          type: array
+          minItems: 1
+          maxItems: 5
+          items:
+            $ref: '#/components/schemas/PreviewScenario'
+    PreviewScenarioResult:
+      type: object
+      required: [scenarioId, assistantResponse, policyChecks]
+      properties:
+        scenarioId:
+          type: string
+        assistantResponse:
+          type: string
+        policyChecks:
+          type: object
+          required: [safetyCompliant]
+          properties:
+            safetyCompliant:
+              type: boolean
+            notes:
+              type: array
+              items:
+                type: string
+    PreviewReadyResponse:
+      type: object
+      required: [ok, status, previewRunId, results]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        status:
+          type: string
+          enum: [READY]
+        previewRunId:
+          type: string
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/PreviewScenarioResult'
+    PreviewRunningResponse:
+      type: object
+      required: [ok, status, previewRunId]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        status:
+          type: string
+          enum: [RUNNING]
+        previewRunId:
+          type: string
+    PublishRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          maxLength: 500
+    PublishResponse:
+      type: object
+      required: [ok, activeVersion]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        activeVersion:
+          $ref: '#/components/schemas/BehaviorVersionSummary'
+    RollbackRequest:
+      type: object
+      required: [targetVersionId]
+      properties:
+        targetVersionId:
+          type: string
+        reason:
+          type: string
+          maxLength: 500
+    RollbackResponse:
+      type: object
+      required: [ok, activeVersion]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        activeVersion:
+          $ref: '#/components/schemas/BehaviorVersionSummary'
+    ErrorResponse:
+      type: object
+      required: [ok, error]
+      properties:
+        ok:
+          type: boolean
+          enum: [false]
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties: true

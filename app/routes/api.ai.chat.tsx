@@ -5,6 +5,7 @@ import {
   buildProductComparisonDataError,
   createBudgetOptimizationContext,
   buildStorefrontChatStreamParts,
+  resolveStorefrontChatBehavior,
   createProductComparisonContext,
   normalizeBudgetOptimizationResult,
   normalizeProductComparisonResult,
@@ -96,7 +97,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     );
   }
 
-  const streamParts = buildStorefrontChatStreamParts(parsed.data);
+  const behaviorResolution = await resolveStorefrontChatBehavior(parsed.data.shop);
+
+  const streamParts = buildStorefrontChatStreamParts(parsed.data, behaviorResolution.config);
   const comparisonValidationError = getCompareProductsValidationError(parsed.data);
   const comparisonRequest = buildCompareProductsToolRequest(parsed.data);
   const comparisonParts = [] as Array<(typeof streamParts)[number]>;

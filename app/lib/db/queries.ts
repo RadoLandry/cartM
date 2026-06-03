@@ -36,8 +36,19 @@ import {
   KnowledgeGraphOverrideDimension,
   ExportReportFormat,
   ExportReportStatus,
+  AIBehaviorAuditAction,
+  AIBehaviorSafetyPriority,
+  AIBehaviorTone,
+  AIBehaviorVersionStatus,
+  AIBehaviorPreviewStatus,
 } from "@prisma/client";
 import db from "../../db.server";
+import {
+  AI_BEHAVIOR_DEFAULTS,
+  clampAggressiveness,
+  normalizeConversationStarters,
+  normalizeCustomGuidance,
+} from "../ai/behavior-config";
 import type {
   BundleCompletionCandidateProduct,
   BundleProjectionRecord,
@@ -3722,4 +3733,523 @@ export async function updateSizeProfile(
     shopifyCustomerId,
     sessionId,
   );
+}
+
+const aiBehaviorDraftSelect = Prisma.validator<Prisma.AIBehaviorDraftSelect>()({
+  id: true,
+  shop: true,
+  versionToken: true,
+  tone: true,
+  aggressiveness: true,
+  safetyPriority: true,
+  customGuidance: true,
+  conversationStarters: true,
+  updatedBy: true,
+  updatedAt: true,
+  createdAt: true,
+});
+
+const aiBehaviorVersionSelect = Prisma.validator<Prisma.AIBehaviorPublishedVersionSelect>()({
+  id: true,
+  shop: true,
+  versionNumber: true,
+  status: true,
+  snapshot: true,
+  publishedBy: true,
+  publishedAt: true,
+  archivedAt: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+type SelectedAIBehaviorDraft = Prisma.AIBehaviorDraftGetPayload<{
+  select: typeof aiBehaviorDraftSelect;
+}>;
+
+type SelectedAIBehaviorPublishedVersion = Prisma.AIBehaviorPublishedVersionGetPayload<{
+  select: typeof aiBehaviorVersionSelect;
+}>;
+
+export interface AIBehaviorConfigPayload {
+  tone: AIBehaviorTone;
+  aggressiveness: number;
+  safetyPriority: AIBehaviorSafetyPriority;
+  customGuidance: string;
+  conversationStarters: string[];
+}
+
+export interface AIBehaviorDraftRecord {
+  id: string;
+  shop: string;
+  versionToken: string;
+  config: AIBehaviorConfigPayload;
+  updatedBy: string;
+  updatedAt: Date;
+  createdAt: Date;
+}
+
+export interface AIBehaviorVersionSummaryRecord {
+  id: string;
+  shop: string;
+  versionNumber: number;
+  status: AIBehaviorVersionStatus;
+  publishedBy: string;
+  publishedAt: Date;
+  archivedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface AIBehaviorAuditWriteInput {
+  shop: string;
+  actorId: string;
+  actionType: AIBehaviorAuditAction;
+  draftId?: string;
+  targetVersionId?: string;
+  beforeSnapshot?: Prisma.InputJsonValue;
+  afterSnapshot?: Prisma.InputJsonValue;
+  reason?: string;
+}
+
+export interface AIBehaviorPreviewRunInput {
+  shop: string;
+  draftId?: string;
+  status?: AIBehaviorPreviewStatus;
+  inputSnapshot: Prisma.InputJsonValue;
+  scenarioSet: Prisma.InputJsonValue;
+  requestedBy: string;
+}
+
+export class AIBehaviorVersionConflictError extends Error {
+  constructor(message = "AI behavior draft version token conflict") {
+    super(message);
+    this.name = "AIBehaviorVersionConflictError";
+  }
+}
+
+function createAIBehaviorVersionToken(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function parseConversationStarters(value: Prisma.JsonValue | null | undefined): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return normalizeConversationStarters(value);
+}
+
+function isSnapshotTone(value: unknown): value is AIBehaviorTone {
+  return Object.values(AIBehaviorTone).includes(value as AIBehaviorTone);
+}
+
+function isSnapshotSafetyPriority(value: unknown): value is AIBehaviorSafetyPriority {
+  return Object.values(AIBehaviorSafetyPriority).includes(value as AIBehaviorSafetyPriority);
+}
+
+function parseConfigFromSnapshotStrict(value: Prisma.JsonValue | null | undefined): {
+  valid: boolean;
+  config: AIBehaviorConfigPayload;
+} {
+  const snapshot = asJsonRecord(value);
+
+  const tone = snapshot.tone;
+  const safetyPriority = snapshot.safetyPriority;
+  const aggressivenessRaw = Number(snapshot.aggressiveness);
+
+  const valid = isSnapshotTone(tone)
+    && isSnapshotSafetyPriority(safetyPriority)
+    && Number.isFinite(aggressivenessRaw)
+    && aggressivenessRaw >= 0
+    && aggressivenessRaw <= 1;
+
+  return {
+    valid,
+    config: {
+      tone: isSnapshotTone(tone) ? tone : AIBehaviorDefaultConfig.tone,
+      aggressiveness: clampAggressiveness(aggressivenessRaw),
+      safetyPriority: isSnapshotSafetyPriority(safetyPriority)
+        ? safetyPriority
+        : AIBehaviorDefaultConfig.safetyPriority,
+      customGuidance: normalizeCustomGuidance(snapshot.customGuidance),
+      conversationStarters: parseConversationStarters(snapshot.conversationStarters as Prisma.JsonValue),
+    },
+  };
+}
+
+function parseConfigFromSnapshot(value: Prisma.JsonValue | null | undefined): AIBehaviorConfigPayload {
+  return parseConfigFromSnapshotStrict(value).config;
+}
+
+const AIBehaviorDefaultConfig: AIBehaviorConfigPayload = {
+  tone: AI_BEHAVIOR_DEFAULTS.tone,
+  aggressiveness: AI_BEHAVIOR_DEFAULTS.aggressiveness,
+  safetyPriority: AI_BEHAVIOR_DEFAULTS.safetyPriority,
+  customGuidance: AI_BEHAVIOR_DEFAULTS.customGuidance,
+  conversationStarters: [...AI_BEHAVIOR_DEFAULTS.conversationStarters],
+};
+
+function toAIBehaviorConfigPayload(row: SelectedAIBehaviorDraft): AIBehaviorConfigPayload {
+  return {
+    tone: row.tone,
+    aggressiveness: row.aggressiveness.toNumber(),
+    safetyPriority: row.safetyPriority,
+    customGuidance: normalizeCustomGuidance(row.customGuidance),
+    conversationStarters: parseConversationStarters(row.conversationStarters),
+  };
+}
+
+function toAIBehaviorDraftRecord(row: SelectedAIBehaviorDraft): AIBehaviorDraftRecord {
+  return {
+    id: row.id,
+    shop: row.shop,
+    versionToken: row.versionToken,
+    config: toAIBehaviorConfigPayload(row),
+    updatedBy: row.updatedBy,
+    updatedAt: row.updatedAt,
+    createdAt: row.createdAt,
+  };
+}
+
+function toAIBehaviorVersionSummaryRecord(
+  row: SelectedAIBehaviorPublishedVersion,
+): AIBehaviorVersionSummaryRecord {
+  return {
+    id: row.id,
+    shop: row.shop,
+    versionNumber: row.versionNumber,
+    status: row.status,
+    publishedBy: row.publishedBy,
+    publishedAt: row.publishedAt,
+    archivedAt: row.archivedAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function serializeBehaviorConfigSnapshot(config: AIBehaviorConfigPayload): Prisma.InputJsonValue {
+  return {
+    tone: config.tone,
+    aggressiveness: clampAggressiveness(config.aggressiveness),
+    safetyPriority: config.safetyPriority,
+    customGuidance: normalizeCustomGuidance(config.customGuidance),
+    conversationStarters: normalizeConversationStarters(config.conversationStarters),
+  } as Prisma.InputJsonValue;
+}
+
+export async function getAIBehaviorDraft(shop: string): Promise<AIBehaviorDraftRecord | null> {
+  const row = await db.aiBehaviorDraft.findUnique({
+    where: { shop },
+    select: aiBehaviorDraftSelect,
+  });
+
+  return row ? toAIBehaviorDraftRecord(row) : null;
+}
+
+export async function getAIBehaviorVersionHistory(shop: string): Promise<AIBehaviorVersionSummaryRecord[]> {
+  const rows = await db.aiBehaviorPublishedVersion.findMany({
+    where: { shop },
+    select: aiBehaviorVersionSelect,
+    orderBy: [{ versionNumber: "desc" }, { publishedAt: "desc" }],
+  });
+
+  return rows.map(toAIBehaviorVersionSummaryRecord);
+}
+
+export async function saveAIBehaviorDraft(input: {
+  shop: string;
+  actorId: string;
+  config: AIBehaviorConfigPayload;
+  expectedVersionToken?: string;
+}): Promise<AIBehaviorDraftRecord> {
+  const { shop, actorId, config, expectedVersionToken } = input;
+
+  const nextToken = createAIBehaviorVersionToken();
+
+  const row = await db.$transaction(async (tx) => {
+    const existing = await tx.aiBehaviorDraft.findUnique({
+      where: { shop },
+      select: aiBehaviorDraftSelect,
+    });
+
+    if (existing && expectedVersionToken && existing.versionToken !== expectedVersionToken) {
+      throw new AIBehaviorVersionConflictError();
+    }
+
+    const normalized = {
+      tone: config.tone,
+      aggressiveness: clampAggressiveness(config.aggressiveness),
+      safetyPriority: config.safetyPriority,
+      customGuidance: normalizeCustomGuidance(config.customGuidance) || null,
+      conversationStarters: normalizeConversationStarters(config.conversationStarters) as Prisma.InputJsonValue,
+    };
+
+    if (!existing) {
+      return await tx.aiBehaviorDraft.create({
+        data: {
+          shop,
+          versionToken: nextToken,
+          updatedBy: actorId,
+          ...normalized,
+        },
+        select: aiBehaviorDraftSelect,
+      });
+    }
+
+    return await tx.aiBehaviorDraft.update({
+      where: { id: existing.id },
+      data: {
+        versionToken: nextToken,
+        updatedBy: actorId,
+        ...normalized,
+      },
+      select: aiBehaviorDraftSelect,
+    });
+  });
+
+  return toAIBehaviorDraftRecord(row);
+}
+
+export async function createAIBehaviorAuditEntry(input: AIBehaviorAuditWriteInput) {
+  return await db.aiBehaviorAuditEntry.create({
+    data: {
+      shop: input.shop,
+      actionType: input.actionType,
+      actorId: input.actorId,
+      draftId: input.draftId,
+      targetVersionId: input.targetVersionId,
+      beforeSnapshot: input.beforeSnapshot,
+      afterSnapshot: input.afterSnapshot,
+      reason: input.reason,
+    },
+  });
+}
+
+export async function writeAIBehaviorDraftSavedAudit(input: {
+  shop: string;
+  actorId: string;
+  draftId: string;
+  beforeSnapshot?: AIBehaviorConfigPayload;
+  afterSnapshot: AIBehaviorConfigPayload;
+}) {
+  return createAIBehaviorAuditEntry({
+    shop: input.shop,
+    actorId: input.actorId,
+    actionType: AIBehaviorAuditAction.DRAFT_SAVED,
+    draftId: input.draftId,
+    beforeSnapshot: input.beforeSnapshot
+      ? serializeBehaviorConfigSnapshot(input.beforeSnapshot)
+      : undefined,
+    afterSnapshot: serializeBehaviorConfigSnapshot(input.afterSnapshot),
+  });
+}
+
+export async function publishAIBehaviorDraft(input: {
+  shop: string;
+  actorId: string;
+  reason?: string;
+}): Promise<AIBehaviorVersionSummaryRecord> {
+  const { shop, actorId, reason } = input;
+
+  return await db.$transaction(async (tx) => {
+    const draft = await tx.aiBehaviorDraft.findUnique({
+      where: { shop },
+      select: aiBehaviorDraftSelect,
+    });
+
+    if (!draft) {
+      throw new Error("No AI behavior draft found for shop");
+    }
+
+    const [latestVersion, activeVersion] = await Promise.all([
+      tx.aiBehaviorPublishedVersion.findFirst({
+        where: { shop },
+        orderBy: { versionNumber: "desc" },
+        select: aiBehaviorVersionSelect,
+      }),
+      tx.aiBehaviorPublishedVersion.findFirst({
+        where: { shop, status: AIBehaviorVersionStatus.ACTIVE },
+        select: aiBehaviorVersionSelect,
+      }),
+    ]);
+
+    await tx.aiBehaviorPublishedVersion.updateMany({
+      where: { shop, status: AIBehaviorVersionStatus.ACTIVE },
+      data: {
+        status: AIBehaviorVersionStatus.ARCHIVED,
+        archivedAt: new Date(),
+      },
+    });
+
+    const created = await tx.aiBehaviorPublishedVersion.create({
+      data: {
+        shop,
+        versionNumber: (latestVersion?.versionNumber ?? 0) + 1,
+        status: AIBehaviorVersionStatus.ACTIVE,
+        snapshot: serializeBehaviorConfigSnapshot(toAIBehaviorConfigPayload(draft)),
+        publishedBy: actorId,
+      },
+      select: aiBehaviorVersionSelect,
+    });
+
+    await tx.aiBehaviorAuditEntry.create({
+      data: {
+        shop,
+        actorId,
+        actionType: AIBehaviorAuditAction.PUBLISHED,
+        draftId: draft.id,
+        targetVersionId: created.id,
+        beforeSnapshot: activeVersion?.snapshot ?? null,
+        afterSnapshot: created.snapshot,
+        reason,
+      },
+    });
+
+    return toAIBehaviorVersionSummaryRecord(created);
+  });
+}
+
+export async function rollbackAIBehaviorVersion(input: {
+  shop: string;
+  actorId: string;
+  targetVersionId: string;
+  reason?: string;
+}): Promise<AIBehaviorVersionSummaryRecord> {
+  const { shop, actorId, targetVersionId, reason } = input;
+
+  return await db.$transaction(async (tx) => {
+    const targetVersion = await tx.aiBehaviorPublishedVersion.findFirst({
+      where: {
+        id: targetVersionId,
+        shop,
+      },
+      select: aiBehaviorVersionSelect,
+    });
+
+    if (!targetVersion) {
+      throw new Error("Target AI behavior version not found");
+    }
+
+    const [latestVersion, activeVersion] = await Promise.all([
+      tx.aiBehaviorPublishedVersion.findFirst({
+        where: { shop },
+        orderBy: { versionNumber: "desc" },
+        select: aiBehaviorVersionSelect,
+      }),
+      tx.aiBehaviorPublishedVersion.findFirst({
+        where: { shop, status: AIBehaviorVersionStatus.ACTIVE },
+        select: aiBehaviorVersionSelect,
+      }),
+    ]);
+
+    await tx.aiBehaviorPublishedVersion.updateMany({
+      where: { shop, status: AIBehaviorVersionStatus.ACTIVE },
+      data: {
+        status: AIBehaviorVersionStatus.ARCHIVED,
+        archivedAt: new Date(),
+      },
+    });
+
+    const restored = await tx.aiBehaviorPublishedVersion.create({
+      data: {
+        shop,
+        versionNumber: (latestVersion?.versionNumber ?? 0) + 1,
+        status: AIBehaviorVersionStatus.ACTIVE,
+        snapshot: targetVersion.snapshot as Prisma.InputJsonValue,
+        publishedBy: actorId,
+      },
+      select: aiBehaviorVersionSelect,
+    });
+
+    await tx.aiBehaviorAuditEntry.create({
+      data: {
+        shop,
+        actorId,
+        actionType: AIBehaviorAuditAction.ROLLED_BACK,
+        targetVersionId: restored.id,
+        beforeSnapshot: activeVersion?.snapshot ?? null,
+        afterSnapshot: restored.snapshot,
+        reason,
+      },
+    });
+
+    return toAIBehaviorVersionSummaryRecord(restored);
+  });
+}
+
+export async function createAIBehaviorPreviewRun(input: AIBehaviorPreviewRunInput) {
+  return await db.aiBehaviorPreviewRun.create({
+    data: {
+      shop: input.shop,
+      draftId: input.draftId,
+      status: input.status ?? AIBehaviorPreviewStatus.RUNNING,
+      inputSnapshot: input.inputSnapshot,
+      scenarioSet: input.scenarioSet,
+      requestedBy: input.requestedBy,
+      requestedAt: new Date(),
+    },
+  });
+}
+
+export async function getActiveAIBehaviorConfigWithFallback(shop: string): Promise<{
+  source: "active" | "draft" | "defaults";
+  versionId?: string;
+  versionNumber?: number;
+  config: AIBehaviorConfigPayload;
+}> {
+  const versions = await db.aiBehaviorPublishedVersion.findMany({
+    where: {
+      shop,
+    },
+    orderBy: [{ status: "asc" }, { publishedAt: "desc" }],
+    select: aiBehaviorVersionSelect,
+  });
+
+  const active = versions.find((version) => version.status === AIBehaviorVersionStatus.ACTIVE);
+
+  if (active) {
+    const parsedActive = parseConfigFromSnapshotStrict(active.snapshot);
+
+    if (parsedActive.valid) {
+      return {
+        source: "active",
+        versionId: active.id,
+        versionNumber: active.versionNumber,
+        config: parsedActive.config,
+      };
+    }
+  }
+
+  const lastValidPublished = versions
+    .map((version) => ({
+      version,
+      parsed: parseConfigFromSnapshotStrict(version.snapshot),
+    }))
+    .find((entry) => entry.parsed.valid);
+
+  if (lastValidPublished) {
+    return {
+      source: "active",
+      versionId: lastValidPublished.version.id,
+      versionNumber: lastValidPublished.version.versionNumber,
+      config: lastValidPublished.parsed.config,
+    };
+  }
+
+  const draft = await getAIBehaviorDraft(shop);
+
+  if (draft) {
+    return {
+      source: "draft",
+      config: draft.config,
+    };
+  }
+
+  return {
+    source: "defaults",
+    config: {
+      ...AIBehaviorDefaultConfig,
+      conversationStarters: [...AIBehaviorDefaultConfig.conversationStarters],
+    },
+  };
 }

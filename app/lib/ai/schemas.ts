@@ -348,6 +348,101 @@ export const BudgetOptimizationErrorSchema = z.object({
   suggestedNextStep: z.string().min(1).optional(),
 });
 
+export const AIBehaviorToneSchema = z.enum([
+  "PROFESSIONAL",
+  "FRIENDLY",
+  "CONCISE",
+  "COACHING",
+]);
+
+export const AIBehaviorSafetyPrioritySchema = z.enum([
+  "SAFETY_FIRST",
+  "BALANCED",
+]);
+
+export const AIBehaviorVersionStatusSchema = z.enum(["ACTIVE", "ARCHIVED"]);
+
+export const AIBehaviorConfigSchema = z.object({
+  tone: AIBehaviorToneSchema,
+  aggressiveness: z.number().min(0).max(1),
+  safetyPriority: AIBehaviorSafetyPrioritySchema,
+  customGuidance: z.string().max(2000).default(""),
+  conversationStarters: z.array(z.string().trim().min(1).max(160)).max(8).default([]),
+});
+
+export const AIBehaviorVersionSummarySchema = z.object({
+  id: z.string().min(1),
+  versionNumber: z.number().int().nonnegative(),
+  status: AIBehaviorVersionStatusSchema,
+  publishedAt: z.string().datetime(),
+  publishedBy: z.string().min(1),
+});
+
+export const AIBehaviorConfigResponseSchema = z.object({
+  ok: z.literal(true),
+  draft: AIBehaviorConfigSchema,
+  active: AIBehaviorConfigSchema,
+  versionToken: z.string().min(1),
+  history: z.array(AIBehaviorVersionSummarySchema).default([]),
+});
+
+export const AIBehaviorDraftUpdateRequestSchema = z.object({
+  versionToken: z.string().min(1),
+  draft: AIBehaviorConfigSchema,
+});
+
+export const AIBehaviorDraftUpdateResponseSchema = z.object({
+  ok: z.literal(true),
+  draft: AIBehaviorConfigSchema,
+  versionToken: z.string().min(1),
+});
+
+export const AIBehaviorPreviewScenarioSchema = z.object({
+  scenarioId: z.string().min(1),
+  shopperMessage: z.string().min(1),
+});
+
+export const AIBehaviorPreviewRequestSchema = z.object({
+  draft: AIBehaviorConfigSchema,
+  scenarios: z.array(AIBehaviorPreviewScenarioSchema).min(1).max(5),
+});
+
+export const AIBehaviorPreviewScenarioResultSchema = z.object({
+  scenarioId: z.string().min(1),
+  assistantResponse: z.string().min(1),
+  policyChecks: z.object({
+    safetyCompliant: z.boolean(),
+    notes: z.array(z.string().min(1)).default([]),
+  }),
+});
+
+export const AIBehaviorPreviewReadyResponseSchema = z.object({
+  ok: z.literal(true),
+  status: z.literal("READY"),
+  previewRunId: z.string().min(1),
+  results: z.array(AIBehaviorPreviewScenarioResultSchema),
+});
+
+export const AIBehaviorPreviewRunningResponseSchema = z.object({
+  ok: z.literal(true),
+  status: z.literal("RUNNING"),
+  previewRunId: z.string().min(1),
+});
+
+export const AIBehaviorPublishRequestSchema = z.object({
+  reason: z.string().max(500).optional(),
+});
+
+export const AIBehaviorRollbackRequestSchema = z.object({
+  targetVersionId: z.string().min(1),
+  reason: z.string().max(500).optional(),
+});
+
+export const AIBehaviorPublishRollbackResponseSchema = z.object({
+  ok: z.literal(true),
+  activeVersion: AIBehaviorVersionSummarySchema,
+});
+
 export const StorefrontChatRequestSchema = z.object({
   shop: z.string().min(1),
   sessionKey: z.string().min(1),
@@ -438,5 +533,21 @@ export type BudgetOptimizationCandidate = z.infer<typeof BudgetOptimizationCandi
 export type BudgetOptimizationResult = z.infer<typeof BudgetOptimizationResultSchema>;
 export type BudgetOptimizationProposed = z.infer<typeof BudgetOptimizationProposedSchema>;
 export type BudgetOptimizationError = z.infer<typeof BudgetOptimizationErrorSchema>;
+export type AIBehaviorTone = z.infer<typeof AIBehaviorToneSchema>;
+export type AIBehaviorSafetyPriority = z.infer<typeof AIBehaviorSafetyPrioritySchema>;
+export type AIBehaviorVersionStatus = z.infer<typeof AIBehaviorVersionStatusSchema>;
+export type AIBehaviorConfig = z.infer<typeof AIBehaviorConfigSchema>;
+export type AIBehaviorVersionSummary = z.infer<typeof AIBehaviorVersionSummarySchema>;
+export type AIBehaviorConfigResponse = z.infer<typeof AIBehaviorConfigResponseSchema>;
+export type AIBehaviorDraftUpdateRequest = z.infer<typeof AIBehaviorDraftUpdateRequestSchema>;
+export type AIBehaviorDraftUpdateResponse = z.infer<typeof AIBehaviorDraftUpdateResponseSchema>;
+export type AIBehaviorPreviewScenario = z.infer<typeof AIBehaviorPreviewScenarioSchema>;
+export type AIBehaviorPreviewRequest = z.infer<typeof AIBehaviorPreviewRequestSchema>;
+export type AIBehaviorPreviewScenarioResult = z.infer<typeof AIBehaviorPreviewScenarioResultSchema>;
+export type AIBehaviorPreviewReadyResponse = z.infer<typeof AIBehaviorPreviewReadyResponseSchema>;
+export type AIBehaviorPreviewRunningResponse = z.infer<typeof AIBehaviorPreviewRunningResponseSchema>;
+export type AIBehaviorPublishRequest = z.infer<typeof AIBehaviorPublishRequestSchema>;
+export type AIBehaviorRollbackRequest = z.infer<typeof AIBehaviorRollbackRequestSchema>;
+export type AIBehaviorPublishRollbackResponse = z.infer<typeof AIBehaviorPublishRollbackResponseSchema>;
 export type StorefrontChatRequest = z.infer<typeof StorefrontChatRequestSchema>;
 export type StorefrontChatStreamPart = z.infer<typeof StorefrontChatStreamPartSchema>;

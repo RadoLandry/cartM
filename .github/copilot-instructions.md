@@ -1,5 +1,5 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-file: specs/023-analytics-dashboard/plan.md
+file: specs/024-ai-behavior-configuration/plan.md
 <!-- SPECKIT END -->
