@@ -274,3 +274,49 @@ function rankSuggestions(
       right.confidence - left.confidence,
   );
 }
+
+// ---------------------------------------------------------------------------
+// Checkout warning summaries (T038)
+// ---------------------------------------------------------------------------
+
+export interface CheckoutSizeWarningSummary {
+  guidanceId: string;
+  conflictKey: string;
+  severity: "warning" | "critical";
+  title: string;
+  message: string;
+  relatedLineIds: string[];
+  suggestedCorrection?: string;
+}
+
+const HIGH_CONFIDENCE_SEVERITY_THRESHOLD = 0.8;
+
+/**
+ * Maps high-confidence size conflicts from a `SizeConflictResult` to compact
+ * checkout warning summaries. Only ERROR conflicts and WARNING conflicts with
+ * at least one suggestion >= HIGH_CONFIDENCE_SEVERITY_THRESHOLD are included.
+ */
+export function mapSizeConflictsToCheckoutWarningSummaries(
+  result: SizeConflictResult,
+  lineIdMap: Record<string, string[]> = {},
+): CheckoutSizeWarningSummary[] {
+  return result.conflicts
+    .filter((conflict) => {
+      if (conflict.severity === "ERROR") return true;
+      return conflict.suggestions.some((s) => s.confidence >= HIGH_CONFIDENCE_SEVERITY_THRESHOLD);
+    })
+    .map((conflict) => {
+      const variantIds = [conflict.itemA.variantId, conflict.itemB.variantId];
+      const relatedLineIds = variantIds.flatMap((vid) => lineIdMap[vid] ?? []);
+
+      return {
+        guidanceId: `checkout-size-warning:${conflict.conflictKey}`,
+        conflictKey: conflict.conflictKey,
+        severity: conflict.severity === "ERROR" ? "critical" : "warning",
+        title: conflict.severity === "ERROR" ? "Size mismatch — review your cart" : "Check size compatibility",
+        message: conflict.message,
+        relatedLineIds,
+        ...(conflict.suggestedCorrection ? { suggestedCorrection: conflict.suggestedCorrection } : {}),
+      } satisfies CheckoutSizeWarningSummary;
+    });
+}

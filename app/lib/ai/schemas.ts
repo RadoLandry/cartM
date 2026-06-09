@@ -158,6 +158,25 @@ export const CheckoutGuidanceItemSchema = z.object({
   expiresAt: z.string().datetime().optional(),
 });
 
+export const CheckoutGuidancePlacementSchema = z.enum([
+  "purchase_checkout_block",
+  "information_step",
+  "shipping_step",
+  "payment_step",
+  "unknown",
+]);
+
+export const CheckoutGuidanceFeedSchema = z.object({
+  shop: z.string().min(1),
+  guidanceId: z.string().min(1),
+  checkoutId: z.string().min(1).optional(),
+  cartToken: z.string().min(1).optional(),
+  generatedAt: z.string().datetime(),
+  placement: CheckoutGuidancePlacementSchema.default("purchase_checkout_block"),
+  items: z.array(CheckoutGuidanceItemSchema).default([]),
+  projectionVersion: z.number().int().nonnegative(),
+});
+
 export const BundleStorefrontOutcomeSchema = z.object({
   outcomeId: z.string().min(1),
   ruleId: z.string().min(1),
@@ -719,6 +738,8 @@ export type StorefrontGuidanceRequest = z.infer<typeof StorefrontGuidanceRequest
 export type StorefrontGuidanceResponse = z.infer<typeof StorefrontGuidanceResponseSchema>;
 export type StorefrontCartSyncSource = z.infer<typeof StorefrontCartSyncSourceSchema>;
 export type CheckoutGuidanceItem = z.infer<typeof CheckoutGuidanceItemSchema>;
+export type CheckoutGuidancePlacement = z.infer<typeof CheckoutGuidancePlacementSchema>;
+export type CheckoutGuidanceFeed = z.infer<typeof CheckoutGuidanceFeedSchema>;
 export type BundleStorefrontOutcome = z.infer<typeof BundleStorefrontOutcomeSchema>;
 export type IntegrationHealthEvent = z.infer<typeof IntegrationHealthEventSchema>;
 export type StorefrontConversationLimits = z.infer<typeof StorefrontConversationLimitsSchema>;

@@ -98,18 +98,18 @@
 
 ### Tests for User Story 3
 
-- [ ] T034 [P] [US3] Add checkout guidance contract tests for size warnings, bundle offers, no-guidance carts, invalid items, and priority ordering in tests/integration/routes/checkout-guidance-contract.test.ts
-- [ ] T035 [P] [US3] Add checkout guidance model unit tests for empty feeds, expired items, missing line IDs, and projection version rejection in tests/unit/storefront/checkout-guidance-model.test.ts
-- [ ] T036 [P] [US3] Add checkout extension render tests for warnings, offers, and hidden empty state in extensions/checkout-ui/src/Checkout.test.tsx
+- [X] T034 [P] [US3] Add checkout guidance contract tests for size warnings, bundle offers, no-guidance carts, invalid items, and priority ordering in tests/integration/routes/checkout-guidance-contract.test.ts
+- [X] T035 [P] [US3] Add checkout guidance model unit tests for empty feeds, expired items, missing line IDs, and projection version rejection in tests/unit/storefront/checkout-guidance-model.test.ts
+- [X] T036 [P] [US3] Add checkout extension render tests for warnings, offers, and hidden empty state in extensions/checkout-ui/src/Checkout.test.tsx
 
 ### Implementation for User Story 3
 
-- [ ] T037 [P] [US3] Implement checkout guidance feed builder from size conflicts, bundle outcomes, and kit nudges in app/lib/shopify/storefront-integration.ts
-- [ ] T038 [US3] Extend size conflict mapping to emit high-confidence checkout warning summaries in app/lib/cart-intelligence/size-conflicts.ts
-- [ ] T039 [US3] Create checkout UI extension configuration in extensions/checkout-ui/shopify.extension.toml
-- [ ] T040 [US3] Implement checkout guidance rendering with Shopify checkout UI extension primitives only in extensions/checkout-ui/src/Checkout.tsx
-- [ ] T041 [US3] Implement checkout guidance empty-state no-render behavior and placement adaptation in extensions/checkout-ui/src/Checkout.tsx
-- [ ] T042 [US3] Emit checkout_guidance_rendered integration health events in app/lib/analytics/cart-events.ts
+- [X] T037 [P] [US3] Implement checkout guidance feed builder from size conflicts, bundle outcomes, and kit nudges in app/lib/shopify/storefront-integration.ts
+- [X] T038 [US3] Extend size conflict mapping to emit high-confidence checkout warning summaries in app/lib/cart-intelligence/size-conflicts.ts
+- [X] T039 [US3] Create checkout UI extension configuration in extensions/checkout-ui/shopify.extension.toml
+- [X] T040 [US3] Implement checkout guidance rendering with Shopify checkout UI extension primitives only in extensions/checkout-ui/src/Checkout.tsx
+- [X] T041 [US3] Implement checkout guidance empty-state no-render behavior and placement adaptation in extensions/checkout-ui/src/Checkout.tsx
+- [X] T042 [US3] Emit checkout_guidance_rendered integration health events in app/lib/analytics/cart-events.ts
 
 **Checkpoint**: User Story 3 works independently for checkout guidance without requiring bundle discount implementation.
 

@@ -1,0 +1,25 @@
+api_version = "2025-04"
+
+[[extensions]]
+name = "CartMind Checkout Guidance"
+handle = "checkout-ui"
+type = "ui_extension"
+
+  [[extensions.targeting]]
+  module = "./src/Checkout.tsx"
+  target = "purchase.checkout.block.render"
+
+  [[extensions.targeting]]
+  module = "./src/Checkout.tsx"
+  target = "purchase.checkout.cart-line-item.render-after"
+
+  [extensions.settings]
+    [[extensions.settings.fields]]
+    key = "cartmind_app_base_url"
+    type = "single_line_text_field"
+    name = "CartMind App Base URL"
+
+    [[extensions.settings.fields]]
+    key = "cartmind_guidance_path"
+    type = "single_line_text_field"
+    name = "CartMind Guidance Endpoint Path"

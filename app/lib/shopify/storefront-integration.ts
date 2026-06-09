@@ -4,11 +4,16 @@ import type {
   StorefrontGuidancePayload,
   StorefrontGuidanceResponse,
   StorefrontWidgetMountConfig,
+  CheckoutGuidanceItem,
+  CheckoutGuidanceFeed,
+  CheckoutGuidancePlacement,
+  BundleStorefrontOutcome,
 } from "../ai/schemas";
 import {
   StorefrontCartSnapshotSchema,
   StorefrontGuidancePayloadSchema,
   StorefrontWidgetMountConfigSchema,
+  CheckoutGuidanceFeedSchema,
 } from "../ai/schemas";
 
 export const DEFAULT_STOREFRONT_WIDGET_FEATURES = {
@@ -144,3 +149,93 @@ export function buildStorefrontGuidanceResponse(
     payload: StorefrontGuidancePayloadSchema.parse(payload),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Checkout guidance feed assembly (T037)
+// ---------------------------------------------------------------------------
+
+const CHECKOUT_GUIDANCE_PRIORITY_ORDER: Record<CheckoutGuidanceItem["type"], number> = {
+  size_warning: 0,
+  kit_nudge: 1,
+  bundle_offer: 2,
+};
+
+const CHECKOUT_GUIDANCE_SEVERITY_ORDER: Record<CheckoutGuidanceItem["severity"], number> = {
+  critical: 0,
+  warning: 1,
+  info: 2,
+};
+
+function isGuidanceItemExpired(item: CheckoutGuidanceItem, now: Date): boolean {
+  if (!item.expiresAt) return false;
+  return new Date(item.expiresAt) <= now;
+}
+
+function sortCheckoutGuidanceItems(items: CheckoutGuidanceItem[]): CheckoutGuidanceItem[] {
+  return [...items].sort((a, b) => {
+    const severityDiff = CHECKOUT_GUIDANCE_SEVERITY_ORDER[a.severity] - CHECKOUT_GUIDANCE_SEVERITY_ORDER[b.severity];
+    if (severityDiff !== 0) return severityDiff;
+
+    const typeDiff = CHECKOUT_GUIDANCE_PRIORITY_ORDER[a.type] - CHECKOUT_GUIDANCE_PRIORITY_ORDER[b.type];
+    if (typeDiff !== 0) return typeDiff;
+
+    return a.priority - b.priority;
+  });
+}
+
+export interface CheckoutGuidanceFeedInput {
+  shop: string;
+  checkoutId?: string;
+  cartToken?: string;
+  placement?: CheckoutGuidancePlacement;
+  projectionVersion: number;
+  sizeWarningItems?: CheckoutGuidanceItem[];
+  bundleOfferItems?: CheckoutGuidanceItem[];
+  kitNudgeItems?: CheckoutGuidanceItem[];
+  now?: Date;
+}
+
+export function buildCheckoutGuidanceFeed(input: CheckoutGuidanceFeedInput): CheckoutGuidanceFeed {
+  const now = input.now ?? new Date();
+  const allItems: CheckoutGuidanceItem[] = [
+    ...(input.sizeWarningItems ?? []),
+    ...(input.bundleOfferItems ?? []),
+    ...(input.kitNudgeItems ?? []),
+  ].filter((item) => !isGuidanceItemExpired(item, now));
+
+  const sorted = sortCheckoutGuidanceItems(allItems);
+
+  return CheckoutGuidanceFeedSchema.parse({
+    shop: input.shop,
+    guidanceId: `checkout-guidance-${Date.now()}`,
+    ...(input.checkoutId ? { checkoutId: input.checkoutId } : {}),
+    ...(input.cartToken ? { cartToken: input.cartToken } : {}),
+    generatedAt: now.toISOString(),
+    placement: input.placement ?? "purchase_checkout_block",
+    items: sorted,
+    projectionVersion: input.projectionVersion,
+  });
+}
+
+export function buildEmptyCheckoutGuidanceFeed(input: {
+  shop: string;
+  projectionVersion: number;
+  placement?: CheckoutGuidancePlacement;
+  checkoutId?: string;
+  cartToken?: string;
+  now?: Date;
+}): CheckoutGuidanceFeed {
+  return buildCheckoutGuidanceFeed({
+    ...input,
+    sizeWarningItems: [],
+    bundleOfferItems: [],
+    kitNudgeItems: [],
+  });
+}
+
+export type {
+  CheckoutGuidanceItem,
+  CheckoutGuidanceFeed,
+  CheckoutGuidancePlacement,
+  BundleStorefrontOutcome,
+};

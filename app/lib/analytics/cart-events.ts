@@ -207,3 +207,33 @@ export function buildGuidanceImpressedEvent(input: {
     },
   });
 }
+
+export function buildCheckoutGuidanceRenderedEvent(input: {
+  shop: string;
+  placement: string;
+  guidanceId: string;
+  itemCount: number;
+  sizeWarningCount: number;
+  bundleOfferCount: number;
+  kitNudgeCount: number;
+  projectionVersion: number;
+  cartToken?: string;
+  sessionId?: string;
+}) {
+  return buildIntegrationHealthEvent({
+    shop: input.shop,
+    surface: "checkout",
+    sessionId: input.sessionId,
+    cartToken: input.cartToken,
+    eventType: "checkout_guidance_rendered",
+    details: {
+      placement: input.placement,
+      guidanceId: input.guidanceId,
+      itemCount: input.itemCount,
+      sizeWarningCount: input.sizeWarningCount,
+      bundleOfferCount: input.bundleOfferCount,
+      kitNudgeCount: input.kitNudgeCount,
+      projectionVersion: input.projectionVersion,
+    },
+  });
+}
