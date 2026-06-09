@@ -1,0 +1,13 @@
+api_version = "2025-04"
+
+[[extensions]]
+name = "CartMind Bundle Presentation"
+handle = "cart-transform"
+type = "function"
+
+  [extensions.build]
+  path = "dist/index.wasm"
+  watch = ["src/**/*.js"]
+
+  [extensions.input]
+  variables = { api = "cart-transform", api_type = "CartTransformRunResult" }

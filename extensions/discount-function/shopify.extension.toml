@@ -1,0 +1,18 @@
+api_version = "2025-04"
+
+[[extensions]]
+name = "CartMind Bundle Discount"
+handle = "discount-function"
+type = "function"
+
+  [extensions.build]
+  command = "node --input-type=module --eval 'import(\"./src/run.js\").then(m => m.run ? process.exit(0) : process.exit(1))' 2>/dev/null || true"
+  path = "dist/index.wasm"
+  watch = ["src/**/*.js"]
+
+  [extensions.input]
+  variables = { api = "cart-discount", api_type = "CartDiscountReductionsGenerateRunResult" }
+
+  [[extensions.metafields]]
+  namespace = "cartmind"
+  key = "bundle_projection"

@@ -237,3 +237,33 @@ export function buildCheckoutGuidanceRenderedEvent(input: {
     },
   });
 }
+
+export function buildBundleOutcomeEvaluatedEvent(input: {
+  shop: string;
+  outcomeId: string;
+  ruleId: string;
+  status: string;
+  projectionVersion: number;
+  selectedOutcomeCount: number;
+  qualifiedLineCount: number;
+  hasDiscount: boolean;
+  cartToken?: string;
+  sessionId?: string;
+}) {
+  return buildIntegrationHealthEvent({
+    shop: input.shop,
+    surface: "function",
+    sessionId: input.sessionId,
+    cartToken: input.cartToken,
+    eventType: "bundle_outcome_evaluated",
+    details: {
+      outcomeId: input.outcomeId,
+      ruleId: input.ruleId,
+      status: input.status,
+      projectionVersion: input.projectionVersion,
+      selectedOutcomeCount: input.selectedOutcomeCount,
+      qualifiedLineCount: input.qualifiedLineCount,
+      hasDiscount: input.hasDiscount,
+    },
+  });
+}

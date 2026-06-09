@@ -12,6 +12,7 @@ import {
   type BundleRuleRecord,
   type CartBundleItem,
 } from "../knowledge-graph/bundles";
+import type { BundleStorefrontOutcome } from "../ai/schemas";
 
 export type BundleMatchStatus = "qualified" | "nearly_complete" | "partial" | "not_applicable";
 
@@ -438,4 +439,201 @@ export async function detectBundlesForShop(
 ): Promise<BundleDetectionResult> {
   const input = await buildBundleDetectionRequest(shop, cartItems);
   return detectBundles(input);
+}
+
+// ---------------------------------------------------------------------------
+// Storefront outcome projection (T046)
+// ---------------------------------------------------------------------------
+
+export type BundleProjectionResolutionStrategy =
+  | "merchant_priority"
+  | "best_savings"
+  | "non_stackable_first";
+
+export interface BundleStorefrontOutcomeProjection {
+  shop: string;
+  cartToken?: string;
+  generatedAt: string;
+  projectionVersion: number;
+  outcomes: BundleStorefrontOutcome[];
+  resolution: {
+    strategy: BundleProjectionResolutionStrategy;
+    selectedOutcomeIds: string[];
+    rejectedOutcomeIds: string[];
+  };
+}
+
+const SUPPORTED_PROJECTION_VERSION = 1;
+
+function matchStatusToOutcomeStatus(
+  status: BundleMatchStatus,
+  isExpired: boolean,
+): BundleStorefrontOutcome["status"] {
+  if (isExpired) return "expired";
+  switch (status) {
+    case "qualified":
+      return "qualified";
+    case "nearly_complete":
+    case "partial":
+      return "partial";
+    case "not_applicable":
+      return "ineligible";
+  }
+}
+
+function buildOutcomeDiscount(
+  match: BundleMatch,
+): BundleStorefrontOutcome["discount"] | undefined {
+  if (match.status !== "qualified") return undefined;
+  const value = Number.parseFloat(match.savings.discountValue);
+  if (!Number.isFinite(value) || value <= 0) return undefined;
+
+  const isPercentage = match.savings.discountType === BundleDiscountType.PERCENTAGE;
+  const displayLabel = isPercentage ? `${value}% off` : `Save ${match.savings.discountValue}`;
+
+  return {
+    type: isPercentage ? "percentage" : "fixed",
+    value,
+    displayLabel,
+  };
+}
+
+function buildOutcomePresentation(match: BundleMatch): BundleStorefrontOutcome["presentation"] {
+  const componentNames = match.matchedComponents
+    .filter((c) => c.matchedQuantity > 0)
+    .map((c) => c.label)
+    .join(", ");
+
+  const discount = buildOutcomeDiscount(match);
+  const savingsSummary = discount
+    ? `${discount.displayLabel} when you complete your bundle`
+    : undefined;
+
+  return {
+    bundleTitle: match.label,
+    componentSummary: componentNames || match.label,
+    ...(savingsSummary ? { savingsSummary } : {}),
+    lineMergeEligible: match.status === "qualified" && match.qualifiedCartItemIds.length > 1,
+  };
+}
+
+/**
+ * Resolves overlapping qualified outcomes by applying the given strategy.
+ * Returns `{ selectedIds, rejectedIds }`.
+ */
+function resolveOverlaps(
+  qualified: BundleMatch[],
+  strategy: BundleProjectionResolutionStrategy,
+): { selectedIds: string[]; rejectedIds: string[] } {
+  if (qualified.length <= 1) {
+    return {
+      selectedIds: qualified.map((m) => m.bundleKey),
+      rejectedIds: [],
+    };
+  }
+
+  // Build a list of groups: each group contains overlapping matches
+  const overlapping = qualified.filter((m) => m.competitionGroupKeys.length > 0);
+  const nonOverlapping = qualified.filter((m) => m.competitionGroupKeys.length === 0);
+
+  let winnerPerGroup: BundleMatch[] = [];
+  const processedKeys = new Set<string>();
+
+  for (const match of overlapping) {
+    if (processedKeys.has(match.bundleKey)) continue;
+
+    const group = overlapping.filter(
+      (candidate) =>
+        candidate.bundleKey === match.bundleKey
+        || match.competitionGroupKeys.includes(candidate.bundleKey),
+    );
+
+    group.forEach((m) => processedKeys.add(m.bundleKey));
+
+    let winner: BundleMatch;
+    if (strategy === "best_savings") {
+      winner = group.slice().sort((a, b) => {
+        const aVal = Number.parseFloat(a.savings.discountValue);
+        const bVal = Number.parseFloat(b.savings.discountValue);
+        return (Number.isFinite(bVal) ? bVal : 0) - (Number.isFinite(aVal) ? aVal : 0);
+      })[0];
+    } else {
+      // merchant_priority / non_stackable_first → lowest priority number wins
+      winner = group.slice().sort((a, b) => a.priority - b.priority)[0];
+    }
+
+    winnerPerGroup.push(winner);
+  }
+
+  const selected = [...nonOverlapping, ...winnerPerGroup];
+  const selectedKeys = new Set(selected.map((m) => m.bundleKey));
+  const rejected = qualified.filter((m) => !selectedKeys.has(m.bundleKey));
+
+  return {
+    selectedIds: selected.map((m) => m.bundleKey),
+    rejectedIds: rejected.map((m) => m.bundleKey),
+  };
+}
+
+export function projectBundleStorefrontOutcomes(input: {
+  shop: string;
+  cartToken?: string;
+  detectionResult: BundleDetectionResult;
+  strategy?: BundleProjectionResolutionStrategy;
+  projectionVersion?: number;
+  ruleVersionMap?: Record<string, number>;
+  expiresAtMap?: Record<string, string>;
+  now?: Date;
+}): BundleStorefrontOutcomeProjection {
+  const {
+    shop,
+    cartToken,
+    detectionResult,
+    strategy = "merchant_priority",
+    projectionVersion = SUPPORTED_PROJECTION_VERSION,
+    ruleVersionMap = {},
+    expiresAtMap = {},
+  } = input;
+  const now = input.now ?? new Date();
+
+  const outcomes: BundleStorefrontOutcome[] = detectionResult.matches.map((match) => {
+    const expiresAtStr = expiresAtMap[match.bundleKey];
+    const isExpired = expiresAtStr ? new Date(expiresAtStr) <= now : false;
+    const status = matchStatusToOutcomeStatus(match.status, isExpired);
+    const discount = buildOutcomeDiscount(match);
+    const presentation = buildOutcomePresentation(match);
+
+    return {
+      outcomeId: match.bundleKey,
+      ruleId: match.bundleKey,
+      ruleVersion: ruleVersionMap[match.bundleKey] ?? 0,
+      status,
+      priority: match.priority,
+      qualifiedLineIds: match.qualifiedCartItemIds,
+      missingRequirements: match.missingComponents.map((mc) => ({
+        label: mc.label,
+        quantityRequired: mc.requiredQuantity,
+        quantityPresent: mc.requiredQuantity - mc.remainingQuantity,
+      })),
+      ...(discount ? { discount } : {}),
+      presentation,
+      ...(expiresAtStr ? { expiresAt: expiresAtStr } : {}),
+    } satisfies BundleStorefrontOutcome;
+  });
+
+  const qualifiedMatches = detectionResult.matches.filter((m) => m.status === "qualified");
+  const { selectedIds, rejectedIds } = resolveOverlaps(qualifiedMatches, strategy);
+
+  return {
+    shop,
+    ...(cartToken ? { cartToken } : {}),
+    generatedAt: now.toISOString(),
+    projectionVersion,
+    outcomes,
+    resolution: {
+      strategy,
+      selectedOutcomeIds: selectedIds,
+      rejectedOutcomeIds: rejectedIds,
+    },
+  };
 }

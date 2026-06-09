@@ -1,0 +1,21 @@
+query RunInput {
+  cart {
+    attribute(key: "cartmind_projection") {
+      value
+    }
+    lines(first: 250) {
+      nodes {
+        id
+        quantity
+        merchandise {
+          ... on ProductVariant {
+            id
+            product {
+              id
+            }
+          }
+        }
+      }
+    }
+  }
+}

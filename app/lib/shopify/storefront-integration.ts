@@ -239,3 +239,68 @@ export type {
   CheckoutGuidancePlacement,
   BundleStorefrontOutcome,
 };
+
+// ---------------------------------------------------------------------------
+// Bundle storefront presentation mapping (T047)
+// ---------------------------------------------------------------------------
+
+export function buildBundleStorefrontPresentationItems(
+  outcomes: BundleStorefrontOutcome[],
+): CheckoutGuidanceItem[] {
+  const items: CheckoutGuidanceItem[] = [];
+
+  for (const outcome of outcomes) {
+    if (outcome.status === "ineligible" || outcome.status === "conflict") continue;
+
+    const presentation = outcome.presentation;
+    if (!presentation) continue;
+
+    if (outcome.status === "qualified") {
+      const discount = outcome.discount;
+      const message = discount
+        ? `${presentation.componentSummary} — ${discount.displayLabel}`
+        : presentation.componentSummary;
+
+      items.push({
+        guidanceId: `bundle_offer_${outcome.outcomeId}`,
+        type: "bundle_offer",
+        severity: "info",
+        priority: outcome.priority,
+        title: presentation.bundleTitle,
+        message,
+        relatedLineIds: outcome.qualifiedLineIds,
+        ...(presentation.savingsSummary
+          ? {
+              action: {
+                type: "add_item",
+                label: presentation.savingsSummary,
+              },
+            }
+          : {}),
+        ...(outcome.expiresAt ? { expiresAt: outcome.expiresAt } : {}),
+      } satisfies CheckoutGuidanceItem);
+    } else if (outcome.status === "partial" || outcome.status === "expired") {
+      const missingLabels = outcome.missingRequirements
+        .filter((r) => r.label)
+        .map((r) => r.label as string)
+        .join(", ");
+
+      const message = missingLabels
+        ? `Add ${missingLabels} to complete your bundle`
+        : `Complete your bundle for additional savings`;
+
+      items.push({
+        guidanceId: `bundle_offer_${outcome.outcomeId}`,
+        type: "bundle_offer",
+        severity: "warning",
+        priority: outcome.priority,
+        title: presentation.bundleTitle,
+        message,
+        relatedLineIds: outcome.qualifiedLineIds,
+        ...(outcome.expiresAt ? { expiresAt: outcome.expiresAt } : {}),
+      } satisfies CheckoutGuidanceItem);
+    }
+  }
+
+  return items;
+}

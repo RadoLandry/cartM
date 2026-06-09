@@ -123,19 +123,19 @@
 
 ### Tests for User Story 4
 
-- [ ] T043 [P] [US4] Add bundle storefront outcome unit tests for full, partial, overlapping, expired, conflict, and malformed projections in tests/unit/cart-intelligence/bundle-storefront-outcomes.test.ts
-- [ ] T044 [P] [US4] Add discount function fixture tests for selected qualified outcomes and no-discount invalid projections in extensions/discount-function/src/run.test.js
-- [ ] T045 [P] [US4] Add cart transform function fixture tests for line merge eligibility and component presentation in extensions/cart-transform/src/run.test.js
+- [X] T043 [P] [US4] Add bundle storefront outcome unit tests for full, partial, overlapping, expired, conflict, and malformed projections in tests/unit/cart-intelligence/bundle-storefront-outcomes.test.ts
+- [X] T044 [P] [US4] Add discount function fixture tests for selected qualified outcomes and no-discount invalid projections in extensions/discount-function/src/run.test.js
+- [X] T045 [P] [US4] Add cart transform function fixture tests for line merge eligibility and component presentation in extensions/cart-transform/src/run.test.js
 
 ### Implementation for User Story 4
 
-- [ ] T046 [P] [US4] Implement bundle storefront outcome projection and overlap resolution in app/lib/cart-intelligence/bundles.ts
-- [ ] T047 [US4] Implement bundle outcome storefront presentation mapping for completion prompts and savings summaries in app/lib/shopify/storefront-integration.ts
-- [ ] T048 [US4] Create discount function extension configuration and input query for compact bundle projection data in extensions/discount-function/shopify.extension.toml and extensions/discount-function/input.graphql
-- [ ] T049 [US4] Implement discount function selected-qualified-outcome logic with no external calls in extensions/discount-function/src/run.js
-- [ ] T050 [US4] Create cart transform extension configuration and input query for selected bundle presentation data in extensions/cart-transform/shopify.extension.toml and extensions/cart-transform/input.graphql
-- [ ] T051 [US4] Implement cart transform line merge and component summary logic with no external calls in extensions/cart-transform/src/run.js
-- [ ] T052 [US4] Emit bundle_outcome_evaluated integration health events in app/lib/analytics/cart-events.ts
+- [X] T046 [P] [US4] Implement bundle storefront outcome projection and overlap resolution in app/lib/cart-intelligence/bundles.ts
+- [X] T047 [US4] Implement bundle outcome storefront presentation mapping for completion prompts and savings summaries in app/lib/shopify/storefront-integration.ts
+- [X] T048 [US4] Create discount function extension configuration and input query for compact bundle projection data in extensions/discount-function/shopify.extension.toml and extensions/discount-function/input.graphql
+- [X] T049 [US4] Implement discount function selected-qualified-outcome logic with no external calls in extensions/discount-function/src/run.js
+- [X] T050 [US4] Create cart transform extension configuration and input query for selected bundle presentation data in extensions/cart-transform/shopify.extension.toml and extensions/cart-transform/input.graphql
+- [X] T051 [US4] Implement cart transform line merge and component summary logic with no external calls in extensions/cart-transform/src/run.js
+- [X] T052 [US4] Emit bundle_outcome_evaluated integration health events in app/lib/analytics/cart-events.ts
 
 **Checkpoint**: All user stories are independently functional, and bundle outcomes connect storefront prompts to checkout discounts/presentation.
 
