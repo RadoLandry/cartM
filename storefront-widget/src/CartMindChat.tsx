@@ -1,6 +1,9 @@
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
+import { StorefrontGuidanceResponseSchema } from "../../app/lib/ai/schemas";
+import type { StorefrontGuidancePayload } from "../../app/lib/ai/schemas";
 import type { StorefrontChatMountConfig } from "./types";
+import type { StorefrontCartSnapshot } from "./types";
 import { CartMindSurface } from "./components/integration/CartMindSurface";
 import { ChatPanel } from "./components/ChatPanel";
 import {
@@ -8,6 +11,8 @@ import {
   useChatSessionState,
 } from "./hooks/useChatSessionState";
 import { useStorefrontChat } from "./hooks/useStorefrontChat";
+import { useCartStateSync } from "./hooks/useCartStateSync";
+import { useCartSurfaceLifecycle } from "./hooks/useCartSurfaceLifecycle";
 
 function getOrCreateBrowserSessionKey(shop: string, surface: StorefrontChatMountConfig["surface"]) {
   const storageKey = `cartmind-chat:browser:${shop}:${surface}`;
@@ -72,8 +77,77 @@ async function readLatestStorefrontCart(config: StorefrontChatMountConfig) {
   };
 }
 
+async function fetchStorefrontGuidance(
+  cart: StorefrontCartSnapshot,
+  config: StorefrontChatMountConfig,
+  sessionId: string,
+): Promise<StorefrontGuidancePayload | null> {
+  if (typeof window === "undefined") return null;
+
+  const recommendationsPath = config.recommendationsPath ?? "/api/ai/recommendations";
+  const url = config.appBaseUrl
+    ? `${config.appBaseUrl.replace(/\/$/, "")}${recommendationsPath.startsWith("/") ? recommendationsPath : `/${recommendationsPath}`}`
+    : recommendationsPath;
+
+  try {
+    const response = await window.fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({
+        shop: config.shop,
+        surface: config.surface,
+        placementId: config.placementId ?? `${config.surface}:default`,
+        sessionId,
+        cart,
+        syncSource: "cart_js",
+        requestedAt: new Date().toISOString(),
+      }),
+    });
+
+    if (!response.ok) return null;
+
+    const raw = await response.json().catch(() => null);
+    const parsed = StorefrontGuidanceResponseSchema.safeParse(raw);
+
+    if (!parsed.success || !parsed.data.ok) return null;
+
+    return parsed.data.payload;
+  } catch {
+    return null;
+  }
+}
+
 export function CartMindChat({ config }: CartMindChatProps) {
   const [sessionId] = useState(() => getOrCreateBrowserSessionKey(config.shop, config.surface));
+  const [latestGuidance, setLatestGuidance] = useState<StorefrontGuidancePayload | undefined>(
+    config.guidance,
+  );
+  const latestCartRef = useRef<StorefrontCartSnapshot>(config.cart);
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
+
+  const refreshGuidance = useCallback(async (cart: StorefrontCartSnapshot) => {
+    const payload = await fetchStorefrontGuidance(cart, config, sessionIdRef.current);
+    if (payload) {
+      setLatestGuidance(payload);
+    }
+  }, [config]);
+
+  const { syncFromMutation } = useCartStateSync({
+    initialCart: config.cart,
+    surface: config.surface,
+    active: true,
+    onCartChanged: (snapshot) => {
+      latestCartRef.current = snapshot;
+      void refreshGuidance(snapshot);
+    },
+  });
+
+  useCartSurfaceLifecycle(config, {
+    onStructuralChange: syncFromMutation,
+  });
+
   const { state, dispatch } = useChatSessionState({
     shop: config.shop,
     surface: config.surface,
@@ -85,11 +159,17 @@ export function CartMindChat({ config }: CartMindChatProps) {
     config,
     state,
     dispatch,
-    resolveCartSnapshot: async () => await readLatestStorefrontCart(config),
+    resolveCartSnapshot: async () => latestCartRef.current.items.length > 0
+      ? latestCartRef.current
+      : await readLatestStorefrontCart(config),
   });
 
+  const configWithLatestGuidance = latestGuidance !== config.guidance
+    ? { ...config, guidance: latestGuidance }
+    : config;
+
   return (
-    <CartMindSurface config={config}>
+    <CartMindSurface config={configWithLatestGuidance}>
       <ChatPanel
         state={state}
         launcherLabel={config.labels?.launcherLabel || config.launcherLabel || "Ask CartMind"}

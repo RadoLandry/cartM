@@ -73,18 +73,18 @@
 
 ### Tests for User Story 2
 
-- [ ] T025 [P] [US2] Add cart state synchronization unit tests for /cart.js refresh, stale snapshots, and malformed cart lines in tests/unit/storefront/cart-state-sync.test.ts
-- [ ] T026 [P] [US2] Add fetch interception, cart notification synchronization, and notification no-render target tests in tests/unit/storefront/cart-fetch-interception.test.ts
-- [ ] T027 [P] [US2] Add integration health event unit tests for cart_sync_started, cart_sync_completed, cart_sync_failed, and guidance_impressed in tests/unit/storefront/integration-health-events.test.ts
+- [X] T025 [P] [US2] Add cart state synchronization unit tests for /cart.js refresh, stale snapshots, and malformed cart lines in tests/unit/storefront/cart-state-sync.test.ts
+- [X] T026 [P] [US2] Add fetch interception, cart notification synchronization, and notification no-render target tests in tests/unit/storefront/cart-fetch-interception.test.ts
+- [X] T027 [P] [US2] Add integration health event unit tests for cart_sync_started, cart_sync_completed, cart_sync_failed, and guidance_impressed in tests/unit/storefront/integration-health-events.test.ts
 
 ### Implementation for User Story 2
 
-- [ ] T028 [P] [US2] Implement cart snapshot normalization from /cart.js payloads in storefront-widget/src/hooks/useCartStateSync.ts
-- [ ] T029 [US2] Implement fetch interception for /cart/add.js, /cart/change.js, /cart/update.js, and /cart/clear.js without changing request semantics in storefront-widget/src/hooks/useCartStateSync.ts
-- [ ] T030 [US2] Implement MutationObserver refresh triggers for AJAX drawer replacement and drawer open/close class changes in storefront-widget/src/hooks/useCartSurfaceLifecycle.ts
-- [ ] T031 [US2] Implement bounded fallback polling while drawer or cart page surfaces are active in storefront-widget/src/hooks/useCartStateSync.ts
-- [ ] T032 [US2] Refresh storefront guidance payloads after cart sync using validated backend response handling in storefront-widget/src/CartMindChat.tsx
-- [ ] T033 [US2] Emit cart synchronization and guidance impression events through app/lib/analytics/cart-events.ts
+- [X] T028 [P] [US2] Implement cart snapshot normalization from /cart.js payloads in storefront-widget/src/hooks/useCartStateSync.ts
+- [X] T029 [US2] Implement fetch interception for /cart/add.js, /cart/change.js, /cart/update.js, and /cart/clear.js without changing request semantics in storefront-widget/src/hooks/useCartStateSync.ts
+- [X] T030 [US2] Implement MutationObserver refresh triggers for AJAX drawer replacement and drawer open/close class changes in storefront-widget/src/hooks/useCartSurfaceLifecycle.ts
+- [X] T031 [US2] Implement bounded fallback polling while drawer or cart page surfaces are active in storefront-widget/src/hooks/useCartStateSync.ts
+- [X] T032 [US2] Refresh storefront guidance payloads after cart sync using validated backend response handling in storefront-widget/src/CartMindChat.tsx
+- [X] T033 [US2] Emit cart synchronization and guidance impression events through app/lib/analytics/cart-events.ts
 
 **Checkpoint**: User Stories 1 and 2 both work independently, and CartMind guidance stays current after cart changes.
 

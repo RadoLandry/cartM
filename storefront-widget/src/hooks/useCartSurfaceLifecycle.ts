@@ -16,6 +16,9 @@ export interface CartMindMountFailure {
 
 const THIRD_PARTY_SELECTOR_PREFIXES = [".fs-", ".flits-", ".kiwi-"];
 
+// Class names that indicate the cart drawer is open
+const DRAWER_OPEN_CLASS_PATTERNS = ["is-open", "is-active", "cart-open", "drawer--open", "drawer--is-open"];
+
 export function buildCartMindSurfaceHostId(surface: StorefrontChatMountConfig["surface"], placementId: string) {
   return `cartmind-${surface}-${placementId}`.replace(/[^a-z0-9_-]/gi, "-").toLowerCase();
 }
@@ -52,7 +55,13 @@ export function toGracefulMountFailure(reason: CartMindMountFailure["reason"]): 
   };
 }
 
-export function useCartSurfaceLifecycle(config: StorefrontChatMountConfig) {
+export function useCartSurfaceLifecycle(
+  config: StorefrontChatMountConfig,
+  options?: {
+    /** Called when the MutationObserver detects an AJAX drawer replacement or open/close change */
+    onStructuralChange?: () => void;
+  },
+) {
   const placementId = config.placementId ?? `${config.surface}:default`;
   const hostId = useMemo(
     () => buildCartMindSurfaceHostId(config.surface, placementId),
@@ -67,6 +76,65 @@ export function useCartSurfaceLifecycle(config: StorefrontChatMountConfig) {
       setMountStatus("hidden");
     };
   }, [hostId]);
+
+  // ---- MutationObserver for AJAX drawer replacement and open/close --------
+  useEffect(() => {
+    if (typeof window === "undefined" || !options?.onStructuralChange) return;
+
+    const target = document.body;
+    let lastOpenState: boolean | null = null;
+
+    function resolveDrawerOpenState(): boolean {
+      return DRAWER_OPEN_CLASS_PATTERNS.some((cls) =>
+        Array.from(document.querySelectorAll("[class]")).some((el) => el.classList.contains(cls)),
+      );
+    }
+
+    const observer = new MutationObserver((mutations) => {
+      let triggerSync = false;
+
+      for (const mutation of mutations) {
+        // AJAX drawer replacement: child nodes were added/removed inside a known surface container
+        if (mutation.type === "childList" && mutation.addedNodes.length > 0) {
+          for (const node of Array.from(mutation.addedNodes)) {
+            if (node instanceof HTMLElement) {
+              const tag = node.tagName?.toLowerCase();
+              if (tag === "cart-drawer" || node.id === "CartDrawer" || node.classList.contains("cart-drawer")) {
+                triggerSync = true;
+                break;
+              }
+            }
+          }
+        }
+
+        // Drawer open/close: class change on a drawer element
+        if (mutation.type === "attributes" && mutation.attributeName === "class") {
+          const currentOpenState = resolveDrawerOpenState();
+          if (currentOpenState !== lastOpenState) {
+            lastOpenState = currentOpenState;
+            if (currentOpenState) {
+              triggerSync = true;
+            }
+          }
+        }
+      }
+
+      if (triggerSync) {
+        options.onStructuralChange?.();
+      }
+    });
+
+    observer.observe(target, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [options]);
 
   return {
     hostId,

@@ -123,3 +123,87 @@ export function buildWidgetFailedEvent(input: {
     },
   });
 }
+
+export function buildCartSyncStartedEvent(input: {
+  shop: string;
+  surface: IntegrationHealthEventSurface;
+  syncSource: StorefrontCartSyncSource;
+  sessionId?: string;
+  cartToken?: string;
+}) {
+  return buildIntegrationHealthEvent({
+    shop: input.shop,
+    surface: input.surface,
+    sessionId: input.sessionId,
+    cartToken: input.cartToken,
+    syncSource: input.syncSource,
+    eventType: "cart_sync_started",
+  });
+}
+
+export function buildCartSyncCompletedEvent(input: {
+  shop: string;
+  surface: IntegrationHealthEventSurface;
+  syncSource: StorefrontCartSyncSource;
+  itemCount: number;
+  sessionId?: string;
+  cartToken?: string;
+}) {
+  return buildIntegrationHealthEvent({
+    shop: input.shop,
+    surface: input.surface,
+    sessionId: input.sessionId,
+    cartToken: input.cartToken,
+    syncSource: input.syncSource,
+    eventType: "cart_sync_completed",
+    details: {
+      itemCount: input.itemCount,
+    },
+  });
+}
+
+export function buildCartSyncFailedEvent(input: {
+  shop: string;
+  surface: IntegrationHealthEventSurface;
+  syncSource: StorefrontCartSyncSource;
+  reason: string;
+  sessionId?: string;
+  cartToken?: string;
+}) {
+  return buildIntegrationHealthEvent({
+    shop: input.shop,
+    surface: input.surface,
+    sessionId: input.sessionId,
+    cartToken: input.cartToken,
+    syncSource: input.syncSource,
+    eventType: "cart_sync_failed",
+    details: {
+      reason: input.reason,
+    },
+  });
+}
+
+export function buildGuidanceImpressedEvent(input: {
+  shop: string;
+  surface: IntegrationHealthEventSurface;
+  payloadId: string;
+  recommendationCount: number;
+  hasKitCompleteness: boolean;
+  sizeWarningCount: number;
+  sessionId?: string;
+  cartToken?: string;
+}) {
+  return buildIntegrationHealthEvent({
+    shop: input.shop,
+    surface: input.surface,
+    sessionId: input.sessionId,
+    cartToken: input.cartToken,
+    eventType: "guidance_impressed",
+    details: {
+      payloadId: input.payloadId,
+      recommendationCount: input.recommendationCount,
+      hasKitCompleteness: input.hasKitCompleteness,
+      sizeWarningCount: input.sizeWarningCount,
+    },
+  });
+}
