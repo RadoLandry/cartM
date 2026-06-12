@@ -59,7 +59,7 @@ function applyBundlePresentation(input) {
 
   const selectedIds = new Set(projection.resolution.selectedOutcomeIds);
   const cartLineMap = new Map(
-    (input?.cart?.lines?.nodes ?? []).map((line) => [line.id, line]),
+    (input?.cart?.lines ?? []).map((line) => [line.id, line]),
   );
 
   const operations = [];

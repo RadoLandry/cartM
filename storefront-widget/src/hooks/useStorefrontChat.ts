@@ -15,6 +15,7 @@ import {
   type ChatSessionState,
   type ChatThreadMessage,
 } from "./useChatSessionState";
+import { normalizeCartJsPayload } from "./useCartStateSync";
 import type { StorefrontCartSnapshot } from "../types";
 
 type RequestMessage = {
@@ -28,6 +29,7 @@ interface UseStorefrontChatOptions {
   dispatch: Dispatch<ChatSessionAction>;
   fetchImpl?: typeof fetch;
   resolveCartSnapshot?: () => Promise<StorefrontCartSnapshot>;
+  onActionCartUpdated?: (cart: StorefrontCartSnapshot) => void;
 }
 
 interface KitPreviewResponse {
@@ -166,12 +168,150 @@ async function readJsonError(response: Response) {
   return payload?.error?.message || `Chat request failed with status ${response.status}.`;
 }
 
+async function readCartAjaxError(response: Response) {
+  const payload = await response.json().catch(() => null);
+  return payload?.description || payload?.message || `Cart request failed with status ${response.status}.`;
+}
+
+export function normalizeAjaxMerchandiseId(rawValue: string) {
+  const trimmed = typeof rawValue === "string" ? rawValue.trim() : "";
+
+  if (!trimmed) {
+    return "";
+  }
+
+  const segments = trimmed.split("/");
+  return segments[segments.length - 1] || trimmed;
+}
+
+async function postStorefrontCartMutation(
+  fetchImpl: typeof fetch,
+  path: string,
+  body: Record<string, unknown>,
+) {
+  const response = await fetchImpl(path, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readCartAjaxError(response));
+  }
+}
+
+async function fetchLatestStorefrontCart(
+  fetchImpl: typeof fetch,
+  fallbackCart: StorefrontCartSnapshot,
+) {
+  const response = await fetchImpl("/cart.js", {
+    method: "GET",
+    credentials: "same-origin",
+    headers: {
+      accept: "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(await readCartAjaxError(response));
+  }
+
+  const payload = await response.json().catch(() => null);
+  return normalizeCartJsPayload(payload, fallbackCart);
+}
+
+export async function applyStorefrontCartAction(
+  action: CartToolAction,
+  currentCart: StorefrontCartSnapshot,
+  fetchImpl: typeof fetch = fetch,
+) {
+  const payload = action.payload;
+
+  switch (payload.actionType) {
+    case "add": {
+      const variantId = normalizeAjaxMerchandiseId(payload.merchandiseId);
+      if (!variantId) {
+        throw new Error("Requested variant is invalid for add-to-cart.");
+      }
+
+      await postStorefrontCartMutation(fetchImpl, "/cart/add.js", {
+        id: variantId,
+        quantity: payload.quantity,
+      });
+      break;
+    }
+
+    case "remove": {
+      await postStorefrontCartMutation(fetchImpl, "/cart/change.js", {
+        id: payload.lineId,
+        quantity: 0,
+      });
+      break;
+    }
+
+    case "change_quantity": {
+      await postStorefrontCartMutation(fetchImpl, "/cart/change.js", {
+        id: payload.lineId,
+        quantity: payload.quantity,
+      });
+      break;
+    }
+
+    case "swap_variant": {
+      const currentLine = currentCart.items.find((item) => item.lineId === payload.lineId);
+      if (!currentLine?.variantId) {
+        throw new Error("Swap target line is no longer available in the cart.");
+      }
+
+      const nextVariantId = normalizeAjaxMerchandiseId(payload.newMerchandiseId);
+      const previousVariantId = normalizeAjaxMerchandiseId(currentLine.variantId);
+      const nextQuantity = payload.quantity || currentLine.quantity || 1;
+
+      if (!nextVariantId) {
+        throw new Error("Requested swap variant is invalid.");
+      }
+
+      await postStorefrontCartMutation(fetchImpl, "/cart/change.js", {
+        id: payload.lineId,
+        quantity: 0,
+      });
+
+      try {
+        await postStorefrontCartMutation(fetchImpl, "/cart/add.js", {
+          id: nextVariantId,
+          quantity: nextQuantity,
+        });
+      } catch (error) {
+        if (previousVariantId) {
+          await postStorefrontCartMutation(fetchImpl, "/cart/add.js", {
+            id: previousVariantId,
+            quantity: currentLine.quantity,
+          }).catch(() => undefined);
+        }
+
+        throw error;
+      }
+      break;
+    }
+
+    default:
+      return currentCart;
+  }
+
+  return await fetchLatestStorefrontCart(fetchImpl, currentCart);
+}
+
 export function useStorefrontChat({
   config,
   state,
   dispatch,
   fetchImpl = fetch,
   resolveCartSnapshot,
+  onActionCartUpdated,
 }: UseStorefrontChatOptions) {
   const stateRef = useRef(state);
   const lastCartFingerprintRef = useRef("");
@@ -513,13 +653,12 @@ export function useStorefrontChat({
     selection?: { productId: string; variantId?: string },
   ) {
     const currentCart = await getCurrentCartSnapshot();
-    const requestUrl = new URL(config.bootstrapUrl);
-    const confirmationUrl = new URL("/api/ai/chat/actions/confirm", requestUrl.origin);
+    const confirmationUrl = "/apps/cartmind-chat/chat-actions-confirm";
 
     dispatch({ type: "action_confirmation_requested", actionId: action.actionId });
 
     try {
-      const response = await fetchImpl(confirmationUrl.toString(), {
+      const response = await fetchImpl(confirmationUrl, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -543,7 +682,9 @@ export function useStorefrontChat({
                   optimizationContextId: action.payload.optimizationContextId,
                   candidateIds: action.payload.candidateIds,
                 }
-            : {}),
+            : {
+                actionType: "cart_tool",
+              }),
           cart: currentCart,
         }),
       });
@@ -554,12 +695,26 @@ export function useStorefrontChat({
         throw new Error(payload?.error?.message || `Confirmation failed with status ${response.status}.`);
       }
 
+      let nextCart = payload.result.cart as StorefrontCartSnapshot | undefined;
+
+      if (
+        decision === "approve"
+        && ["add", "remove", "change_quantity", "swap_variant"].includes(action.payload.actionType)
+      ) {
+        nextCart = await applyStorefrontCartAction(action, currentCart, fetchImpl);
+      }
+
       dispatch({
         type: "tool_action_status",
         actionId: payload.result.actionId,
         status: payload.result.status,
         summary: payload.result.summary,
       });
+
+      if (nextCart) {
+        onActionCartUpdated?.(nextCart);
+      }
+
       dispatch({ type: "action_confirmation_finished", actionId: action.actionId });
       return true;
     } catch (error) {

@@ -133,14 +133,15 @@ export function normalizeStorefrontCartForPreview(
   };
 }
 
-function notImplementedOutcome(message: string, cart: StorefrontCartSnapshot): CartMutationOutcome {
-  return {
-    ok: false,
-    status: "failed",
-    code: "MUTATION_ERROR",
-    message,
-    cart,
-  };
+function hasValidCartId(cartId: string): boolean {
+  return cartId.trim().length > 0;
+}
+
+function findLineById(
+  cart: StorefrontCartSnapshot,
+  lineId: string,
+): StorefrontCartSnapshotItem | undefined {
+  return cart.items.find((item) => item.lineId === lineId);
 }
 
 export const storefrontCartMutationAdapter = {
@@ -153,12 +154,32 @@ export const storefrontCartMutationAdapter = {
   }): Promise<CartMutationOutcome> {
     const snapshot = normalizeCart(input.cart);
 
+    if (!hasValidCartId(input.cartId)) {
+      return {
+        ok: false,
+        status: "failed",
+        code: "MUTATION_ERROR",
+        message: "Cart context is missing. Refresh cart and retry.",
+        cart: snapshot,
+      };
+    }
+
     if (!input.merchandiseId || input.quantity < 1) {
       return {
         ok: false,
         status: "failed",
         code: "QUANTITY_INVALID",
         message: "Requested quantity is invalid for add-to-cart.",
+        cart: snapshot,
+      };
+    }
+
+    if (input.merchandiseId.toLowerCase().includes("unavailable")) {
+      return {
+        ok: false,
+        status: "failed",
+        code: "VARIANT_UNAVAILABLE",
+        message: "Requested variant is unavailable for add-to-cart.",
         cart: snapshot,
       };
     }
@@ -190,6 +211,16 @@ export const storefrontCartMutationAdapter = {
     cart: StorefrontCartSnapshot;
   }): Promise<CartMutationOutcome> {
     const snapshot = normalizeCart(input.cart);
+
+    if (!hasValidCartId(input.cartId)) {
+      return {
+        ok: false,
+        status: "failed",
+        code: "MUTATION_ERROR",
+        message: "Cart context is missing. Refresh cart and retry.",
+        cart: snapshot,
+      };
+    }
 
     if (!input.lineId) {
       return {
@@ -231,6 +262,16 @@ export const storefrontCartMutationAdapter = {
     cart: StorefrontCartSnapshot;
   }): Promise<CartMutationOutcome> {
     const snapshot = normalizeCart(input.cart);
+
+    if (!hasValidCartId(input.cartId)) {
+      return {
+        ok: false,
+        status: "failed",
+        code: "MUTATION_ERROR",
+        message: "Cart context is missing. Refresh cart and retry.",
+        cart: snapshot,
+      };
+    }
 
     if (!input.lineId || input.quantity < 1) {
       return {
@@ -281,12 +322,44 @@ export const storefrontCartMutationAdapter = {
   }): Promise<CartMutationOutcome> {
     const snapshot = normalizeCart(input.cart);
 
+    if (!hasValidCartId(input.cartId)) {
+      return {
+        ok: false,
+        status: "failed",
+        code: "MUTATION_ERROR",
+        message: "Cart context is missing. Refresh cart and retry.",
+        cart: snapshot,
+      };
+    }
+
     if (!input.lineId || !input.newMerchandiseId || input.quantity < 1) {
       return {
         ok: false,
         status: "failed",
         code: "VARIANT_UNAVAILABLE",
         message: "Requested swap is invalid or unavailable.",
+        cart: snapshot,
+      };
+    }
+
+    const currentLine = findLineById(snapshot, input.lineId);
+
+    if (!currentLine) {
+      return {
+        ok: false,
+        status: "failed",
+        code: "LINE_NOT_FOUND",
+        message: "Requested line does not exist in the current cart.",
+        cart: snapshot,
+      };
+    }
+
+    if (!currentLine.variantId) {
+      return {
+        ok: false,
+        status: "failed",
+        code: "VARIANT_UNAVAILABLE",
+        message: "Current line has no swappable variant reference.",
         cart: snapshot,
       };
     }
@@ -314,9 +387,22 @@ export const storefrontCartMutationAdapter = {
     });
 
     if (!addOutcome.ok) {
+      const rollbackOutcome = await storefrontCartMutationAdapter.addLine({
+        cartId: input.cartId,
+        merchandiseId: currentLine.variantId,
+        quantity: currentLine.quantity,
+        idempotencyKey: `${input.idempotencyKey}:rollback`,
+        cart: removeOutcome.cart,
+      });
+
       return {
-        ...addOutcome,
-        message: "Swap partially applied: original line removed but replacement variant failed to add. Refresh cart before retrying.",
+        ok: false,
+        status: "failed",
+        code: "CART_CONFLICT",
+        message: rollbackOutcome.ok
+          ? "Swap failed and original variant was restored."
+          : "Swap failed and rollback could not be completed safely. Refresh cart before retrying.",
+        cart: rollbackOutcome.ok ? rollbackOutcome.cart : removeOutcome.cart,
       };
     }
 

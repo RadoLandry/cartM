@@ -1,4 +1,5 @@
-api_version = "2025-04"
+api_version = "2025-10"
+uid = "fddfc370-27c7-c30f-4ee0-a927194e2accadefd40c"
 
 [[extensions]]
 name = "CartMind Checkout Guidance"
@@ -8,10 +9,6 @@ type = "ui_extension"
   [[extensions.targeting]]
   module = "./src/Checkout.tsx"
   target = "purchase.checkout.block.render"
-
-  [[extensions.targeting]]
-  module = "./src/Checkout.tsx"
-  target = "purchase.checkout.cart-line-item.render-after"
 
   [extensions.settings]
     [[extensions.settings.fields]]

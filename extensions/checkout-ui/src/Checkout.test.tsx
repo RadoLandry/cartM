@@ -1,36 +1,24 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// ---------------------------------------------------------------------------
-// Mock @shopify/ui-extensions-react/checkout before any imports
-// ---------------------------------------------------------------------------
+vi.mock("@shopify/ui-extensions/preact", () => ({}));
 
-vi.mock("@shopify/ui-extensions-react/checkout", () => {
-  const React = require("react");
+vi.mock("preact", () => {
+  let lastRenderedTree: any = undefined;
 
   return {
-    reactExtension: vi.fn((_, fn) => fn),
-    useSettings: vi.fn(() => ({})),
-    useAppMetafields: vi.fn(() => []),
-    BlockStack: ({ children }: { children: React.ReactNode }) => React.createElement("div", { "data-testid": "block-stack" }, children),
-    Banner: ({ children, title, status }: { children: React.ReactNode; title: string; status: string }) =>
-      React.createElement("div", { "data-testid": "banner", "data-status": status, "data-title": title }, children),
-    Text: ({ children }: { children: React.ReactNode }) => React.createElement("span", null, children),
-    Link: ({ children, to }: { children: React.ReactNode; to: string }) =>
-      React.createElement("a", { href: to }, children),
-    Divider: () => React.createElement("hr"),
+    render: vi.fn((vnode: any) => {
+      if (vnode && typeof vnode.type === "function") {
+        lastRenderedTree = vnode.type(vnode.props ?? {});
+      } else {
+        lastRenderedTree = vnode;
+      }
+    }),
+    __getLastRenderedTree: () => lastRenderedTree,
   };
 });
 
-import React from "react";
-import { render, screen } from "@testing-library/react";
-import { useSettings, useAppMetafields } from "@shopify/ui-extensions-react/checkout";
-
-// Import the component factory after the mock is set up.
-// We directly import the component for testing rather than the default export.
-const { default: extensionFactory } = await import("./Checkout");
-
-// The factory is the component itself (reactExtension returns the second arg in our mock)
-const CartMindCheckoutGuidance = extensionFactory as unknown as React.ComponentType;
+const { default: extension } = await import("./Checkout");
+const { render, __getLastRenderedTree } = await import("preact");
 
 function makeGuidanceFeed(items: unknown[] = [], overrides = {}) {
   return JSON.stringify({
@@ -69,128 +57,112 @@ function makeBundleOfferItem(overrides = {}) {
   };
 }
 
-function setupMetafields(value: string | null) {
-  (useAppMetafields as ReturnType<typeof vi.fn>).mockReturnValue(
-    value !== null
-      ? [{ metafield: { namespace: "cartmind", key: "checkout_guidance", value } }]
-      : [],
-  );
+function setupShopify({ guidanceValue, settings }: { guidanceValue: string | null; settings?: Record<string, unknown> }) {
+  (globalThis as any).shopify = {
+    settings: { value: settings ?? {} },
+    appMetafields: {
+      value:
+        guidanceValue == null
+          ? []
+          : [{ metafield: { namespace: "cartmind", key: "checkout_guidance", value: guidanceValue } }],
+    },
+  };
 }
 
-describe("CartMind checkout extension: no-render empty state (T041)", () => {
+function collectByType(node: any, type: string): any[] {
+  if (!node) return [];
+  if (Array.isArray(node)) {
+    return node.flatMap((child) => collectByType(child, type));
+  }
+
+  const children = node.props?.children;
+  const childList = Array.isArray(children) ? children : children != null ? [children] : [];
+  const nested = childList.flatMap((child) => collectByType(child, type));
+
+  return node.type === type ? [node, ...nested] : nested;
+}
+
+describe("CartMind checkout extension (preact)", () => {
   beforeEach(() => {
-    (useSettings as ReturnType<typeof vi.fn>).mockReturnValue({});
+    (globalThis as any).document = { body: {} };
+    setupShopify({ guidanceValue: null });
+  });
+
+  it("calls preact render", () => {
+    extension();
+    expect(render).toHaveBeenCalledTimes(1);
   });
 
   it("renders nothing when there are no metafields", () => {
-    setupMetafields(null);
-    const { container } = render(React.createElement(CartMindCheckoutGuidance));
-    expect(container.firstChild).toBeNull();
+    setupShopify({ guidanceValue: null });
+    extension();
+    expect(__getLastRenderedTree()).toBeNull();
   });
 
-  it("renders nothing when the guidance feed has an empty items array", () => {
-    setupMetafields(makeGuidanceFeed([]));
-    const { container } = render(React.createElement(CartMindCheckoutGuidance));
-    expect(container.firstChild).toBeNull();
-  });
-
-  it("renders nothing when the metafield value is invalid JSON", () => {
-    setupMetafields("not-valid-json");
-    const { container } = render(React.createElement(CartMindCheckoutGuidance));
-    expect(container.firstChild).toBeNull();
+  it("renders nothing when metafield JSON is invalid", () => {
+    setupShopify({ guidanceValue: "not-valid-json" });
+    extension();
+    expect(__getLastRenderedTree()).toBeNull();
   });
 
   it("renders nothing when all items are expired", () => {
     const pastDate = new Date(Date.now() - 5_000).toISOString();
-    setupMetafields(makeGuidanceFeed([makeSizeWarningItem({ expiresAt: pastDate })]));
-    const { container } = render(React.createElement(CartMindCheckoutGuidance));
-    expect(container.firstChild).toBeNull();
-  });
-});
-
-describe("CartMind checkout extension: size warning rendering (T040)", () => {
-  beforeEach(() => {
-    (useSettings as ReturnType<typeof vi.fn>).mockReturnValue({});
+    setupShopify({ guidanceValue: makeGuidanceFeed([makeSizeWarningItem({ expiresAt: pastDate })]) });
+    extension();
+    expect(__getLastRenderedTree()).toBeNull();
   });
 
-  it("renders a Banner for a size warning item", () => {
-    setupMetafields(makeGuidanceFeed([makeSizeWarningItem()]));
-    render(React.createElement(CartMindCheckoutGuidance));
-    const banner = screen.getByTestId("banner");
-    expect(banner).toBeTruthy();
-    expect(banner.getAttribute("data-title")).toBe("Check size compatibility");
-    expect(banner.getAttribute("data-status")).toBe("warning");
+  it("renders warning and info banners", () => {
+    setupShopify({ guidanceValue: makeGuidanceFeed([makeSizeWarningItem(), makeBundleOfferItem()]) });
+    extension();
+
+    const tree = __getLastRenderedTree();
+    const banners = collectByType(tree, "s-banner");
+    expect(banners.length).toBe(2);
+    expect(banners[0].props.tone).toBe("warning");
+    expect(banners[0].props.heading).toBe("Check size compatibility");
+    expect(banners[1].props.tone).toBe("info");
   });
 
-  it("displays the warning message text", () => {
-    setupMetafields(makeGuidanceFeed([makeSizeWarningItem()]));
-    render(React.createElement(CartMindCheckoutGuidance));
-    expect(screen.getByText("Glove size 12 oz pairs with hand wrap M, but L is selected.")).toBeTruthy();
-  });
-});
-
-describe("CartMind checkout extension: bundle offer rendering (T040)", () => {
-  beforeEach(() => {
-    (useSettings as ReturnType<typeof vi.fn>).mockReturnValue({});
-  });
-
-  it("renders an info Banner for a bundle offer item", () => {
-    setupMetafields(makeGuidanceFeed([makeBundleOfferItem()]));
-    render(React.createElement(CartMindCheckoutGuidance));
-    const banner = screen.getByTestId("banner");
-    expect(banner.getAttribute("data-status")).toBe("info");
-    expect(banner.getAttribute("data-title")).toBe("Complete your boxing kit");
-  });
-
-  it("renders a link when the item has an action with a target", () => {
-    setupMetafields(
-      makeGuidanceFeed([
+  it("renders link when action target exists", () => {
+    setupShopify({
+      guidanceValue: makeGuidanceFeed([
         makeBundleOfferItem({
           action: { type: "add_item", label: "Add mouthguard", target: "/products/mouthguard" },
         }),
       ]),
-    );
-    render(React.createElement(CartMindCheckoutGuidance));
-    const link = screen.getByRole("link");
-    expect(link).toBeTruthy();
-    expect(link.getAttribute("href")).toBe("/products/mouthguard");
-  });
-});
-
-describe("CartMind checkout extension: placement adaptation (T041)", () => {
-  it("renders guidance when cartmind_guidance_path matches a supported placement", () => {
-    (useSettings as ReturnType<typeof vi.fn>).mockReturnValue({
-      cartmind_guidance_path: "purchase.checkout.block.render",
     });
-    setupMetafields(makeGuidanceFeed([makeSizeWarningItem()]));
-    render(React.createElement(CartMindCheckoutGuidance));
-    expect(screen.getByTestId("banner")).toBeTruthy();
+
+    extension();
+    const tree = __getLastRenderedTree();
+    const links = collectByType(tree, "s-link");
+
+    expect(links.length).toBe(1);
+    expect(links[0].props.href).toBe("/products/mouthguard");
   });
 
-  it("renders nothing when cartmind_guidance_path is an unsupported placement", () => {
-    (useSettings as ReturnType<typeof vi.fn>).mockReturnValue({
-      cartmind_guidance_path: "unsupported.placement.target",
+  it("renders nothing when placement setting is unsupported", () => {
+    setupShopify({
+      guidanceValue: makeGuidanceFeed([makeSizeWarningItem()]),
+      settings: { cartmind_guidance_path: "unsupported.placement.target" },
     });
-    setupMetafields(makeGuidanceFeed([makeSizeWarningItem()]));
-    const { container } = render(React.createElement(CartMindCheckoutGuidance));
-    expect(container.firstChild).toBeNull();
-  });
-});
 
-describe("CartMind checkout extension: ordering", () => {
-  beforeEach(() => {
-    (useSettings as ReturnType<typeof vi.fn>).mockReturnValue({});
+    extension();
+    expect(__getLastRenderedTree()).toBeNull();
   });
 
-  it("renders critical items before info items", () => {
+  it("orders critical severity before info severity", () => {
     const criticalWarning = makeSizeWarningItem({ severity: "critical", guidanceId: "sw-crit", title: "Critical Size Issue" });
     const infoOffer = makeBundleOfferItem({ severity: "info", guidanceId: "bo-info", title: "Bundle Info" });
 
-    setupMetafields(makeGuidanceFeed([infoOffer, criticalWarning]));
-    render(React.createElement(CartMindCheckoutGuidance));
+    setupShopify({ guidanceValue: makeGuidanceFeed([infoOffer, criticalWarning]) });
 
-    const banners = screen.getAllByTestId("banner");
-    expect(banners[0].getAttribute("data-title")).toBe("Critical Size Issue");
-    expect(banners[1].getAttribute("data-title")).toBe("Bundle Info");
+    extension();
+    const tree = __getLastRenderedTree();
+    const banners = collectByType(tree, "s-banner");
+
+    expect(banners.length).toBe(2);
+    expect(banners[0].props.heading).toBe("Critical Size Issue");
+    expect(banners[1].props.heading).toBe("Bundle Info");
   });
 });

@@ -1,87 +1,91 @@
 (() => {
-  const APP_ASSET_PATH = "/storefront/cartmind-chat-app.js";
+  const RUNTIME_FLAG = "__cartmindChatBlockRuntimeLoaded";
+  const LOADING_FLAG = "__cartmindChatBlockRuntimeLoading";
+  const SCRIPT_MARKER = "data-cartmind-chat-runtime";
+  const RUNTIME_PATH = "/storefront/cartmind-chat-block-runtime.js";
 
-  function loadBundle(config) {
-    const appBaseUrl = typeof config?.appBaseUrl === "string"
-      ? config.appBaseUrl.replace(/\/$/, "")
-      : "";
-
-    if (!appBaseUrl) {
-      console.warn("CartMind chat requires an app base URL to load the storefront widget bundle.");
-      return;
+  function normalizeAppBaseUrl(rawValue) {
+    if (typeof rawValue !== "string") {
+      return "";
     }
 
-    const scriptId = `cartmind-chat-app-${appBaseUrl}`;
+    const trimmed = rawValue.trim().replace(/\/$/, "");
+    if (!trimmed) {
+      return "";
+    }
 
-    if (document.getElementById(scriptId)) {
+    try {
+      const url = new URL(trimmed, window.location.origin);
+      url.search = "";
+      url.hash = "";
+      url.pathname = url.pathname.replace(/\/+$/, "");
+      url.pathname = url.pathname.replace(/\/api\/app-proxy$/i, "");
+      return `${url.origin}${url.pathname}`;
+    } catch {
+      return "";
+    }
+  }
+
+  function resolveRuntimeBaseUrl() {
+    const configScripts = document.querySelectorAll('script[type="application/json"][id^="cartmind-chat-config-"]');
+
+    for (let index = 0; index < configScripts.length; index += 1) {
+      const script = configScripts[index];
+
+      if (!script || !script.textContent) {
+        continue;
+      }
+
+      try {
+        const parsed = JSON.parse(script.textContent);
+        const normalized = normalizeAppBaseUrl(parsed && parsed.appBaseUrl);
+        if (normalized) {
+          return normalized;
+        }
+      } catch {
+        // Ignore invalid config script and continue.
+      }
+    }
+
+    return "";
+  }
+
+  function buildRuntimeUrl() {
+    const appBaseUrl = resolveRuntimeBaseUrl();
+    if (appBaseUrl) {
+      return `${appBaseUrl}${RUNTIME_PATH}`;
+    }
+
+    return RUNTIME_PATH;
+  }
+
+  function injectRuntime(url) {
+    const existing = document.querySelector(`script[${SCRIPT_MARKER}="true"]`);
+    if (existing) {
       return;
     }
 
     const script = document.createElement("script");
-    script.id = scriptId;
     script.async = true;
-    script.src = `${appBaseUrl}${APP_ASSET_PATH}`;
-    document.head.appendChild(script);
+    script.src = url;
+    script.setAttribute(SCRIPT_MARKER, "true");
+    script.onload = () => {
+      window[LOADING_FLAG] = false;
+      window[RUNTIME_FLAG] = true;
+      console.info("[CartMind] Runtime loaded", { url });
+    };
+    script.onerror = () => {
+      window[LOADING_FLAG] = false;
+      console.error("[CartMind] Runtime failed to load", { url });
+    };
+
+    (document.head || document.body || document.documentElement).appendChild(script);
   }
 
-  function readConfig(element) {
-    const configId = element.dataset.configId;
-
-    if (!configId) {
-      return null;
-    }
-
-    const configElement = document.getElementById(configId);
-
-    if (!configElement || !configElement.textContent) {
-      return null;
-    }
-
-    try {
-      return JSON.parse(configElement.textContent);
-    } catch {
-      return null;
-    }
+  if (window[RUNTIME_FLAG] || window[LOADING_FLAG]) {
+    return;
   }
 
-  function bootstrapWidgetLoad() {
-    const roots = document.querySelectorAll("[data-cartmind-chat-root]");
-    console.log("[CartMind] bootstrapWidgetLoad fired, readyState:", document.readyState, "roots found:", roots.length);
-
-    roots.forEach((element) => {
-      const configId = element.dataset.configId;
-      console.log("[CartMind] element found, configId:", configId);
-
-      const configElement = document.getElementById(configId);
-      console.log("[CartMind] config element:", configElement ? "found" : "NOT FOUND");
-
-      if (configElement) {
-        try {
-          const parsed = JSON.parse(configElement.textContent);
-          console.log("[CartMind] parsed config appBaseUrl:", parsed.appBaseUrl);
-        } catch (e) {
-          console.error("[CartMind] JSON parse error:", e);
-        }
-      }
-
-      const config = readConfig(element);
-
-      if (config) {
-        console.log("[CartMind] Loading bundle from:", config.appBaseUrl + APP_ASSET_PATH);
-        loadBundle(config);
-      } else {
-        console.warn("[CartMind] readConfig returned null for element:", element);
-      }
-    });
-
-    if (roots.length === 0) {
-      console.warn("[CartMind] No [data-cartmind-chat-root] elements found in DOM");
-    }
-  }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", bootstrapWidgetLoad, { once: true });
-  } else {
-    bootstrapWidgetLoad();
-  }
+  window[LOADING_FLAG] = true;
+  injectRuntime(buildRuntimeUrl());
 })();

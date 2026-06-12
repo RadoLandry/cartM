@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { issueStorefrontChatToken } from "../../../app/lib/shopify/app-proxy";
 import { action } from "../../../app/routes/api.ai.chat";
@@ -16,13 +16,24 @@ afterEach(() => {
 });
 
 const ORIGINAL_SIGNING_SECRET = process.env.STOREFRONT_CHAT_SIGNING_SECRET;
+const ORIGINAL_OPENAI_KEY = process.env.OPENAI_API_KEY;
 
 describe("storefront chat stream route", () => {
+  beforeEach(() => {
+    delete process.env.OPENAI_API_KEY;
+  });
+
   afterEach(() => {
     if (ORIGINAL_SIGNING_SECRET) {
       process.env.STOREFRONT_CHAT_SIGNING_SECRET = ORIGINAL_SIGNING_SECRET;
     } else {
       delete process.env.STOREFRONT_CHAT_SIGNING_SECRET;
+    }
+
+    if (ORIGINAL_OPENAI_KEY) {
+      process.env.OPENAI_API_KEY = ORIGINAL_OPENAI_KEY;
+    } else {
+      delete process.env.OPENAI_API_KEY;
     }
   });
 
@@ -49,6 +60,32 @@ describe("storefront chat stream route", () => {
     expect(body).toContain('"type":"message-complete"');
     expect(body).toContain("Core Training Gloves");
     expect(body).toContain('"action":"keep"');
+  });
+
+  it("emits proposed tool action and status events for add requests", async () => {
+    process.env.STOREFRONT_CHAT_SIGNING_SECRET = "test-signing-secret";
+    const input = makeStorefrontChatRequest({
+      messages: [{ role: "user", content: "add 2 of these" }],
+    });
+
+    const response = await action({
+      request: new Request("http://localhost/api/ai/chat", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://test.myshopify.com",
+        },
+        body: JSON.stringify(input),
+      }),
+      params: {},
+      context: {},
+    } as never);
+
+    const body = await readResponseText(response);
+
+    expect(body).toContain('"type":"tool-action-proposed"');
+    expect(body).toContain('"type":"tool-action-status"');
+    expect(body).toContain('"status":"proposed"');
   });
 
   it("rejects malformed tokens before streaming begins", async () => {

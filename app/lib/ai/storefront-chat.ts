@@ -123,6 +123,11 @@ export function createCartToolActionRecord(input: {
   cartId?: string;
   payload: unknown;
 }) {
+  const existing = actionLifecycleStore.get(input.actionId);
+  if (existing) {
+    return existing;
+  }
+
   const now = new Date().toISOString();
   const record: CartToolActionLifecycleRecord = {
     actionId: input.actionId,

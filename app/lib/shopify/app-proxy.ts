@@ -207,7 +207,8 @@ export function buildAppProxyStorefrontMountConfig(input: {
     placementId: input.placementId ?? `${input.surface}:default`,
     appBaseUrl: input.appBaseUrl,
     bootstrapPath,
-    bootstrapUrl: new URL(bootstrapPath, input.appBaseUrl).toString(),
+    // Keep bootstrap URL same-origin on storefront so Shopify app proxy handles auth and no CORS preflight is needed.
+    bootstrapUrl: bootstrapPath,
     recommendationsPath: input.recommendationsPath ?? "/api/ai/recommendations",
     cart: input.cart,
     labels: input.labels,

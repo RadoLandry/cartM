@@ -159,6 +159,10 @@ export function CartMindChat({ config }: CartMindChatProps) {
     config,
     state,
     dispatch,
+    onActionCartUpdated: (cart) => {
+      latestCartRef.current = cart;
+      void refreshGuidance(cart);
+    },
     resolveCartSnapshot: async () => latestCartRef.current.items.length > 0
       ? latestCartRef.current
       : await readLatestStorefrontCart(config),

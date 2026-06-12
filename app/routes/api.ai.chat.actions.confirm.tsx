@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ActionFunctionArgs } from "react-router";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 
 import {
   assertAllowedStorefrontOrigin,
@@ -42,6 +42,19 @@ const ConfirmCartActionRequestSchema = z.object({
     subtotal: z.string().min(1).optional(),
   }).optional(),
 });
+
+const CORS_BASE_HEADERS = {
+  "access-control-allow-methods": "POST, OPTIONS",
+  "access-control-allow-headers": "content-type",
+  "access-control-max-age": "86400",
+};
+
+function getCorsHeaders(request: Request) {
+  const origin = request.headers.get("origin");
+  return origin
+    ? { ...CORS_BASE_HEADERS, "access-control-allow-origin": origin, vary: "Origin" }
+    : CORS_BASE_HEADERS;
+}
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const body = await request.json().catch(() => null);
@@ -555,7 +568,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
     }
 
-    if (actionPayload.actionType === "add" && actionPayload.merchandiseId && actionPayload.quantity) {
+    if (
+      actionPayload.actionType === "add"
+      && actionPayload.merchandiseId
+      && typeof actionPayload.quantity === "number"
+    ) {
       const mutationOutcome = await storefrontCartMutationAdapter.addLine({
         cartId: record.cartId || parsed.data.cart?.cartId || "",
         merchandiseId: actionPayload.merchandiseId,
@@ -613,7 +630,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
     }
 
-    if (actionPayload.actionType === "change_quantity" && actionPayload.lineId && actionPayload.quantity) {
+    if (
+      actionPayload.actionType === "change_quantity"
+      && actionPayload.lineId
+      && typeof actionPayload.quantity === "number"
+    ) {
       const mutationOutcome = await storefrontCartMutationAdapter.updateLineQuantity({
         cartId: record.cartId || parsed.data.cart?.cartId || "",
         lineId: actionPayload.lineId,
@@ -702,7 +723,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
     }
 
-    if (actionPayload.actionType === "swap_variant" && actionPayload.lineId && actionPayload.newMerchandiseId && actionPayload.quantity) {
+    if (
+      actionPayload.actionType === "swap_variant"
+      && actionPayload.lineId
+      && actionPayload.newMerchandiseId
+      && typeof actionPayload.quantity === "number"
+    ) {
       const currentLine = cartSnapshot.items.find((item) => item.lineId === actionPayload.lineId);
       if (!currentLine || !currentLine.variantId) {
         const failedTransition = transitionCartToolActionRecord({
@@ -815,13 +841,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   });
 };
 
-export const loader = async () => Response.json(
-  {
-    ok: false,
-    error: {
-      code: "METHOD_NOT_ALLOWED",
-      message: "Use POST.",
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: getCorsHeaders(request),
+    });
+  }
+
+  return Response.json(
+    {
+      ok: false,
+      error: {
+        code: "METHOD_NOT_ALLOWED",
+        message: "Use POST.",
+      },
     },
-  },
-  { status: 405 },
-);
+    { status: 405, headers: getCorsHeaders(request) },
+  );
+};

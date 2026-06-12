@@ -1,5 +1,11 @@
 # @shopify/shopify-app-template-react-router
 
+## 2026.06.12
+- Deliver conversational cart management in storefront chat with explicit confirmation support for add, remove, quantity change, and swap-variant actions.
+- Harden cart action lifecycle behavior with idempotent replay handling and standardized failure codes for conflict/unavailable/quantity validation paths.
+- Add focused unit and integration coverage for proposal inference, confirmation execution semantics, duplicate approval replay, and storefront action-history state reconciliation.
+- Keep theme cart chat bootstrap compatible with mutation targeting by including cart line identifiers in `extensions/cart-drawer-block/blocks/ai-cart.liquid` payloads.
+
 ## 2026.02.09
 - Add declarative product metafield definition and demonstrate metafield usage in the product creation flow
 - Add declarative metaobject definition and demonstrate metaobject upsert in the product creation flow

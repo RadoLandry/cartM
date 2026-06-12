@@ -62,7 +62,7 @@ function applyBundleDiscounts(input) {
 
   const selectedIds = new Set(projection.resolution.selectedOutcomeIds);
   const cartLineIds = new Set(
-    (input?.cart?.lines?.nodes ?? []).map((line) => line.id),
+    (input?.cart?.lines ?? []).map((line) => line.id),
   );
 
   const discounts = [];

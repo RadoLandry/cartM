@@ -76,6 +76,7 @@ export function ChatPanel({
             messages={state.messages}
             assistantGreeting={assistantGreeting}
             pendingActionId={state.pendingActionId}
+            actionHistory={state.actionHistory}
             onApproveAction={onApproveAction}
             onApproveActionSelection={onApproveActionSelection}
             onDeclineAction={onDeclineAction}

@@ -17,7 +17,18 @@ export interface CartMindMountFailure {
 const THIRD_PARTY_SELECTOR_PREFIXES = [".fs-", ".flits-", ".kiwi-"];
 
 // Class names that indicate the cart drawer is open
-const DRAWER_OPEN_CLASS_PATTERNS = ["is-open", "is-active", "cart-open", "drawer--open", "drawer--is-open"];
+const DRAWER_OPEN_CLASS_PATTERNS = [
+  "js-menu__expanded",
+  "is-open",
+  "is-active",
+  "cart-open",
+  "drawer--open",
+  "drawer--is-open",
+];
+const DRAWER_OPEN_SELECTORS = [
+  ".js-menu__context.js-menu__expanded",
+  ".js-menu--right.js-menu__expanded",
+];
 
 export function buildCartMindSurfaceHostId(surface: StorefrontChatMountConfig["surface"], placementId: string) {
   return `cartmind-${surface}-${placementId}`.replace(/[^a-z0-9_-]/gi, "-").toLowerCase();
@@ -85,6 +96,10 @@ export function useCartSurfaceLifecycle(
     let lastOpenState: boolean | null = null;
 
     function resolveDrawerOpenState(): boolean {
+      if (DRAWER_OPEN_SELECTORS.some((selector) => document.querySelector(selector))) {
+        return true;
+      }
+
       return DRAWER_OPEN_CLASS_PATTERNS.some((cls) =>
         Array.from(document.querySelectorAll("[class]")).some((el) => el.classList.contains(cls)),
       );
@@ -99,7 +114,14 @@ export function useCartSurfaceLifecycle(
           for (const node of Array.from(mutation.addedNodes)) {
             if (node instanceof HTMLElement) {
               const tag = node.tagName?.toLowerCase();
-              if (tag === "cart-drawer" || node.id === "CartDrawer" || node.classList.contains("cart-drawer")) {
+              if (
+                tag === "cart-drawer"
+                || node.id === "CartDrawer"
+                || node.classList.contains("cart-drawer")
+                || node.classList.contains("js-menu__context")
+                || node.classList.contains("js-menu--right")
+                || Boolean(node.querySelector(".js-menu__context, .js-menu--right"))
+              ) {
                 triggerSync = true;
                 break;
               }

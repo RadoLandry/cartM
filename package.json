@@ -25,8 +25,8 @@
     "node": ">=20.19 <22 || >=22.12"
   },
   "dependencies": {
-    "@ai-sdk/react": "^3.0.193",
     "@ai-sdk/openai": "^3.0.64",
+    "@ai-sdk/react": "^3.0.193",
     "@prisma/client": "^6.16.3",
     "@react-router/dev": "^7.12.0",
     "@react-router/fs-routes": "^7.12.0",
@@ -46,6 +46,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@shopify/api-codegen-preset": "^1.2.0",
     "@shopify/polaris-types": "^1.0.1",
     "@types/eslint": "^9.6.1",

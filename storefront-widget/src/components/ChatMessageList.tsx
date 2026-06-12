@@ -1,5 +1,5 @@
 import type { CartToolAction, StructuredGuidanceBlock } from "../../../app/lib/ai/schemas";
-import type { ChatThreadMessage } from "../hooks/useChatSessionState";
+import type { ChatActionHistoryItem, ChatThreadMessage } from "../hooks/useChatSessionState";
 import { BudgetOptimizationCard } from "./guidance/BudgetOptimizationCard";
 import { ComparisonTable } from "./guidance/ComparisonTable";
 import { CartToolActionCard } from "./guidance/CartToolActionCard";
@@ -11,6 +11,7 @@ interface ChatMessageListProps {
   messages: ChatThreadMessage[];
   assistantGreeting: string;
   pendingActionId?: string;
+  actionHistory: ChatActionHistoryItem[];
   onApproveAction: (action: CartToolAction) => void;
   onApproveActionSelection: (action: CartToolAction, selection: { productId: string; variantId?: string }) => void;
   onDeclineAction: (action: CartToolAction) => void;
@@ -35,6 +36,7 @@ export function ChatMessageList({
   messages,
   assistantGreeting,
   pendingActionId,
+  actionHistory,
   onApproveAction,
   onApproveActionSelection,
   onDeclineAction,
@@ -59,14 +61,23 @@ export function ChatMessageList({
           {message.content ? <p>{message.content}</p> : <p className="cm-message__placeholder">Preparing response…</p>}
           {message.guidanceBlocks.map((block) => renderGuidanceBlock(block))}
           {message.actionProposals.map((action) => (
-            <CartToolActionCard
-              key={action.actionId}
-              action={action}
-              isSubmitting={pendingActionId === action.actionId}
-              onApprove={onApproveAction}
-              onApproveSelection={onApproveActionSelection}
-              onDecline={onDeclineAction}
-            />
+            <div key={action.actionId}>
+              <CartToolActionCard
+                action={action}
+                isSubmitting={pendingActionId === action.actionId}
+                onApprove={onApproveAction}
+                onApproveSelection={onApproveActionSelection}
+                onDecline={onDeclineAction}
+              />
+              {actionHistory
+                .filter((item) => item.actionId === action.actionId)
+                .map((item) => (
+                  <p key={`${action.actionId}-${item.status}`} className="cm-message__action-status">
+                    Status: {item.status}
+                    {item.summary ? ` - ${item.summary}` : ""}
+                  </p>
+                ))}
+            </div>
           ))}
         </article>
       ))}

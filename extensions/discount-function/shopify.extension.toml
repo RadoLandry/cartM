@@ -1,17 +1,20 @@
-api_version = "2025-04"
+api_version = "2025-10"
+uid = "630829f6-2180-df6b-6a08-656aa871d3f31c3e344a"
 
 [[extensions]]
 name = "CartMind Bundle Discount"
 handle = "discount-function"
 type = "function"
 
-  [extensions.build]
-  command = "node --input-type=module --eval 'import(\"./src/run.js\").then(m => m.run ? process.exit(0) : process.exit(1))' 2>/dev/null || true"
-  path = "dist/index.wasm"
-  watch = ["src/**/*.js"]
+  [[extensions.targeting]]
+  target = "cart.lines.discounts.generate.run"
+  input_query = "input.graphql"
+  export = "run"
 
-  [extensions.input]
-  variables = { api = "cart-discount", api_type = "CartDiscountReductionsGenerateRunResult" }
+  [extensions.build]
+  command = "node ./src/run.js"
+  path = "dist/function.wasm"
+  watch = ["src/**/*.js"]
 
   [[extensions.metafields]]
   namespace = "cartmind"

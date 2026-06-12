@@ -1,0 +1,3 @@
+AssetSizeAppBlockJavaScript:
+  enabled: true
+  threshold_in_bytes: 51200

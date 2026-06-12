@@ -33,6 +33,7 @@
       "items": [
         {% for item in cart.items %}
           {
+            "lineId": {{ item.key | json }},
             "productId": {{ item.product.id | json }},
             "productTitle": {{ item.product.title | json }},
             "variantId": {{ item.variant.id | json }},
@@ -64,7 +65,7 @@
     {
       "type": "text",
       "id": "app_base_url",
-      "label": "App base URL",
+      "label": "App base URL (without /api/app-proxy)",
       "default": "https://app.cartmind.io"
     },
     {

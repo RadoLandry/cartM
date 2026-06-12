@@ -47,67 +47,147 @@ function parseBudgetAmountFromMessage(content: string) {
   return amount;
 }
 
+function normalizeText(content: string) {
+  return content
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
+
+function parseFirstInteger(content: string) {
+  const match = content.match(/\b(\d{1,3})\b/);
+  if (!match) {
+    return null;
+  }
+
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? value : null;
+}
+
+function resolveTargetLine(input: StorefrontChatRequest, normalizedMessage: string) {
+  const withLineId = input.cart.items.filter((item) => item.lineId || item.productId);
+
+  for (const item of withLineId) {
+    const candidates = [
+      item.productTitle,
+      item.variantTitle,
+      item.productId,
+      item.variantId,
+    ].filter((value): value is string => Boolean(value));
+
+    if (candidates.some((candidate) => normalizedMessage.includes(normalizeText(candidate)))) {
+      return item;
+    }
+  }
+
+  return withLineId[0];
+}
+
+function resolveAddMerchandiseId(input: StorefrontChatRequest, normalizedMessage: string) {
+  const gidMatch = normalizedMessage.match(/gid:\/\/shopify\/productvariant\/\d+/i);
+  if (gidMatch) {
+    return gidMatch[0];
+  }
+
+  const target = resolveTargetLine(input, normalizedMessage) ?? input.cart.items[0];
+  return target?.variantId;
+}
+
+function parseRequestedVariantId(rawMessage: string) {
+  const gidMatch = rawMessage.match(/gid:\/\/shopify\/ProductVariant\/[A-Za-z0-9_-]+/i);
+  if (!gidMatch) {
+    return null;
+  }
+
+  return gidMatch[0];
+}
+
 function inferToolFromMessage(input: StorefrontChatRequest): {
   toolName: CartToolAction["toolName"];
   payload: CartToolAction["payload"];
   preview?: CartToolAction["preview"];
 } | null {
-  const latest = input.messages[input.messages.length - 1]?.content.toLowerCase() ?? "";
-  const firstLine = input.cart.items[0];
+  const latest = input.messages[input.messages.length - 1]?.content ?? "";
+  const normalized = normalizeText(latest);
+  const targetLine = resolveTargetLine(input, normalized);
 
-  if (latest.includes("add") || latest.includes("ajoute")) {
+  if (/\b(add|ajoute|insert|include)\b/.test(normalized)) {
+    const merchandiseId = resolveAddMerchandiseId(input, normalized);
+
+    if (!merchandiseId) {
+      return null;
+    }
+
+    const requestedQuantity = parseFirstInteger(normalized);
+    const quantity = Math.max(1, requestedQuantity ?? 1);
+
     return {
       toolName: "addToCart",
       payload: {
         actionType: "add",
-        merchandiseId: firstLine?.variantId || firstLine?.productId || "",
-        quantity: 1,
+        merchandiseId,
+        quantity,
       },
       preview: {
-        after: `Add 1 x ${firstLine?.productTitle || "selected item"}`,
+        after: `Add ${quantity} x ${targetLine?.productTitle || "selected item"}`,
       },
     };
   }
 
-  if ((latest.includes("remove") || latest.includes("retire")) && firstLine) {
+  if (/\b(remove|retire|delete|supprime)\b/.test(normalized) && targetLine) {
     return {
       toolName: "removeFromCart",
       payload: {
         actionType: "remove",
-        lineId: firstLine.lineId || firstLine.productId,
+        lineId: targetLine.lineId || targetLine.productId,
       },
       preview: {
-        before: firstLine.productTitle || "Existing cart item",
+        before: targetLine.productTitle || "Existing cart item",
         after: "Item removed",
       },
     };
   }
 
-  if ((latest.includes("quantity") || latest.includes("quantite")) && firstLine) {
+  if (/\b(quantity|quantite|increase|decrease|more|less)\b/.test(normalized) && targetLine) {
+    const explicitQuantity = parseFirstInteger(normalized);
+    const increaseIntent = /\b(increase|more|plus|up)\b/.test(normalized);
+    const decreaseIntent = /\b(decrease|less|minus|reduce|down|moins)\b/.test(normalized);
+
+    const quantity = explicitQuantity
+      ? explicitQuantity
+      : increaseIntent
+        ? targetLine.quantity + 1
+        : decreaseIntent
+          ? targetLine.quantity - 1
+          : targetLine.quantity + 1;
+
     return {
       toolName: "changeQuantity",
       payload: {
         actionType: "change_quantity",
-        lineId: firstLine.lineId || firstLine.productId,
-        quantity: Math.max(1, firstLine.quantity + 1),
+        lineId: targetLine.lineId || targetLine.productId,
+        quantity: Math.max(1, quantity),
       },
       preview: {
-        before: `${firstLine.productTitle || "Item"} x${firstLine.quantity}`,
-        after: `${firstLine.productTitle || "Item"} x${Math.max(1, firstLine.quantity + 1)}`,
+        before: `${targetLine.productTitle || "Item"} x${targetLine.quantity}`,
+        after: `${targetLine.productTitle || "Item"} x${Math.max(1, quantity)}`,
       },
     };
   }
 
-  if ((latest.includes("swap") || latest.includes("replace")) && firstLine?.variantId) {
-    const beforeLabel = `${firstLine.productTitle || "Item"}${firstLine.variantTitle ? ` / ${firstLine.variantTitle}` : ""}`;
+  if (/\b(swap|replace)\b/.test(normalized) && targetLine?.variantId) {
+    const beforeLabel = `${targetLine.productTitle || "Item"}${targetLine.variantTitle ? ` / ${targetLine.variantTitle}` : ""}`;
+    const requestedVariantId = parseRequestedVariantId(latest);
+    const nextVariantId = requestedVariantId || `${targetLine.variantId}-swap`;
 
     return {
       toolName: "swapVariant",
       payload: {
         actionType: "swap_variant",
-        lineId: firstLine.lineId || firstLine.productId,
-        newMerchandiseId: `${firstLine.variantId}-swap`,
-        quantity: firstLine.quantity,
+        lineId: targetLine.lineId || targetLine.productId,
+        newMerchandiseId: nextVariantId,
+        quantity: targetLine.quantity,
       },
       preview: {
         before: beforeLabel,

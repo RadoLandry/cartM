@@ -411,6 +411,14 @@ export const CartToolActionStatusSchema = z.enum([
   "failed",
 ]);
 
+export const CartMutationErrorCodeSchema = z.enum([
+  "LINE_NOT_FOUND",
+  "VARIANT_UNAVAILABLE",
+  "QUANTITY_INVALID",
+  "CART_CONFLICT",
+  "MUTATION_ERROR",
+]);
+
 export const CartToolActionSchema = z.object({
   actionId: z.string().min(1),
   toolName: z.enum(["addToCart", "removeFromCart", "changeQuantity", "swapVariant", "compareProducts", "optimizeBudget"]),
@@ -431,6 +439,7 @@ export const CartToolActionStatusEventSchema = z.object({
   actionId: z.string().min(1),
   status: CartToolActionStatusSchema,
   summary: z.string().min(1).optional(),
+  code: CartMutationErrorCodeSchema.optional(),
   cart: z.object({
     cartId: z.string().min(1).optional(),
     currencyCode: z.string().length(3).default("USD"),
@@ -685,6 +694,7 @@ export const StorefrontChatStreamPartSchema = z.discriminatedUnion("type", [
     actionId: z.string().min(1),
     status: CartToolActionStatusSchema,
     summary: z.string().min(1).optional(),
+    code: CartToolActionStatusEventSchema.shape.code,
     cart: CartToolActionStatusEventSchema.shape.cart.optional(),
   }),
   z.object({

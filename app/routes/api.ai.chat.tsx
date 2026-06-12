@@ -1,10 +1,11 @@
-import type { ActionFunctionArgs } from "react-router";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { streamText } from "ai";
 
 import { StorefrontChatRequestSchema } from "../lib/ai/schemas";
 import {
   buildProductComparisonDataError,
+  buildStorefrontChatReply,
   createBudgetOptimizationContext,
-  buildStorefrontChatStreamParts,
   resolveStorefrontChatBehavior,
   createProductComparisonContext,
   normalizeBudgetOptimizationResult,
@@ -14,6 +15,8 @@ import {
   setProductComparisonContextError,
   setProductComparisonContextResult,
 } from "../lib/ai/storefront-chat";
+import { buildStorefrontChatSystemPrompt } from "../lib/ai/prompts";
+import { getPrimaryModel, isAIAvailable } from "../lib/ai/providers";
 import {
   buildBudgetOptimizationSelectionActionProposal,
   buildBudgetOptimizationToolRequest,
@@ -32,6 +35,19 @@ import {
   verifyStorefrontChatToken,
 } from "../lib/shopify/app-proxy";
 
+const CORS_BASE_HEADERS = {
+  "access-control-allow-methods": "POST, OPTIONS",
+  "access-control-allow-headers": "content-type",
+  "access-control-max-age": "86400",
+};
+
+function getCorsHeaders(request: Request) {
+  const origin = request.headers.get("origin");
+  return origin
+    ? { ...CORS_BASE_HEADERS, "access-control-allow-origin": origin, vary: "Origin" }
+    : CORS_BASE_HEADERS;
+}
+
 function encodeSseEvent(payload: unknown) {
   return `data: ${JSON.stringify(payload)}\n\n`;
 }
@@ -46,7 +62,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         ok: false,
         error: parsed.error.flatten(),
       },
-      { status: 400 },
+      { status: 400, headers: getCorsHeaders(request) },
     );
   }
 
@@ -61,7 +77,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           message: verification.message,
         },
       },
-      { status: verification.code === "TOKEN_EXPIRED" ? 401 : 403 },
+      {
+        status: verification.code === "TOKEN_EXPIRED" ? 401 : 403,
+        headers: getCorsHeaders(request),
+      },
     );
   }
 
@@ -78,7 +97,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           message: "Chat token scope does not match the request.",
         },
       },
-      { status: 403 },
+      { status: 403, headers: getCorsHeaders(request) },
     );
   }
 
@@ -93,20 +112,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           message: originCheck.message,
         },
       },
-      { status: 403 },
+      { status: 403, headers: getCorsHeaders(request) },
     );
   }
 
   const behaviorResolution = await resolveStorefrontChatBehavior(parsed.data.shop);
 
-  const streamParts = buildStorefrontChatStreamParts(parsed.data, behaviorResolution.config);
+  const guidanceReply = buildStorefrontChatReply(parsed.data, behaviorResolution.config);
   const comparisonValidationError = getCompareProductsValidationError(parsed.data);
   const comparisonRequest = buildCompareProductsToolRequest(parsed.data);
-  const comparisonParts = [] as Array<(typeof streamParts)[number]>;
+  const comparisonParts = [] as Array<{ type: string; [key: string]: unknown }>;
   let comparisonActionProposal: ReturnType<typeof buildComparisonSelectionActionProposal> | null = null;
   const budgetValidationError = getBudgetOptimizationValidationError(parsed.data);
   const budgetRequest = buildBudgetOptimizationToolRequest(parsed.data);
-  const budgetParts = [] as Array<(typeof streamParts)[number]>;
+  const budgetParts = [] as Array<{ type: string; [key: string]: unknown }>;
   let budgetActionProposal: ReturnType<typeof buildBudgetOptimizationSelectionActionProposal> | null = null;
 
   if (comparisonValidationError) {
@@ -292,41 +311,88 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       type: "tool-action-proposed" as const,
       action,
     }));
+  const toolActionStatusEvents = toolActionEvents.map((event) => ({
+    type: "tool-action-status" as const,
+    actionId: event.action.actionId,
+    status: "proposed" as const,
+    summary: "Awaiting shopper confirmation.",
+  }));
 
-  const partsWithToolEvents = toolActionEvents.length > 0
-    ? [
-      ...streamParts.filter((part) => part.type !== "message-complete"),
-      ...comparisonParts,
-      ...budgetParts,
-      ...toolActionEvents,
-      ...streamParts.filter((part) => part.type === "message-complete"),
-    ]
-    : [
-      ...streamParts.filter((part) => part.type !== "message-complete"),
-      ...comparisonParts,
-      ...budgetParts,
-      ...streamParts.filter((part) => part.type === "message-complete"),
-    ];
+  const messageId = `${parsed.data.sessionKey}-assistant-${parsed.data.messages.length}`;
+  const aiEnabled = isAIAvailable();
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (const part of partsWithToolEvents) {
-        controller.enqueue(encoder.encode(encodeSseEvent(part)));
+    async start(controller) {
+      const emit = (payload: unknown) => {
+        controller.enqueue(encoder.encode(encodeSseEvent(payload)));
+      };
+
+      // 1. Texte — LLM réel ou fallback rule-based
+      if (aiEnabled) {
+        try {
+          const result = streamText({
+            model: getPrimaryModel(),
+            system: buildStorefrontChatSystemPrompt({
+              shop: parsed.data.shop,
+              cart: parsed.data.cart,
+              behavior: behaviorResolution.config,
+            }),
+            messages: parsed.data.messages
+              .filter((m) => m.role === "user" || m.role === "assistant")
+              .map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
+            maxOutputTokens: 600,
+            temperature: 0.4,
+          });
+          for await (const chunk of result.textStream) {
+            emit({ type: "text-delta", text: chunk });
+          }
+        } catch {
+          emit({ type: "text-delta", text: guidanceReply.text });
+        }
+      } else {
+        emit({ type: "text-delta", text: guidanceReply.text });
       }
+
+      // 2. Guidance blocks structurés (cart-aware, rule-based)
+      for (const block of guidanceReply.guidanceBlocks) {
+        emit({ type: "guidance-block", block });
+      }
+
+      // 3. Résultats comparaison / budget
+      for (const part of comparisonParts) { emit(part); }
+      for (const part of budgetParts) { emit(part); }
+
+      // 4. Propositions d'action panier
+      for (const event of toolActionEvents) { emit(event); }
+      for (const statusEvent of toolActionStatusEvents) { emit(statusEvent); }
+
+      // 5. Fin de stream
+      emit({ type: "message-complete", messageId });
       controller.close();
     },
   });
 
   return new Response(stream, {
     headers: {
+      ...getCorsHeaders(request),
       "cache-control": "no-cache, no-transform",
       connection: "keep-alive",
       "content-type": "text/event-stream; charset=utf-8",
-      ...(originCheck.origin ? { "access-control-allow-origin": originCheck.origin } : {}),
-      vary: "Origin",
     },
   });
 };
 
-export const loader = async () => Response.json({ ok: false, error: { code: "METHOD_NOT_ALLOWED", message: "Use POST." } }, { status: 405 });
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: getCorsHeaders(request),
+    });
+  }
+
+  return Response.json(
+    { ok: false, error: { code: "METHOD_NOT_ALLOWED", message: "Use POST." } },
+    { status: 405, headers: getCorsHeaders(request) },
+  );
+};
