@@ -1,7 +1,10 @@
+import crypto from "node:crypto";
+
 import type {
   BudgetOptimizationError,
   BudgetOptimizationRequest,
   BudgetOptimizationResult,
+  CartToolAction,
   ProductComparisonDimension,
   ProductComparisonError,
   ProductComparisonRequest,
@@ -12,8 +15,27 @@ import type {
   StructuredGuidanceBlock,
 } from "./schemas";
 import { buildStorefrontChatSystemPrompt } from "./prompts";
-import { getActiveAIBehaviorConfigWithFallback } from "../db/queries";
+import {
+  getActiveAIBehaviorConfigWithFallback,
+  getActiveRelationshipsForProduct,
+  getSessionCustomerProfile,
+  listActiveKitDefinitions,
+  listActiveReplenishmentLifecycleRules,
+  listCustomerPurchaseSnapshots,
+} from "../db/queries";
+import db from "../../db.server";
 import { AI_BEHAVIOR_DEFAULTS, resolveBehaviorPolicyConflict, type AIBehaviorDraftPayload } from "./behavior-config";
+import { detectKitCompleteness } from "../cart-intelligence/kit-detection";
+import { detectSizeConflicts } from "../cart-intelligence/size-conflicts";
+import {
+  buildKitRecommendations,
+  buildReplenishmentRecommendations,
+  buildThresholdRecommendations,
+} from "../cart-intelligence/recommendations";
+import { evaluateReplenishmentCandidates } from "../cart-intelligence/replenishment";
+import { buildThresholdEvaluationRequest, evaluateThreshold } from "../cart-intelligence/threshold";
+import { buildProfileKey, resolveCustomerProfile } from "../cart-intelligence/customer-profile";
+import { issueActionConfirmationToken } from "../shopify/app-proxy";
 
 // Re-export client-safe utilities so existing server-side consumers keep working
 export { mapBudgetOptimizationToGuidanceBlock } from "./storefront-chat-client";
@@ -200,12 +222,199 @@ export function getCartToolActionIdempotentReplay(actionId: string) {
 }
 
 type RecommendationItem = Extract<StructuredGuidanceBlock, { type: "recommendation_list" }>["items"][number];
+type RecommendationEvidenceTag = NonNullable<RecommendationItem["evidenceTags"]>[number];
+
+interface ResolvedCartLine {
+  inputLine: StorefrontChatRequest["cart"]["items"][number];
+  productGid: string;
+  variantGid?: string;
+  productRow?: {
+    id: string;
+    shopifyProductId: string;
+    title: string;
+    status: "ACTIVE" | "INACTIVE";
+    tags: string[];
+    disciplineTags: string[];
+    categoryTags: string[];
+  };
+  variantRow?: {
+    id: string;
+    shopifyVariantId: string;
+    title: string;
+    sizeValue?: string | null;
+    sizeCategory?: string | null;
+    inventoryQuantity?: number | null;
+    price?: number | null;
+  };
+}
+
+interface ChatIntelligenceSnapshot {
+  recommendationItems: RecommendationItem[];
+  sizeBlock?: StructuredGuidanceBlock;
+  missingCount: number;
+  sizeIssueCount: number;
+  personalizationApplied: boolean;
+  historyApplied: boolean;
+}
+
+const CHAT_INTELLIGENCE_TIMEOUT_MS = 400;
+
+function toProductGid(rawValue: string) {
+  if (rawValue.startsWith("gid://shopify/Product/")) {
+    return rawValue;
+  }
+
+  const numeric = rawValue.match(/\d+/)?.[0] ?? rawValue;
+  return `gid://shopify/Product/${numeric}`;
+}
+
+function toVariantGid(rawValue: string) {
+  if (rawValue.startsWith("gid://shopify/ProductVariant/")) {
+    return rawValue;
+  }
+
+  const numeric = rawValue.match(/\d+/)?.[0] ?? rawValue;
+  return `gid://shopify/ProductVariant/${numeric}`;
+}
+
+function pickCategoryTag(line: ResolvedCartLine) {
+  return line.productRow?.categoryTags[0] || "";
+}
+
+function detectChildSizing(line: ResolvedCartLine) {
+  const tokens = [
+    ...(line.productRow?.tags ?? []),
+    line.productRow?.title ?? "",
+    line.variantRow?.title ?? "",
+  ].map((value) => value.toLowerCase());
+
+  return tokens.some((value) => value.includes("child") || value.includes("kids") || value.includes("junior"));
+}
+
+function dedupeRecommendationItems(items: RecommendationItem[]) {
+  const seen = new Set<string>();
+
+  return items.filter((item) => {
+    const key = `${item.action}|${item.productId || "na"}|${item.variantId || "na"}|${item.title}`;
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function toStoredProfileSnapshot(stored: NonNullable<Awaited<ReturnType<typeof getSessionCustomerProfile>>>) {
+  return {
+    profileKey: buildProfileKey(stored.shop, stored.shopifyCustomerId, stored.sessionId),
+    shop: stored.shop,
+    shopifyCustomerId: stored.shopifyCustomerId,
+    sessionId: stored.sessionId,
+    sizeProfile: stored.sizeProfile,
+    disciplineProfile: stored.disciplineProfile,
+    explicitProfile: stored.explicitProfile,
+    purchaseSummary: stored.purchaseSummary,
+    behaviorSummary: stored.behaviorSummary,
+    confidenceSummary: stored.confidenceSummary,
+    lastActiveAt: stored.lastActiveAt,
+  };
+}
+
+async function resolveCartLines(input: StorefrontChatRequest): Promise<ResolvedCartLine[]> {
+  const normalized = input.cart.items.map((line) => ({
+    inputLine: line,
+    productGid: toProductGid(line.productId),
+    variantGid: line.variantId ? toVariantGid(line.variantId) : undefined,
+  }));
+  const productGids = Array.from(new Set(normalized.map((line) => line.productGid)));
+  const variantGids = Array.from(new Set(normalized.map((line) => line.variantGid).filter((value): value is string => Boolean(value))));
+
+  if (productGids.length === 0 && variantGids.length === 0) {
+    return [];
+  }
+
+  const rows = await db.product.findMany({
+    where: {
+      shop: input.shop,
+      OR: [
+        ...(productGids.length > 0 ? [{ shopifyProductId: { in: productGids } }] : []),
+        ...(variantGids.length > 0 ? [{ variants: { some: { shopifyVariantId: { in: variantGids } } } }] : []),
+      ],
+    },
+    select: {
+      id: true,
+      shopifyProductId: true,
+      title: true,
+      status: true,
+      tags: true,
+      disciplineTags: true,
+      categoryTags: true,
+      variants: {
+        select: {
+          id: true,
+          shopifyVariantId: true,
+          title: true,
+          sizeValue: true,
+          sizeCategory: true,
+          inventoryQuantity: true,
+          price: true,
+        },
+      },
+    },
+  });
+
+  const productByGid = new Map(rows.map((row) => [row.shopifyProductId, row]));
+  const productByVariantGid = new Map<string, (typeof rows)[number]>();
+  for (const row of rows) {
+    for (const variant of row.variants) {
+      productByVariantGid.set(variant.shopifyVariantId, row);
+    }
+  }
+
+  return normalized.map((line) => {
+    const productRow = productByGid.get(line.productGid) || (line.variantGid ? productByVariantGid.get(line.variantGid) : undefined);
+    const variantRow = line.variantGid
+      ? productRow?.variants.find((variant) => variant.shopifyVariantId === line.variantGid)
+      : undefined;
+
+    return {
+      ...line,
+      ...(productRow
+        ? {
+            productRow: {
+              id: productRow.id,
+              shopifyProductId: productRow.shopifyProductId,
+              title: productRow.title,
+              status: productRow.status,
+              tags: productRow.tags,
+              disciplineTags: productRow.disciplineTags,
+              categoryTags: productRow.categoryTags,
+            },
+          }
+        : {}),
+      ...(variantRow
+        ? {
+            variantRow: {
+              id: variantRow.id,
+              shopifyVariantId: variantRow.shopifyVariantId,
+              title: variantRow.title,
+              sizeValue: variantRow.sizeValue,
+              sizeCategory: variantRow.sizeCategory,
+              inventoryQuantity: variantRow.inventoryQuantity,
+              price: variantRow.price !== null ? Number(variantRow.price) : null,
+            },
+          }
+        : {}),
+    };
+  });
+}
 
 function toDisplayName(item: StorefrontChatRequest["cart"]["items"][number], fallback: string) {
   return item.productTitle || fallback;
 }
 
-function buildActionableRecommendations(input: StorefrontChatRequest): RecommendationItem[] {
+function buildFallbackRecommendations(input: StorefrontChatRequest): RecommendationItem[] {
   const firstItem = input.cart.items[0];
   const primaryName = firstItem ? toDisplayName(firstItem, "your first cart item") : "your cart";
 
@@ -222,6 +431,7 @@ function buildActionableRecommendations(input: StorefrontChatRequest): Recommend
       shopperOutcome: "Keeps your current setup stable while you fill gaps.",
       safetyCritical: true,
       availability: "available",
+      evidenceTags: ["compatibility", "safety", "fallback"],
     },
     {
       title: "Protective add-on",
@@ -231,6 +441,7 @@ function buildActionableRecommendations(input: StorefrontChatRequest): Recommend
       shopperOutcome: "Improves safety and confidence for immediate use.",
       safetyCritical: true,
       availability: "available",
+      evidenceTags: ["safety", "compatibility", "fallback"],
     },
     {
       productId: firstItem?.productId,
@@ -244,6 +455,7 @@ function buildActionableRecommendations(input: StorefrontChatRequest): Recommend
       shopperOutcome: "Reduces fit mismatch risk at checkout.",
       safetyCritical: false,
       availability: "unknown",
+      evidenceTags: ["size", "fallback"],
     },
   ];
 
@@ -258,31 +470,164 @@ function buildActionableRecommendations(input: StorefrontChatRequest): Recommend
     });
 }
 
-function buildFallbackBlock(summary: string): StructuredGuidanceBlock {
+function buildFallbackRecommendationsFr(input: StorefrontChatRequest): RecommendationItem[] {
+  const firstItem = input.cart.items[0];
+  const primaryName = firstItem ? toDisplayName(firstItem, "votre premier article") : "votre panier";
+
+  const recommendations: RecommendationItem[] = [
+    {
+      productId: firstItem?.productId,
+      productTitle: firstItem?.productTitle,
+      variantId: firstItem?.variantId,
+      variantTitle: firstItem?.variantTitle,
+      title: `${primaryName} : garder ce choix`,
+      action: "keep",
+      priorityLabel: "high",
+      reason: "Ce choix semble compatible avec le reste de votre panier.",
+      shopperOutcome: "Maintient votre sélection actuelle pendant que vous complétez le kit.",
+      safetyCritical: true,
+      availability: "available",
+      evidenceTags: ["compatibility", "safety", "fallback"],
+    },
+    {
+      title: "Accessoire de protection",
+      action: "add",
+      priorityLabel: "high",
+      reason: `Ajoutez un accessoire de protection adapté à ${primaryName} pour plus de sécurité.`,
+      shopperOutcome: "Améliore la sécurité et la confiance pour une utilisation immédiate.",
+      safetyCritical: true,
+      availability: "available",
+      evidenceTags: ["safety", "compatibility", "fallback"],
+    },
+    {
+      productId: firstItem?.productId,
+      productTitle: firstItem?.productTitle,
+      variantId: firstItem?.variantId,
+      variantTitle: firstItem?.variantTitle,
+      title: `${primaryName} : vérification de taille`,
+      action: "size_adjust",
+      priorityLabel: "medium",
+      reason: "Ajustez la taille si vous avez besoin de place pour des protections ou des bandages.",
+      shopperOutcome: "Réduit le risque de mauvaise taille avant la commande.",
+      safetyCritical: false,
+      availability: "unknown",
+      evidenceTags: ["size", "fallback"],
+    },
+  ];
+
+  return recommendations
+    .filter((item) => item.availability !== "unavailable")
+    .sort((a, b) => {
+      const rank = { high: 0, medium: 1, low: 2 } as const;
+      if ((a.safetyCritical ? 0 : 1) !== (b.safetyCritical ? 0 : 1)) {
+        return (a.safetyCritical ? 0 : 1) - (b.safetyCritical ? 0 : 1);
+      }
+      return rank[a.priorityLabel] - rank[b.priorityLabel];
+    });
+}
+
+function buildFallbackBlock(summary: string, lang: "fr" | "en" = "en"): StructuredGuidanceBlock {
   return {
     blockId: "fallback-1",
     type: "fallback_notice",
-    title: "Chat guidance",
+    title: lang === "fr" ? "Conseil assistant" : "Chat guidance",
     summary,
     priority: 1,
   };
 }
 
-function buildRecommendationBlock(input: StorefrontChatRequest): StructuredGuidanceBlock {
-  const recommendations = buildActionableRecommendations(input);
+function buildRecommendationBlock(items: RecommendationItem[], lang: "fr" | "en" = "en"): StructuredGuidanceBlock {
+  const recommendations = dedupeRecommendationItems(items);
 
   if (recommendations.length === 0) {
-    return buildFallbackBlock("No currently available recommendations were found for this cart.");
+    return buildFallbackBlock(
+      lang === "fr"
+        ? "Aucune recommandation disponible pour ce panier en ce moment."
+        : "No currently available recommendations were found for this cart.",
+      lang,
+    );
   }
 
   return {
     blockId: "recommendation-1",
     type: "recommendation_list",
-    title: "Recommended cart actions",
-    summary: "Safety and compatibility actions are listed first.",
+    title: lang === "fr" ? "Actions recommandées pour le panier" : "Recommended cart actions",
+    summary: lang === "fr" ? "Les actions de sécurité et compatibilité sont listées en premier." : "Safety and compatibility actions are listed first.",
     priority: 1,
     items: recommendations,
   };
+}
+
+function hasEvidenceTag(item: RecommendationItem, tag: RecommendationEvidenceTag) {
+  return item.evidenceTags?.includes(tag) ?? false;
+}
+
+function isFallbackOnlyRecommendations(items: RecommendationItem[]) {
+  return items.length > 0 && items.every((item) => hasEvidenceTag(item, "fallback"));
+}
+
+function isKitIntentMessage(message: string) {
+  return /(kit|missing|manqu|essentiel|complete|compl[eé]ter)/i.test(message);
+}
+
+function isSizeOrUseCaseIntentMessage(message: string) {
+  return /(size|fit|sizing|taille|pointure|oz\b|ounce|sparring|combat|entrainement|entra[iî]nement|training|adapt[eé]|convient|suitable)/i.test(message);
+}
+
+function isRecommendationExplanationIntentMessage(message: string) {
+  return /(why|pourquoi|explain|explique|recommend|recommand|suggest|conseil|propose)/i.test(message);
+}
+
+function detectMessageLanguage(message: string): "fr" | "en" {
+  return /\b(est|ce|cette|les|des|pour|dans|avec|sont|vous|moi|mon|ma|du|au|que|qui|je|il|elle|ils|nous|votre|notre|adapt[eé]s?|gants|taille|boxe|sparring|entrainement|entra[iî]nement|bonjour|merci|pourquoi|comment|aussi|quel|quelle|quels|quelles|convient|adapté)\b/i.test(message) ? "fr" : "en";
+}
+
+function formatCartItemForAnswer(item: StorefrontChatRequest["cart"]["items"][number]) {
+  const title = item.productTitle || "this product";
+  const variant = item.variantTitle ? ` (${item.variantTitle})` : "";
+  return `${title}${variant}`;
+}
+
+function buildCartAwareQuestionAnswer(input: StorefrontChatRequest, intelligence: ChatIntelligenceSnapshot, lang: "fr" | "en" = "en") {
+  const latestMessage = input.messages[input.messages.length - 1]?.content.toLowerCase() ?? "";
+  const primaryItem = input.cart.items[0];
+  const primaryLabel = primaryItem ? formatCartItemForAnswer(primaryItem) : (lang === "fr" ? "ce produit" : "this cart item");
+  const asksAboutSparring = /(sparring|combat)/i.test(latestMessage);
+  const asksAboutSize = /(size|fit|sizing|taille|pointure|oz\b|ounce)/i.test(latestMessage);
+  const safetyRecommendation = intelligence.recommendationItems.find((item) => item.safetyCritical);
+  const usefulRecommendation = safetyRecommendation || intelligence.recommendationItems[0];
+  const recommendationReason = usefulRecommendation?.reason
+    ? (lang === "fr"
+        ? ` Contexte : ${usefulRecommendation.title} — ${usefulRecommendation.reason}`
+        : ` Recommendation context: ${usefulRecommendation.title} because ${usefulRecommendation.reason}`)
+    : "";
+
+  if (asksAboutSparring) {
+    return lang === "fr"
+      ? `**${primaryLabel}** : d'après le nom du produit dans le panier, il s'agit d'un équipement de combat ou d'entraînement. Je ne peux pas certifier qu'il convient au sparring sans les détails complets. Pour le sparring, confirmez le poids des gants, le niveau de rembourrage, le type de fermeture et les règles de votre salle avant de commander.${recommendationReason}`
+      : `${primaryLabel}: I can infer it is combat/training gear from the cart label, but I cannot certify sparring suitability from the cart alone. For sparring, confirm the exact glove weight, padding level, closure, and your gym rules before checkout.${recommendationReason}`;
+  }
+
+  if (asksAboutSize) {
+    if (lang === "fr") {
+      return intelligence.sizeIssueCount > 0
+        ? `**${primaryLabel}** : j'ai détecté un risque possible de taille ou de fit dans ce panier. Consultez le guide des tailles ci-dessous avant de commander.${recommendationReason}`
+        : `**${primaryLabel}** : la variante sélectionnée ne présente pas de conflit de taille évident. Confirmez quand même le guide des tailles de la marque, surtout si vous portez des protections en dessous.${recommendationReason}`;
+    }
+    return intelligence.sizeIssueCount > 0
+      ? `${primaryLabel}: I found a possible fit or size risk in this cart. Review the size guidance below before checkout.${recommendationReason}`
+      : `${primaryLabel}: the selected variant does not show an obvious cart-level size conflict. Still confirm the brand size chart and intended use, especially if you need room for wraps or protective layers.${recommendationReason}`;
+  }
+
+  if (isRecommendationExplanationIntentMessage(latestMessage) && usefulRecommendation) {
+    return lang === "fr"
+      ? `Je recommande **${usefulRecommendation.title}** car ${usefulRecommendation.reason} Résultat attendu : ${usefulRecommendation.shopperOutcome}`
+      : `I recommend ${usefulRecommendation.title} because ${usefulRecommendation.reason} Outcome: ${usefulRecommendation.shopperOutcome}`;
+  }
+
+  return lang === "fr"
+    ? `Pour **${primaryLabel}**, voici les informations disponibles à partir du panier et des signaux ci-dessous.${recommendationReason}`
+    : `For ${primaryLabel}, I can answer from the current cart context and the recommendation signals below.${recommendationReason}`;
 }
 
 function buildComparisonBlock(input: StorefrontChatRequest): StructuredGuidanceBlock {
@@ -311,26 +656,376 @@ function buildComparisonBlock(input: StorefrontChatRequest): StructuredGuidanceB
   };
 }
 
-function buildSizeBlock(): StructuredGuidanceBlock {
-  return {
-    blockId: "size-1",
-    type: "size_summary",
-    title: "Sizing summary",
-    summary: "Double-check fit-related selections before checkout.",
-    priority: 1,
-    confidence: 0.42,
-    highlights: [
-      "Compare the selected variant against the shopper's expected fit.",
-      "If the cart mixes apparel and gear sizes, confirm they align before checkout.",
-    ],
-  };
+function buildSizeBlock(lang: "fr" | "en" = "en"): StructuredGuidanceBlock {
+  return lang === "fr"
+    ? {
+        blockId: "size-1",
+        type: "size_summary",
+        title: "Résumé des tailles",
+        summary: "Vérifiez vos sélections de taille avant de finaliser la commande.",
+        priority: 1,
+        confidence: 0.42,
+        highlights: [
+          "Comparez la variante sélectionnée avec la taille habituelle.",
+          "Si le panier mélange vêtements et équipements, vérifiez la cohérence des tailles avant de commander.",
+        ],
+      }
+    : {
+        blockId: "size-1",
+        type: "size_summary",
+        title: "Sizing summary",
+        summary: "Double-check fit-related selections before checkout.",
+        priority: 1,
+        confidence: 0.42,
+        highlights: [
+          "Compare the selected variant against the shopper's expected fit.",
+          "If the cart mixes apparel and gear sizes, confirm they align before checkout.",
+        ],
+      };
 }
 
-export function buildStorefrontChatReply(
+async function buildIntelligentSnapshot(input: StorefrontChatRequest, lang: "fr" | "en" = "en"): Promise<ChatIntelligenceSnapshot> {
+  const fallbackItems = lang === "fr" ? buildFallbackRecommendationsFr(input) : buildFallbackRecommendations(input);
+
+  try {
+    const resolvedLines = await resolveCartLines(input);
+    const matchedLines = resolvedLines.filter((line) => line.productRow);
+    const recommendationItems: RecommendationItem[] = [...fallbackItems];
+    let missingCount = 0;
+    let sizeIssueCount = 0;
+    let personalizationApplied = false;
+    let historyApplied = false;
+    let sizeBlock: StructuredGuidanceBlock | undefined;
+
+    const unavailableLines = matchedLines.filter((line) => (line.variantRow?.inventoryQuantity ?? 1) <= 0);
+    for (const line of unavailableLines.slice(0, 2)) {
+      recommendationItems.unshift({
+        productId: line.inputLine.productId,
+        productTitle: line.inputLine.productTitle,
+        variantId: line.inputLine.variantId,
+        variantTitle: line.inputLine.variantTitle,
+        title: `${toDisplayName(line.inputLine, "Item")} appears unavailable`,
+        action: "remove",
+        priorityLabel: "high",
+        reason: "This selected variant appears out of stock and may block checkout completion.",
+        shopperOutcome: "Removes a blocked item so the cart can be checked out reliably.",
+        safetyCritical: true,
+        availability: "unavailable",
+        evidenceTags: ["availability", "safety"],
+      });
+      sizeIssueCount += 1;
+    }
+
+    const storedProfile = await getSessionCustomerProfile(input.shop, input.sessionKey).catch(() => null);
+    if (storedProfile) {
+      const resolvedProfile = resolveCustomerProfile({
+        shop: input.shop,
+        sessionId: input.sessionKey,
+        storedProfile: toStoredProfileSnapshot(storedProfile),
+      });
+      personalizationApplied = Object.keys(resolvedProfile.knownSizes).length > 0
+        || resolvedProfile.disciplinePreferences.length > 0;
+
+      if (Object.keys(resolvedProfile.knownSizes).length > 0) {
+        for (const line of matchedLines) {
+          const categoryTag = pickCategoryTag(line);
+          const expectedSize = categoryTag ? resolvedProfile.knownSizes[categoryTag] : undefined;
+          const selectedSize = line.variantRow?.sizeValue || line.inputLine.variantTitle;
+
+          if (expectedSize && selectedSize && !selectedSize.toLowerCase().includes(expectedSize.toLowerCase())) {
+            recommendationItems.unshift({
+              productId: line.inputLine.productId,
+              productTitle: line.inputLine.productTitle,
+              variantId: line.inputLine.variantId,
+              variantTitle: line.inputLine.variantTitle,
+              title: `${toDisplayName(line.inputLine, "Item")}: size profile check`,
+              action: "size_adjust",
+              priorityLabel: "high",
+              reason: `Your usual ${categoryTag} size is ${expectedSize}, but this line currently looks like ${selectedSize}.`,
+              shopperOutcome: "Reduces mismatch risk based on your saved size habits.",
+              safetyCritical: true,
+              availability: "unknown",
+              evidenceTags: ["profile", "size"],
+            });
+            sizeIssueCount += 1;
+          }
+        }
+      }
+
+      if (storedProfile.shopifyCustomerId) {
+        const snapshots = await listCustomerPurchaseSnapshots(input.shop, storedProfile.shopifyCustomerId).catch(() => []);
+        if (snapshots.length > 0) {
+          historyApplied = true;
+          const lifecycleRules = await listActiveReplenishmentLifecycleRules(
+            input.shop,
+            Array.from(new Set(snapshots.map((snapshot) => snapshot.categoryTag))),
+          ).catch(() => []);
+
+          if (lifecycleRules.length > 0) {
+            const replenishment = buildReplenishmentRecommendations(evaluateReplenishmentCandidates({
+              shop: input.shop,
+              shopifyCustomerId: storedProfile.shopifyCustomerId,
+              profile: storedProfile,
+              purchaseSnapshots: snapshots,
+              lifecycleRules,
+            }));
+
+            if (replenishment?.opportunities.length) {
+              const top = replenishment.opportunities[0];
+              recommendationItems.push({
+                productId: top.productId,
+                variantId: top.variantId,
+                title: `${top.title}: ${top.dueState === "due" ? "due for refresh" : "refresh window near"}`,
+                action: "add",
+                priorityLabel: "medium",
+                reason: top.reason,
+                shopperOutcome: "Keeps recurring gear in stock based on your purchase rhythm.",
+                safetyCritical: false,
+                availability: top.actionTarget ? (top.actionTarget.available ? "available" : "unavailable") : "unknown",
+                evidenceTags: ["history"],
+              });
+            }
+          }
+        }
+      }
+    }
+
+    const disciplineTags = Array.from(new Set(matchedLines.flatMap((line) => line.productRow?.disciplineTags ?? [])));
+
+    let kitDefinitions = await listActiveKitDefinitions(
+      input.shop,
+      disciplineTags.length > 0 ? disciplineTags : undefined,
+    ).catch(() => []);
+
+    if (kitDefinitions.length === 0) {
+      kitDefinitions = await listActiveKitDefinitions(input.shop).catch(() => []);
+    }
+
+    if (kitDefinitions.length > 0 && matchedLines.length > 0) {
+      const uniqueInternalIds = Array.from(new Set(
+        matchedLines.map((line) => line.productRow?.id).filter((value): value is string => Boolean(value)),
+      ));
+      const relationshipSets = await Promise.all(
+        uniqueInternalIds.map((id) => getActiveRelationshipsForProduct(input.shop, id).catch(() => [])),
+      );
+      const relationshipMap = new Map<string, { sourceProductId: string; targetProductId: string; relationshipType: "COMPLEMENTS" | "UPGRADES" | "ALTERNATIVES" | "CONFLICTS" | "SAME_COLLECTION"; strength: number }>();
+
+      for (const rows of relationshipSets) {
+        for (const row of rows) {
+          relationshipMap.set(
+            `${row.sourceProductId}|${row.targetProductId}|${row.relationshipType}`,
+            {
+              sourceProductId: row.sourceProductId,
+              targetProductId: row.targetProductId,
+              relationshipType: row.relationshipType,
+              strength: row.strength,
+            },
+          );
+        }
+      }
+
+      const kitAssessments = await detectKitCompleteness({
+        shop: input.shop,
+        items: matchedLines
+          .filter((line): line is ResolvedCartLine & { productRow: NonNullable<ResolvedCartLine["productRow"]> } => Boolean(line.productRow))
+          .map((line) => ({
+            productId: line.productRow.id,
+            shopifyProductId: line.productRow.shopifyProductId,
+            title: line.productRow.title,
+            quantity: line.inputLine.quantity,
+            availableForSale: (line.variantRow?.inventoryQuantity ?? 1) > 0,
+            disciplineTags: line.productRow.disciplineTags,
+            categoryTags: line.productRow.categoryTags,
+          })),
+        kitDefinitions,
+        relationships: Array.from(relationshipMap.values()),
+      });
+
+      const missingKitRecommendations = buildKitRecommendations(kitAssessments);
+      missingCount += missingKitRecommendations.reduce((sum, item) => sum + item.missingRecommendations.length, 0);
+      for (const kit of missingKitRecommendations.slice(0, 1)) {
+        for (const missing of kit.missingRecommendations.slice(0, 2)) {
+          recommendationItems.push({
+            title: `${missing.title} (${kit.label})`,
+            action: "add",
+            priorityLabel: missing.recommendationType === "required_missing" ? "high" : "medium",
+            reason: missing.reasons[0]?.message || `${missing.title} is still missing for ${kit.label}.`,
+            shopperOutcome: "Completes key kit requirements and avoids missing essentials.",
+            safetyCritical: missing.recommendationType === "required_missing",
+            availability: "unknown",
+            evidenceTags: missing.recommendationType === "required_missing" ? ["kit", "safety"] : ["kit"],
+          });
+        }
+      }
+    }
+
+    const sizeConflictLines = matchedLines
+      .filter((line) => Boolean(line.variantRow?.sizeValue || line.inputLine.variantTitle))
+      .map((line) => ({
+        productId: line.inputLine.productId,
+        variantId: line.inputLine.variantId || line.variantRow?.shopifyVariantId || line.inputLine.productId,
+        categoryTag: pickCategoryTag(line),
+        sizeValue: line.variantRow?.sizeValue || line.inputLine.variantTitle || "",
+        sizeCategory: line.variantRow?.sizeCategory || "general",
+        isChildProduct: detectChildSizing(line),
+        ...(line.inputLine.productTitle ? { title: line.inputLine.productTitle } : {}),
+        ...(line.variantRow?.inventoryQuantity !== undefined ? { inventoryQuantity: line.variantRow.inventoryQuantity } : {}),
+      }))
+      .filter((line) => line.categoryTag.length > 0 && line.sizeValue.length > 0);
+
+    if (sizeConflictLines.length >= 2) {
+      const sizeConflicts = await detectSizeConflicts({
+        shop: input.shop,
+        cartItems: sizeConflictLines,
+      });
+
+      if (sizeConflicts.summary.total > 0) {
+        sizeIssueCount += sizeConflicts.summary.total;
+        sizeBlock = {
+          blockId: "size-db-1",
+          type: "size_summary",
+          title: sizeConflicts.hasErrors ? "Critical size conflicts found" : "Potential size mismatches found",
+          summary: sizeConflicts.conflicts[0]?.message || "Some cart lines may have sizing inconsistencies.",
+          priority: 1,
+          confidence: sizeConflicts.hasErrors ? 0.92 : 0.78,
+          highlights: sizeConflicts.conflicts.slice(0, 3).map((conflict) => conflict.suggestedCorrection || conflict.message),
+        };
+
+        const topConflict = sizeConflicts.conflicts[0];
+        if (topConflict) {
+          recommendationItems.unshift({
+            productId: topConflict.itemA.productId,
+            variantId: topConflict.itemA.variantId,
+            title: topConflict.severity === "ERROR" ? "Resolve a critical size conflict" : "Adjust a mismatched size pair",
+            action: "size_adjust",
+            priorityLabel: topConflict.severity === "ERROR" ? "high" : "medium",
+            reason: topConflict.message,
+            shopperOutcome: "Improves fit consistency and reduces exchange risk.",
+            safetyCritical: topConflict.severity === "ERROR",
+            availability: "unknown",
+            evidenceTags: topConflict.severity === "ERROR" ? ["size", "safety"] : ["size"],
+          });
+        }
+      }
+    }
+
+    const thresholdCartItems = matchedLines
+      .filter((line): line is ResolvedCartLine & { productRow: NonNullable<ResolvedCartLine["productRow"]>; variantRow: NonNullable<ResolvedCartLine["variantRow"]> } => (
+        Boolean(line.productRow && line.variantRow)
+      ))
+      .map((line) => ({
+        productId: line.productRow.id,
+        shopifyProductId: line.productRow.shopifyProductId,
+        variantId: line.variantRow.id,
+        shopifyVariantId: line.variantRow.shopifyVariantId,
+        title: line.productRow.title,
+        quantity: line.inputLine.quantity,
+        availableForSale: (line.variantRow.inventoryQuantity ?? 1) > 0,
+        categoryTags: line.productRow.categoryTags,
+        disciplineTags: line.productRow.disciplineTags,
+        unitPrice: line.variantRow.price ?? null,
+      }));
+
+    const cartSubtotal = thresholdCartItems.reduce((sum, line) => (
+      sum + ((line.unitPrice ?? 0) * line.quantity)
+    ), 0);
+
+    if (thresholdCartItems.length > 0 && cartSubtotal > 0) {
+      const thresholdRequest = await buildThresholdEvaluationRequest(
+        input.shop,
+        thresholdCartItems,
+        cartSubtotal,
+        input.cart.currencyCode,
+      );
+      const thresholdResult = evaluateThreshold(thresholdRequest);
+      const thresholdPayload = buildThresholdRecommendations(thresholdResult);
+
+      if (thresholdPayload.summary.status === "eligible") {
+        missingCount += 1;
+        for (const suggestion of thresholdPayload.suggestions.slice(0, 2)) {
+          recommendationItems.push({
+            productId: suggestion.productId,
+            variantId: suggestion.variantId,
+            title: suggestion.title,
+            action: "add",
+            priorityLabel: "medium",
+            reason: `${suggestion.reason} ${suggestion.unlockMessage}`,
+            shopperOutcome: "Adds relevant products that improve value and cart utility.",
+            safetyCritical: false,
+            priceLabel: suggestion.priceLabel,
+            availability: "unknown",
+            evidenceTags: ["threshold", "compatibility"],
+          });
+        }
+      }
+    }
+
+    const prioritized = dedupeRecommendationItems(recommendationItems)
+      .sort((left, right) => {
+        const rank = { high: 0, medium: 1, low: 2 } as const;
+        if ((left.safetyCritical ? 0 : 1) !== (right.safetyCritical ? 0 : 1)) {
+          return (left.safetyCritical ? 0 : 1) - (right.safetyCritical ? 0 : 1);
+        }
+
+        return rank[left.priorityLabel] - rank[right.priorityLabel];
+      })
+      .slice(0, 6);
+
+    return {
+      recommendationItems: prioritized,
+      ...(sizeBlock ? { sizeBlock } : {}),
+      missingCount,
+      sizeIssueCount,
+      personalizationApplied,
+      historyApplied,
+    };
+  } catch {
+    return {
+      recommendationItems: fallbackItems,
+      missingCount: 0,
+      sizeIssueCount: 0,
+      personalizationApplied: false,
+      historyApplied: false,
+    };
+  }
+}
+
+async function buildIntelligentSnapshotWithTimeout(input: StorefrontChatRequest, lang: "fr" | "en" = "en"): Promise<ChatIntelligenceSnapshot> {
+  const fallback = {
+    recommendationItems: lang === "fr" ? buildFallbackRecommendationsFr(input) : buildFallbackRecommendations(input),
+    missingCount: 0,
+    sizeIssueCount: 0,
+    personalizationApplied: false,
+    historyApplied: false,
+  } satisfies ChatIntelligenceSnapshot;
+
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    const timeoutPromise = new Promise<ChatIntelligenceSnapshot>((resolve) => {
+      timeoutId = setTimeout(() => resolve(fallback), CHAT_INTELLIGENCE_TIMEOUT_MS);
+    });
+
+    return await Promise.race([
+      buildIntelligentSnapshot(input, lang),
+      timeoutPromise,
+    ]);
+  } catch {
+    return fallback;
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
+export async function buildStorefrontChatReply(
   input: StorefrontChatRequest,
   behavior?: AIBehaviorDraftPayload,
 ) {
   const latestMessage = input.messages[input.messages.length - 1]?.content.toLowerCase() ?? "";
+  const lang = detectMessageLanguage(latestMessage);
+  const kitIntent = isKitIntentMessage(latestMessage);
   const systemPrompt = buildStorefrontChatSystemPrompt({
     ...input,
     ...(behavior ? { behavior } : {}),
@@ -338,43 +1033,307 @@ export function buildStorefrontChatReply(
 
   if (input.cart.items.length === 0) {
     return {
-      text: `${systemPrompt} Your cart is empty right now, so I can only give general guidance. Add at least one item and I can give specific keep/add/remove/swap/size advice.`,
-      guidanceBlocks: [buildFallbackBlock("Add at least one cart item, then ask what to keep, add, remove, swap, or resize.")],
+      text: lang === "fr"
+        ? `${systemPrompt} Votre panier est vide. Ajoutez au moins un article pour que je puisse vous donner des conseils personnalisés (garder/ajouter/retirer/échanger/taille).`
+        : `${systemPrompt} Your cart is empty right now, so I can only give general guidance. Add at least one item and I can give specific keep/add/remove/swap/size advice.`,
+      guidanceBlocks: [buildFallbackBlock(
+        lang === "fr"
+          ? "Ajoutez au moins un article au panier pour obtenir des conseils personnalisés."
+          : "Add at least one cart item, then ask what to keep, add, remove, swap, or resize.",
+        lang,
+      )],
     };
   }
 
-  if (latestMessage.includes("missing") || latestMessage.includes("budget") || latestMessage.includes("optimiz")) {
+  const intelligence = await buildIntelligentSnapshotWithTimeout(input, lang);
+  const summaryParts = lang === "fr"
+    ? [
+        intelligence.missingCount > 0 ? `${intelligence.missingCount} lacune${intelligence.missingCount > 1 ? "s" : ""} identifiée${intelligence.missingCount > 1 ? "s" : ""}.` : null,
+        intelligence.sizeIssueCount > 0 ? `${intelligence.sizeIssueCount} risque${intelligence.sizeIssueCount > 1 ? "s" : ""} de taille détecté${intelligence.sizeIssueCount > 1 ? "s" : ""}.` : null,
+        intelligence.personalizationApplied ? "Les recommandations sont adaptées à votre profil." : null,
+        intelligence.historyApplied ? "L'historique d'achats a été pris en compte." : null,
+      ].filter((value): value is string => Boolean(value))
+    : [
+        intelligence.missingCount > 0 ? `${intelligence.missingCount} useful gap${intelligence.missingCount > 1 ? "s" : ""} identified.` : null,
+        intelligence.sizeIssueCount > 0 ? `${intelligence.sizeIssueCount} size/choice risk${intelligence.sizeIssueCount > 1 ? "s" : ""} detected.` : null,
+        intelligence.personalizationApplied ? "Recommendations are adapted to profile signals." : null,
+        intelligence.historyApplied ? "Purchase history signals were included." : null,
+      ].filter((value): value is string => Boolean(value));
+  const recommendationBlock = buildRecommendationBlock(intelligence.recommendationItems, lang);
+  const kitRecommendationItems = intelligence.recommendationItems.filter((item) => hasEvidenceTag(item, "kit"));
+  const hasKitRecommendations = kitRecommendationItems.length > 0;
+  const fallbackOnly = isFallbackOnlyRecommendations(intelligence.recommendationItems);
+  const sizeGuidanceBlock = intelligence.sizeBlock || buildSizeBlock(lang);
+
+  if (isSizeOrUseCaseIntentMessage(latestMessage) || isRecommendationExplanationIntentMessage(latestMessage)) {
     return {
-      text: "Here are prioritized cart actions, with safety and compatibility first.",
-      guidanceBlocks: [buildRecommendationBlock(input)],
+      text: buildCartAwareQuestionAnswer(input, intelligence, lang),
+      guidanceBlocks: [sizeGuidanceBlock, recommendationBlock],
+    };
+  }
+
+  if (kitIntent) {
+    if (hasKitRecommendations) {
+      return {
+        text: lang === "fr"
+          ? summaryParts.length > 0
+            ? `Voici ce qu'il manque encore pour compléter votre kit, en commençant par les essentiels. ${summaryParts.join(" ")}`
+            : "Voici ce qu'il manque encore pour compléter votre kit, en commençant par les essentiels."
+          : summaryParts.length > 0
+            ? `Here is what is still missing to complete your kit, prioritized by required essentials first. ${summaryParts.join(" ")}`
+            : "Here is what is still missing to complete your kit, prioritized by required essentials first.",
+        guidanceBlocks: [buildRecommendationBlock(kitRecommendationItems, lang), ...(intelligence.sizeBlock ? [intelligence.sizeBlock] : [])],
+      };
+    }
+
+    if (fallbackOnly) {
+      return {
+        text: lang === "fr"
+          ? "Je ne peux pas encore déduire un kit complet à partir du panier actuel. Ajoutez au moins un article de discipline principale (gants, bandages, protège-tibias ou pièce de gi) et je listerai exactement ce qui manque."
+          : "I cannot reliably infer a full kit baseline from the current cart yet. Add at least one core discipline item (for example gloves, wraps, shin guards, or gi pieces), and I will list exactly what is missing.",
+        guidanceBlocks: [
+          buildFallbackBlock(
+            lang === "fr"
+              ? "Aucune base de kit complète détectée. Posez la question après avoir ajouté un article de discipline principale."
+              : "No complete kit baseline was detected for these cart lines. Ask again after adding a core discipline item, and I will return missing essentials first.",
+            lang,
+          ),
+          ...(intelligence.sizeBlock ? [intelligence.sizeBlock] : []),
+        ],
+      };
+    }
+
+    return {
+      text: lang === "fr"
+        ? summaryParts.length > 0
+          ? `Voici les manques prioritaires que je peux déduire de votre panier actuel. ${summaryParts.join(" ")}`
+          : "Voici les manques prioritaires que je peux déduire de votre panier actuel."
+        : summaryParts.length > 0
+          ? `Here are the highest-priority gaps I can infer from your current cart. ${summaryParts.join(" ")}`
+          : "Here are the highest-priority gaps I can infer from your current cart.",
+      guidanceBlocks: [recommendationBlock, ...(intelligence.sizeBlock ? [intelligence.sizeBlock] : [])],
+    };
+  }
+
+  if (latestMessage.includes("missing") || latestMessage.includes("budget") || /optimi[sz]/.test(latestMessage)) {
+    return {
+      text: lang === "fr"
+        ? summaryParts.length > 0
+          ? `J'ai préparé un plan d'optimisation budgétaire. Consultez les modifications proposées ci-dessous, puis choisissez d'appliquer ou de refuser. ${summaryParts.join(" ")}`
+          : "J'ai préparé un plan d'optimisation budgétaire. Consultez les modifications proposées ci-dessous, puis choisissez d'appliquer ou de refuser."
+        : summaryParts.length > 0
+          ? `I prepared a budget optimization plan for your target. Review the proposed changes below, then choose whether to apply or decline. ${summaryParts.join(" ")}`
+          : "I prepared a budget optimization plan for your target. Review the proposed changes below, then choose whether to apply or decline.",
+      guidanceBlocks: [],
     };
   }
 
   if (latestMessage.includes("compare")) {
     return {
-      text: "Here is a quick comparison based on the items currently in the cart.",
+      text: lang === "fr"
+        ? "Voici une comparaison rapide des articles actuellement dans le panier."
+        : "Here is a quick comparison based on the items currently in the cart.",
       guidanceBlocks: [buildComparisonBlock(input)],
     };
   }
 
   if (latestMessage.includes("size") || latestMessage.includes("fit")) {
     return {
-      text: "Here is the fit guidance I can infer from the current cart.",
-      guidanceBlocks: [buildSizeBlock()],
+      text: lang === "fr"
+        ? intelligence.sizeIssueCount > 0
+          ? "Voici le guide de taille basé sur les règles enregistrées, les signaux de profil et les vérifications de cohérence."
+          : "Voici le guide de taille que je peux déduire du panier actuel."
+        : intelligence.sizeIssueCount > 0
+          ? "Here is fit guidance from stored size rules, profile signals, and cart-level consistency checks."
+          : "Here is the fit guidance I can infer from the current cart.",
+      guidanceBlocks: [sizeGuidanceBlock, recommendationBlock],
     };
   }
 
   return {
-    text: "Here is a relevant, cart-specific recommendation based on your current items.",
-    guidanceBlocks: [buildRecommendationBlock(input)],
+    text: lang === "fr"
+      ? summaryParts.length > 0
+        ? `Voici des recommandations personnalisées pour votre panier. ${summaryParts.join(" ")}`
+        : "Voici une recommandation personnalisée basée sur les articles actuels de votre panier."
+      : summaryParts.length > 0
+        ? `Here are cart-specific recommendations grounded in your shop data. ${summaryParts.join(" ")}`
+        : "Here is a relevant, cart-specific recommendation based on your current items.",
+    guidanceBlocks: [recommendationBlock, ...(intelligence.sizeBlock ? [intelligence.sizeBlock] : [])],
   };
 }
 
-export function buildStorefrontChatStreamParts(
+// ─── Compatible-add: knowledge-graph powered proposal ───────────────────────
+
+// Detects add-intent messages that reference a cart item as context
+// (mirrors the REFERENCE_RELATION_PATTERN guard in tools.ts — keep in sync).
+const COMPATIBLE_RELATION_PHRASE_RE =
+  /\b(?:compatible\s+(?:with|avec|a|au)?|(?:for|pour|for\s+this|pour\s+ce[tte]?|for\s+my|pour\s+mon(?:ma)?)|(?:with|avec)|(?:that\s+goes?\s+with|qui\s+va\s+avec)|(?:to\s+use\s+with|a\s+utiliser\s+avec))\s+/i;
+
+function normalizeForCompatSearch(text: string) {
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
+
+function scoreCompatibleProduct(
+  product: { title: string; tags: string[]; categoryTags: string[]; disciplineTags: string[] },
+  tokens: string[],
+) {
+  const haystack = normalizeForCompatSearch(
+    [product.title, ...product.tags, ...product.categoryTags, ...product.disciplineTags].join(" "),
+  );
+  return tokens.reduce((score, token) => score + (haystack.includes(token) ? 1 : 0), 0);
+}
+
+/**
+ * When a shopper says "add boxing gloves compatible with this short", look up
+ * COMPLEMENTS relationships in the knowledge graph for the referenced cart
+ * product and propose an addToCart action for the best-matching compatible
+ * product.  Returns null if intent cannot be resolved or no match is found.
+ */
+export async function resolveCompatibleAddActionProposal(
+  input: StorefrontChatRequest,
+): Promise<CartToolAction | null> {
+  const latest = input.messages[input.messages.length - 1]?.content ?? "";
+  const normalized = normalizeForCompatSearch(latest);
+
+  // Must be an add intent with a reference-relation phrase
+  if (!/\b(add|ajoute|insert|include)\b/.test(normalized)) return null;
+  if (!COMPATIBLE_RELATION_PHRASE_RE.test(normalized)) return null;
+
+  // Split on the reference phrase: [before] [after]
+  const parts = normalized.split(COMPATIBLE_RELATION_PHRASE_RE);
+  const beforeRef = parts[0] ?? "";
+  const afterRef = parts[1]?.trim() ?? normalized;
+
+  // Extract add-target keywords (strip verb + articles)
+  const addTargetText = beforeRef
+    .replace(/^\s*\b(ajoute|add|insert|include)\b\s*/i, "")
+    .replace(/\b(un|une|des|a|an|some|le|la|les|du|de|l|d)\b\s*/gi, "")
+    .trim();
+
+  const searchTokens = addTargetText.split(/[^a-z0-9]+/).filter((t) => t.length >= 3);
+  if (searchTokens.length === 0) return null;
+
+  // Resolve cart lines to DB product records
+  const resolvedLines = await resolveCartLines(input).catch(() => [] as ResolvedCartLine[]);
+
+  // Identify the referenced cart item from the text after the relation phrase
+  const referencedLine = resolvedLines.find((line) => {
+    const title = line.inputLine.productTitle;
+    if (!title) return false;
+    const normalizedTitle = normalizeForCompatSearch(title);
+    return normalizedTitle
+      .split(/[^a-z0-9]+/)
+      .some((t) => t.length >= 4 && afterRef.includes(t));
+  }) ?? resolvedLines[0];
+
+  if (!referencedLine?.productRow?.id) return null;
+
+  // Query COMPLEMENTS relationships for the referenced product
+  const relationships = await getActiveRelationshipsForProduct(
+    input.shop,
+    referencedLine.productRow.id,
+  ).catch(() => []);
+
+  const complementIds = relationships
+    .filter((r) => r.relationshipType === "COMPLEMENTS")
+    .map((r) =>
+      r.sourceProductId === referencedLine.productRow!.id ? r.targetProductId : r.sourceProductId,
+    );
+
+  if (complementIds.length === 0) return null;
+
+  // Fetch compatible products with up to 3 variants for availability check
+  const relatedProducts = await db.product.findMany({
+    where: {
+      shop: input.shop,
+      id: { in: complementIds },
+      status: "ACTIVE",
+    },
+    select: {
+      id: true,
+      shopifyProductId: true,
+      title: true,
+      tags: true,
+      disciplineTags: true,
+      categoryTags: true,
+      variants: {
+        orderBy: { inventoryQuantity: "desc" },
+        take: 3,
+        select: {
+          id: true,
+          shopifyVariantId: true,
+          title: true,
+          inventoryQuantity: true,
+        },
+      },
+    },
+  }).catch(() => []);
+
+  if (relatedProducts.length === 0) return null;
+
+  // Score each product and pick the best keyword match
+  const best = relatedProducts
+    .map((p) => ({ product: p, score: scoreCompatibleProduct(p, searchTokens) }))
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score)[0]?.product;
+
+  if (!best) return null;
+
+  // Prefer in-stock variants; fall back to first available
+  const variant =
+    best.variants.find((v) => (v.inventoryQuantity ?? 1) > 0) ?? best.variants[0];
+
+  if (!variant) return null;
+
+  // Build the CartToolAction
+  const actionId = crypto.randomUUID();
+  const token = issueActionConfirmationToken({
+    actionId,
+    shop: input.shop,
+    sessionKey: input.sessionKey,
+    cartId: input.cart.cartId,
+  });
+
+  const variantLabel = variant.title && variant.title !== "Default Title" ? ` / ${variant.title}` : "";
+
+  const action: CartToolAction = {
+    actionId,
+    toolName: "addToCart",
+    shop: input.shop,
+    sessionKey: input.sessionKey,
+    ...(input.cart.cartId ? { cartId: input.cart.cartId } : {}),
+    payload: {
+      actionType: "add",
+      merchandiseId: variant.shopifyVariantId,
+      quantity: 1,
+    },
+    preview: {
+      after: `Add 1 x ${best.title}${variantLabel}`,
+    },
+    confirmationToken: token.token,
+    expiresAt: token.expiresAt,
+  };
+
+  createCartToolActionRecord({
+    actionId,
+    shop: action.shop,
+    sessionKey: action.sessionKey,
+    cartId: action.cartId,
+    payload: action.payload,
+  });
+
+  return action;
+}
+
+export async function buildStorefrontChatStreamParts(
   input: StorefrontChatRequest,
   behavior?: AIBehaviorDraftPayload,
-): StorefrontChatStreamPart[] {
-  const reply = buildStorefrontChatReply(input, behavior);
+): Promise<StorefrontChatStreamPart[]> {
+  const reply = await buildStorefrontChatReply(input, behavior);
   const messageId = `${input.sessionKey}-assistant-${input.messages.length}`;
 
   return [

@@ -15,6 +15,7 @@ export function CartMindSurface({ config, children }: CartMindSurfaceProps) {
     showKitCompleteness: true,
     showSizeWarnings: true,
     showChatEntry: true,
+    showReasonTags: true,
   };
   const filteredGuidance = guidance
     ? {

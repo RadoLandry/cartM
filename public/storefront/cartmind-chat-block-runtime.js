@@ -548,6 +548,31 @@
         color: #40516d;
       }
 
+      .cm-reason-chips {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+        margin-top: 6px;
+      }
+
+      .cm-reason-chips__label {
+        font-size: 11px;
+        color: #5b6c88;
+        font-weight: 700;
+      }
+
+      .cm-reason-chip {
+        border: 1px solid #c9d6e8;
+        border-radius: 999px;
+        background: #eef4fb;
+        color: #20466e;
+        padding: 2px 8px;
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+
       .cm-action-card {
         border: 1px solid #e3e7ef;
         border-radius: 12px;
@@ -692,14 +717,59 @@
     `;
   }
 
-  function renderGuidanceBlock(block) {
+  function toReasonLabel(tag) {
+    switch (String(tag || "").toLowerCase()) {
+      case "profile": return "Profil";
+      case "history": return "Historique";
+      case "size": return "Taille";
+      case "kit": return "Kit";
+      case "threshold": return "Seuil";
+      case "availability": return "Disponibilite";
+      case "compatibility": return "Compatibilite";
+      case "safety": return "Securite";
+      case "fallback": return "Contexte";
+      default: return "Signal";
+    }
+  }
+
+  function renderReasonTags(item, config) {
+    const features = config && config.features ? config.features : {};
+    const enabled = features.showReasonTags !== false;
+    const tags = item && Array.isArray(item.evidenceTags) ? item.evidenceTags : [];
+
+    if (!enabled || tags.length === 0) {
+      return "";
+    }
+
+    const chips = tags
+      .slice(0, 5)
+      .map((tag) => `<span class="cm-reason-chip">${escapeHtml(toReasonLabel(tag))}</span>`)
+      .join("");
+
+    if (!chips) {
+      return "";
+    }
+
+    return `<div class="cm-reason-chips"><span class="cm-reason-chips__label">Pourquoi:</span>${chips}</div>`;
+  }
+
+  function renderGuidanceBlock(block, config) {
     if (!block || typeof block !== "object") {
       return "";
     }
 
     if (block.type === "recommendation_list") {
       const items = Array.isArray(block.items)
-        ? block.items.slice(0, 4).map((item) => `<li><strong>${escapeHtml(item.title || item.productTitle || "Recommendation")}</strong> ${escapeHtml(item.reason || "")}</li>`).join("")
+        ? block.items.slice(0, 4).map((item) => {
+          const title = escapeHtml(item.title || item.productTitle || "Recommendation");
+          const reason = escapeHtml(item.reason || "");
+          const outcome = item && item.shopperOutcome
+            ? `<div>${escapeHtml(item.shopperOutcome)}</div>`
+            : "";
+          const reasons = renderReasonTags(item, config);
+
+          return `<li><strong>${title}</strong>${reasons}<div>${reason}</div>${outcome}</li>`;
+        }).join("")
         : "";
       return `<div class="cm-guidance-card"><strong>${escapeHtml(block.title)}</strong><p>${escapeHtml(block.summary)}</p>${items ? `<ul>${items}</ul>` : ""}</div>`;
     }
@@ -1187,7 +1257,7 @@
         <span class="cm-message__label">${message.role === "assistant" ? "CartMind" : "You"}</span>
         <div class="cm-message__content">${escapeHtml(message.content || (message.role === "assistant" && state.sending ? "Thinking..." : ""))}</div>
         ${Array.isArray(message.guidanceBlocks) && message.guidanceBlocks.length > 0
-          ? `<div class="cm-guidance-list">${message.guidanceBlocks.map((block) => renderGuidanceBlock(block)).join("")}</div>`
+          ? `<div class="cm-guidance-list">${message.guidanceBlocks.map((block) => renderGuidanceBlock(block, state.config)).join("")}</div>`
           : ""}
         ${Array.isArray(message.actionProposals) && message.actionProposals.length > 0
           ? `<div class="cm-guidance-list">${message.actionProposals.map((action) => renderActionProposal(action, state)).join("")}</div>`
@@ -1216,7 +1286,7 @@
             <div class="cm-messages">${messagesHtml}</div>
             ${state.error ? `<div class="cm-error">${escapeHtml(state.error)}</div>` : ""}
             <form class="cm-form" data-role="chat-form">
-              <textarea name="message" placeholder="Ask about fit, comparisons, or what pairs well with this cart." ${state.sending || totalItems === 0 ? "disabled" : ""}>${escapeHtml(state.draft)}</textarea>
+              <textarea name="message" placeholder="Posez une question sur la taille, les comparaisons ou ce qui va bien avec ce panier." ${state.sending || totalItems === 0 ? "disabled" : ""}>${escapeHtml(state.draft)}</textarea>
               <div class="cm-form__actions">
                 <span class="cm-form__hint">${totalItems === 0 ? "Cart required" : "Cart-aware assistant"}</span>
                 <button class="cm-submit" type="submit" ${state.sending || totalItems === 0 ? "disabled" : ""}>${state.sending ? "Sending..." : "Send"}</button>
@@ -1324,7 +1394,7 @@
         {
           id: `assistant-${Date.now()}`,
           role: "assistant",
-          content: (config.labels && config.labels.assistantGreeting) || config.assistantGreeting || "Ask about fit, comparisons, or what works well with the items already in your cart.",
+          content: (config.labels && config.labels.assistantGreeting) || config.assistantGreeting || "Posez une question sur la taille, les comparaisons ou ce qui va bien avec les articles déjà dans votre panier.",
           guidanceBlocks: [],
         },
       ],

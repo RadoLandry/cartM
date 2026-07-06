@@ -427,8 +427,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         : payload.candidateIds || [];
       const availableCandidateIds = new Set(optimizationResult.candidates.map((candidate) => candidate.candidateId));
       const selectedCandidateIds = requestedCandidateIds.filter((candidateId) => availableCandidateIds.has(candidateId));
+      const selectedCandidates = optimizationResult.candidates.filter((candidate) => (
+        selectedCandidateIds.includes(candidate.candidateId)
+      ));
 
-      if (selectedCandidateIds.length === 0) {
+      if (selectedCandidateIds.length === 0 || selectedCandidates.length === 0) {
         const failedTransition = transitionCartToolActionRecord({
           actionId: parsed.data.actionId,
           nextStatus: "failed",
@@ -453,6 +456,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         actionId: parsed.data.actionId,
         optimizationContextId: parsed.data.optimizationContextId,
         candidateIds: selectedCandidateIds,
+        candidates: selectedCandidates,
         cart: {
           cartId: parsed.data.cart?.cartId,
           currencyCode: parsed.data.cart?.currencyCode || "USD",
@@ -532,6 +536,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       newMerchandiseId?: string;
       quantity?: number;
       lineId?: string;
+      changes?: Array<{
+        lineId: string;
+        quantity: number;
+      }>;
     };
     const cartSnapshot = {
       cartId: parsed.data.cart?.cartId,
@@ -545,9 +553,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       subtotal: parsed.data.cart?.subtotal,
     };
 
-    const missingLine = actionPayload.lineId
-      ? !cartSnapshot.items.some((item) => item.lineId === actionPayload.lineId)
-      : false;
+    const targetLineIds = actionPayload.changes?.length
+      ? actionPayload.changes.map((change) => change.lineId)
+      : actionPayload.lineId
+        ? [actionPayload.lineId]
+        : [];
+    const missingLine = targetLineIds.some((lineId) => (
+      !cartSnapshot.items.some((item) => item.lineId === lineId)
+    ));
     if (missingLine) {
       const failedTransition = transitionCartToolActionRecord({
         actionId: parsed.data.actionId,
@@ -635,37 +648,50 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       && actionPayload.lineId
       && typeof actionPayload.quantity === "number"
     ) {
-      const mutationOutcome = await storefrontCartMutationAdapter.updateLineQuantity({
-        cartId: record.cartId || parsed.data.cart?.cartId || "",
-        lineId: actionPayload.lineId,
-        quantity: actionPayload.quantity,
-        idempotencyKey: record.actionId,
-        cart: cartSnapshot,
-      });
+      const quantityChanges = actionPayload.changes?.length
+        ? actionPayload.changes
+        : [{ lineId: actionPayload.lineId, quantity: actionPayload.quantity }];
+      let nextCart = cartSnapshot;
 
-      if (!mutationOutcome.ok) {
-        const failedTransition = transitionCartToolActionRecord({
-          actionId: parsed.data.actionId,
-          nextStatus: "failed",
-          summary: mutationOutcome.message,
+      for (const [index, change] of quantityChanges.entries()) {
+        const mutationOutcome = await storefrontCartMutationAdapter.updateLineQuantity({
+          cartId: record.cartId || parsed.data.cart?.cartId || "",
+          lineId: change.lineId,
+          quantity: change.quantity,
+          idempotencyKey: `${record.actionId}:${index}`,
+          cart: nextCart,
         });
 
-        return Response.json(
-          {
-            ok: false,
-            error: {
-              code: mutationOutcome.code || "MUTATION_ERROR",
-              message: failedTransition.ok ? failedTransition.record.summary : mutationOutcome.message,
+        if (!mutationOutcome.ok) {
+          const failedTransition = transitionCartToolActionRecord({
+            actionId: parsed.data.actionId,
+            nextStatus: "failed",
+            summary: mutationOutcome.message,
+          });
+
+          return Response.json(
+            {
+              ok: false,
+              error: {
+                code: mutationOutcome.code || "MUTATION_ERROR",
+                message: failedTransition.ok ? failedTransition.record.summary : mutationOutcome.message,
+              },
             },
-          },
-          { status: 422 },
-        );
+            { status: 422 },
+          );
+        }
+
+        nextCart = mutationOutcome.cart;
       }
+
+      const summary = quantityChanges.length > 1
+        ? `Updated quantities for ${quantityChanges.length} cart items.`
+        : "Item quantity updated.";
 
       const executedTransition = transitionCartToolActionRecord({
         actionId: parsed.data.actionId,
         nextStatus: "executed",
-        summary: mutationOutcome.message,
+        summary,
       });
 
       return Response.json({
@@ -673,8 +699,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         result: {
           actionId: parsed.data.actionId,
           status: executedTransition.ok ? executedTransition.record.status : "executed",
-          summary: mutationOutcome.message,
-          cart: mutationOutcome.cart,
+          summary,
+          cart: nextCart,
         },
       });
     }

@@ -10,6 +10,7 @@ import { SizeSummary } from "./guidance/SizeSummary";
 interface ChatMessageListProps {
   messages: ChatThreadMessage[];
   assistantGreeting: string;
+  showReasonTags?: boolean;
   pendingActionId?: string;
   actionHistory: ChatActionHistoryItem[];
   onApproveAction: (action: CartToolAction) => void;
@@ -17,10 +18,10 @@ interface ChatMessageListProps {
   onDeclineAction: (action: CartToolAction) => void;
 }
 
-function renderGuidanceBlock(block: StructuredGuidanceBlock) {
+function renderGuidanceBlock(block: StructuredGuidanceBlock, showReasonTags: boolean) {
   switch (block.type) {
     case "recommendation_list":
-      return <RecommendationList key={block.blockId} block={block} />;
+      return <RecommendationList key={block.blockId} block={block} showReasonTags={showReasonTags} />;
     case "comparison_table":
       return <ComparisonTable key={block.blockId} block={block} />;
     case "size_summary":
@@ -35,6 +36,7 @@ function renderGuidanceBlock(block: StructuredGuidanceBlock) {
 export function ChatMessageList({
   messages,
   assistantGreeting,
+  showReasonTags = true,
   pendingActionId,
   actionHistory,
   onApproveAction,
@@ -59,7 +61,7 @@ export function ChatMessageList({
             {message.state === "failed" ? <span className="cm-pill cm-pill--error">Needs retry</span> : null}
           </header>
           {message.content ? <p>{message.content}</p> : <p className="cm-message__placeholder">Preparing response…</p>}
-          {message.guidanceBlocks.map((block) => renderGuidanceBlock(block))}
+          {message.guidanceBlocks.map((block) => renderGuidanceBlock(block, showReasonTags))}
           {message.actionProposals.map((action) => (
             <div key={action.actionId}>
               <CartToolActionCard

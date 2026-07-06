@@ -31,20 +31,72 @@ export function createBudgetOptimizationContextId(requestId: string) {
   return `bgt_${requestId}`;
 }
 
-function parseBudgetAmountFromMessage(content: string) {
-  const normalized = content.replace(/,/g, "");
-  const amountMatch = normalized.match(/(?:\$|€|£)?\s*(\d+(?:\.\d{1,2})?)/);
+function isBudgetOptimizationIntent(content: string) {
+  const normalized = normalizeText(content);
+  return /\b(budget|optimi[sz])/.test(normalized);
+}
 
-  if (!amountMatch) {
+function parseLocalizedBudgetAmount(rawValue: string) {
+  const compact = rawValue
+    .replace(/[\u00A0\u202F\s']/g, "")
+    .replace(/[^0-9.,]/g, "");
+
+  if (!compact) {
     return null;
   }
 
-  const amount = Number(amountMatch[1]);
+  let normalized = compact;
+  const hasComma = compact.includes(",");
+  const hasDot = compact.includes(".");
+
+  if (hasComma && hasDot) {
+    const lastComma = compact.lastIndexOf(",");
+    const lastDot = compact.lastIndexOf(".");
+    normalized = lastComma > lastDot
+      ? compact.replace(/\./g, "").replace(/,/g, ".")
+      : compact.replace(/,/g, "");
+  } else if (hasComma) {
+    const parts = compact.split(",");
+    normalized = parts.length === 2 && parts[1].length === 3
+      ? parts.join("")
+      : compact.replace(/,/g, ".");
+  } else if (hasDot) {
+    const parts = compact.split(".");
+    normalized = parts.length === 2 && parts[1].length === 3
+      ? parts.join("")
+      : compact;
+  }
+
+  const amount = Number(normalized);
   if (!Number.isFinite(amount) || amount <= 0) {
     return null;
   }
 
   return amount;
+}
+
+function parseBudgetAmountFromMessage(content: string) {
+  const normalized = content.normalize("NFKC");
+  const keywordMatches = Array.from(
+    normalized.matchAll(/\b(?:budget|target|max(?:imum)?|optimi[sz][a-z]*)\b[^0-9]{0,24}([0-9]+(?:[.,][0-9]{1,2})?)/gi),
+  ).map((match) => match[1]);
+  const currencyMatches = Array.from(
+    normalized.matchAll(/(?:€|\$|£|\b(?:eur|euro|usd|gbp)\b)\s*([0-9]+(?:[.,][0-9]{1,2})?)|([0-9]+(?:[.,][0-9]{1,2})?)\s*(?:€|\$|£|\b(?:eur|euro|usd|gbp)\b)/gi),
+  ).map((match) => match[1] || match[2]).filter((value): value is string => Boolean(value));
+  const genericMatches = Array.from(
+    normalized.matchAll(/\b([0-9]+(?:[.,][0-9]{1,2})?)\b/g),
+  ).map((match) => match[1]);
+
+  const candidates = [...keywordMatches, ...currencyMatches, ...genericMatches];
+
+  for (const candidate of candidates) {
+    const parsed = parseLocalizedBudgetAmount(candidate);
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  return null;
 }
 
 function normalizeText(content: string) {
@@ -65,29 +117,177 @@ function parseFirstInteger(content: string) {
   return Number.isFinite(value) ? value : null;
 }
 
-function resolveTargetLine(input: StorefrontChatRequest, normalizedMessage: string) {
+function buildLineMatchCandidates(item: StorefrontChatRequest["cart"]["items"][number]) {
+  const candidates = new Set<string>();
+
+  const pushValue = (value?: string) => {
+    if (!value) {
+      return;
+    }
+
+    const normalized = normalizeText(value);
+    if (normalized.length > 0) {
+      candidates.add(normalized);
+    }
+
+    for (const token of normalized.split(/[^a-z0-9]+/g)) {
+      if (token.length >= 4) {
+        candidates.add(token);
+
+        if (token.endsWith("s") && token.length > 4) {
+          candidates.add(token.slice(0, -1));
+        } else {
+          candidates.add(`${token}s`);
+        }
+      }
+    }
+  };
+
+  pushValue(item.productTitle);
+  pushValue(item.variantTitle);
+  pushValue(item.productId);
+  pushValue(item.variantId);
+
+  return Array.from(candidates);
+}
+
+function resolveTargetLine(
+  input: StorefrontChatRequest,
+  normalizedMessage: string,
+  options?: { requireMatch?: boolean },
+) {
   const withLineId = input.cart.items.filter((item) => item.lineId || item.productId);
 
-  for (const item of withLineId) {
-    const candidates = [
-      item.productTitle,
-      item.variantTitle,
-      item.productId,
-      item.variantId,
-    ].filter((value): value is string => Boolean(value));
-
-    if (candidates.some((candidate) => normalizedMessage.includes(normalizeText(candidate)))) {
-      return item;
+  let best:
+    | {
+      item: (typeof withLineId)[number];
+      firstIndex: number;
+      candidateLength: number;
     }
+    | undefined;
+
+  for (const item of withLineId) {
+    for (const candidate of buildLineMatchCandidates(item)) {
+      const index = normalizedMessage.indexOf(candidate);
+      if (index < 0) {
+        continue;
+      }
+
+      if (
+        !best
+        || index < best.firstIndex
+        || (index === best.firstIndex && candidate.length > best.candidateLength)
+      ) {
+        best = {
+          item,
+          firstIndex: index,
+          candidateLength: candidate.length,
+        };
+      }
+    }
+  }
+
+  if (best) {
+    return best.item;
+  }
+
+  if (options?.requireMatch) {
+    return undefined;
   }
 
   return withLineId[0];
 }
 
+function resolveExplicitQuantityTargets(input: StorefrontChatRequest, normalizedMessage: string) {
+  const withLineId = input.cart.items.filter((item) => item.lineId || item.productId);
+
+  interface ParsedDirective {
+    context: string;
+    quantity: number;
+    index: number;
+    line: StorefrontChatRequest["cart"]["items"][number] | undefined;
+  }
+
+  // Phase 1: extract all quantity directives and try title-based line matching.
+  const parsed: ParsedDirective[] = [];
+  for (const directive of normalizedMessage.matchAll(/([a-z0-9\s'/-]{1,80}?)\s*(?:a|to|=)\s*(\d{1,3})\b/g)) {
+    const context = directive[1]?.trim() ?? "";
+    const parsedQuantity = Number(directive[2]);
+    const directiveIndex = directive.index ?? 0;
+
+    if (!context || !Number.isFinite(parsedQuantity)) {
+      continue;
+    }
+
+    parsed.push({
+      context,
+      quantity: parsedQuantity,
+      index: directiveIndex,
+      line: resolveTargetLine(input, context, { requireMatch: true }),
+    });
+  }
+
+  if (parsed.length === 0) {
+    return [];
+  }
+
+  // Phase 2: positional fallback — if some directives did not match a line by
+  // title (e.g. productTitle missing or product named differently from how the
+  // shopper refers to it), try to assign them to the cart lines not already
+  // claimed by a successful match.  Only applies when the counts are equal so
+  // the assignment is unambiguous.
+  const matchedRefs = new Set(
+    parsed
+      .filter((p) => p.line)
+      .map((p) => p.line!.lineId || p.line!.productId),
+  );
+
+  const unmatchedLines = withLineId.filter((item) => !matchedRefs.has(item.lineId || item.productId));
+  const unmatchedDirectives = parsed.filter((p) => !p.line);
+
+  if (unmatchedDirectives.length > 0 && unmatchedDirectives.length === unmatchedLines.length) {
+    const sortedDirectives = unmatchedDirectives.slice().sort((a, b) => a.index - b.index);
+    for (let i = 0; i < sortedDirectives.length; i++) {
+      sortedDirectives[i].line = unmatchedLines[i];
+    }
+  }
+
+  // Phase 3: keep resolved directives only, deduplicate by line reference
+  // (last explicit quantity in the message wins), then sort by message order.
+  const resolved = parsed.filter((p): p is ParsedDirective & { line: NonNullable<ParsedDirective["line"]> } => Boolean(p.line));
+
+  if (resolved.length === 0) {
+    return [];
+  }
+
+  const dedupedByLineId = new Map<string, (typeof resolved)[number]>();
+  for (const update of resolved) {
+    const lineRef = update.line.lineId || update.line.productId;
+    dedupedByLineId.set(lineRef, update);
+  }
+
+  return Array.from(dedupedByLineId.values())
+    .sort((left, right) => left.index - right.index)
+    .map(({ line, quantity, index }) => ({ line, quantity, index }));
+}
+
+// Regex that captures a reference-relation phrase immediately before a cart-item name
+// e.g. "compatible with", "for", "pour", "avec", "qui va avec", "à ce", "that goes with"
+const REFERENCE_RELATION_PATTERN =
+  /\b(?:compatible\s+(?:with|avec|a|au)?|(?:for|pour|for\s+this|pour\s+ce[tte]?|for\s+my|pour\s+mon(?:ma)?)|(?:with|avec)|(?:that\s+goes?\s+with|qui\s+va\s+avec)|(?:to\s+use\s+with|a\s+utiliser\s+avec))\s+/i;
+
 function resolveAddMerchandiseId(input: StorefrontChatRequest, normalizedMessage: string) {
   const gidMatch = normalizedMessage.match(/gid:\/\/shopify\/productvariant\/\d+/i);
   if (gidMatch) {
     return gidMatch[0];
+  }
+
+  // If the message contains a reference-relation phrase, a cart item match is a
+  // context reference ("compatible with this short"), not the item to add.
+  // Return null so the caller falls back to guidance mode instead of re-adding
+  // the referenced product.
+  if (REFERENCE_RELATION_PATTERN.test(normalizedMessage)) {
+    return null;
   }
 
   const target = resolveTargetLine(input, normalizedMessage) ?? input.cart.items[0];
@@ -149,29 +349,44 @@ function inferToolFromMessage(input: StorefrontChatRequest): {
     };
   }
 
-  if (/\b(quantity|quantite|increase|decrease|more|less)\b/.test(normalized) && targetLine) {
-    const explicitQuantity = parseFirstInteger(normalized);
-    const increaseIntent = /\b(increase|more|plus|up)\b/.test(normalized);
-    const decreaseIntent = /\b(decrease|less|minus|reduce|down|moins)\b/.test(normalized);
+  if (/\b(quantity|quantite|increase|decrease|more|less|plus|moins|augmente|diminue|baisse|redui)\b/.test(normalized) && targetLine) {
+    const explicitDirectives = resolveExplicitQuantityTargets(input, normalized);
+    const primaryDirective = explicitDirectives[0];
+    const quantityTargetLine = primaryDirective?.line ?? targetLine;
+    const explicitQuantity = primaryDirective?.quantity ?? parseFirstInteger(normalized);
+    const increaseIntent = /\b(increase|more|plus|up|augmente)\b/.test(normalized);
+    const decreaseIntent = /\b(decrease|less|minus|reduce|down|moins|diminue|baisse|redui)\b/.test(normalized);
 
     const quantity = explicitQuantity
       ? explicitQuantity
       : increaseIntent
-        ? targetLine.quantity + 1
+        ? quantityTargetLine.quantity + 1
         : decreaseIntent
-          ? targetLine.quantity - 1
-          : targetLine.quantity + 1;
+          ? quantityTargetLine.quantity - 1
+          : quantityTargetLine.quantity + 1;
+
+    const explicitChanges = explicitDirectives.length > 1
+      ? explicitDirectives.map((directive) => ({
+          lineId: directive.line.lineId || directive.line.productId,
+          quantity: Math.max(1, directive.quantity),
+        }))
+      : undefined;
 
     return {
       toolName: "changeQuantity",
       payload: {
         actionType: "change_quantity",
-        lineId: targetLine.lineId || targetLine.productId,
+        lineId: quantityTargetLine.lineId || quantityTargetLine.productId,
         quantity: Math.max(1, quantity),
+        ...(explicitChanges ? { changes: explicitChanges } : {}),
       },
       preview: {
-        before: `${targetLine.productTitle || "Item"} x${targetLine.quantity}`,
-        after: `${targetLine.productTitle || "Item"} x${Math.max(1, quantity)}`,
+        before: explicitChanges
+          ? `${explicitChanges.length} items selected for quantity updates`
+          : `${quantityTargetLine.productTitle || "Item"} x${quantityTargetLine.quantity}`,
+        after: explicitChanges
+          ? `${explicitChanges.length} items will be updated`
+          : `${quantityTargetLine.productTitle || "Item"} x${Math.max(1, quantity)}`,
       },
     };
   }
@@ -423,9 +638,9 @@ export function getCompareProductsValidationError(input: StorefrontChatRequest) 
 }
 
 export function buildBudgetOptimizationToolRequest(input: StorefrontChatRequest): BudgetOptimizationRequest | null {
-  const latest = input.messages[input.messages.length - 1]?.content.toLowerCase() ?? "";
+  const latest = input.messages[input.messages.length - 1]?.content ?? "";
 
-  if (!latest.includes("budget") && !latest.includes("optimiz")) {
+  if (!isBudgetOptimizationIntent(latest)) {
     return null;
   }
 
@@ -445,9 +660,9 @@ export function buildBudgetOptimizationToolRequest(input: StorefrontChatRequest)
 }
 
 export function getBudgetOptimizationValidationError(input: StorefrontChatRequest) {
-  const latest = input.messages[input.messages.length - 1]?.content.toLowerCase() ?? "";
+  const latest = input.messages[input.messages.length - 1]?.content ?? "";
 
-  if (!latest.includes("budget") && !latest.includes("optimiz")) {
+  if (!isBudgetOptimizationIntent(latest)) {
     return null;
   }
 

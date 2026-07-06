@@ -74,6 +74,7 @@ async function readLatestStorefrontCart(config: StorefrontChatMountConfig) {
       variantTitle: item.variant_title,
       quantity: Number(item.quantity || 1),
     })).filter((item: { productId: string }) => item.productId.length > 0),
+    ...(typeof payload.total_price === "number" ? { subtotal: (payload.total_price / 100).toFixed(2) } : {}),
   };
 }
 
@@ -179,6 +180,7 @@ export function CartMindChat({ config }: CartMindChatProps) {
         launcherLabel={config.labels?.launcherLabel || config.launcherLabel || "Ask CartMind"}
         panelTitle={config.labels?.panelTitle || config.panelTitle || "CartMind chat"}
         assistantGreeting={config.labels?.assistantGreeting || config.assistantGreeting || "Ask about fit, comparisons, or what works well with the items in your cart."}
+        showReasonTags={config.features?.showReasonTags ?? true}
         onOpen={() => dispatch({ type: "panel_opened" })}
         onClose={() => dispatch({ type: "panel_closed" })}
         onCollapse={() => dispatch({ type: "panel_collapsed" })}

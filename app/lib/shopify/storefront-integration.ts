@@ -21,6 +21,7 @@ export const DEFAULT_STOREFRONT_WIDGET_FEATURES = {
   showKitCompleteness: true,
   showSizeWarnings: true,
   showChatEntry: true,
+  showReasonTags: true,
 } as const;
 
 export const DEFAULT_STOREFRONT_WIDGET_LABELS = {

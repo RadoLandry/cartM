@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { action as confirmAction } from "../../../app/routes/api.ai.chat.actions.confirm";
+import { action as chatAction } from "../../../app/routes/api.ai.chat";
 import { buildCartToolActionProposal } from "../../../app/lib/ai/tools";
 import { createCartToolActionRecord } from "../../../app/lib/ai/storefront-chat";
 import { issueActionConfirmationToken } from "../../../app/lib/shopify/app-proxy";
@@ -19,6 +20,17 @@ function buildBaseCart() {
       },
     ],
   };
+}
+
+async function readResponseText(response: Response) {
+  return await response.text();
+}
+
+function parseSseEvents(body: string) {
+  return body
+    .split("\n\n")
+    .flatMap((frame) => frame.split("\n").filter((line) => line.startsWith("data: ")))
+    .map((line) => JSON.parse(line.slice(6)) as { type: string; [key: string]: unknown });
 }
 
 describe("storefront chat action confirmation route", () => {
@@ -163,6 +175,88 @@ describe("storefront chat action confirmation route", () => {
     expect(response.status).toBe(200);
     expect(payload.ok).toBe(true);
     expect(payload.result.cart.items[0].quantity).toBe(3);
+  });
+
+  it("executes approved quantity changes on multiple cart lines", async () => {
+    const actionId = `action-multi-qty-${Date.now()}`;
+    const request = makeStorefrontChatRequest({
+      cart: {
+        cartId: "gid://shopify/Cart/123",
+        currencyCode: "USD",
+        items: [
+          {
+            lineId: "line-shorts",
+            productId: "gid://shopify/Product/20",
+            variantId: "gid://shopify/ProductVariant/201",
+            quantity: 7,
+          },
+          {
+            lineId: "line-jacket",
+            productId: "gid://shopify/Product/10",
+            variantId: "gid://shopify/ProductVariant/101",
+            quantity: 6,
+          },
+        ],
+      },
+    });
+
+    createCartToolActionRecord({
+      actionId,
+      shop: request.shop,
+      sessionKey: request.sessionKey,
+      cartId: "gid://shopify/Cart/123",
+      payload: {
+        actionType: "change_quantity",
+        lineId: "line-shorts",
+        quantity: 5,
+        changes: [
+          {
+            lineId: "line-shorts",
+            quantity: 5,
+          },
+          {
+            lineId: "line-jacket",
+            quantity: 3,
+          },
+        ],
+      },
+    });
+
+    const token = issueActionConfirmationToken({
+      actionId,
+      shop: request.shop,
+      sessionKey: request.sessionKey,
+      cartId: "gid://shopify/Cart/123",
+    });
+
+    const response = await confirmAction({
+      request: new Request("http://localhost/api/ai/chat/actions/confirm", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://test.myshopify.com",
+        },
+        body: JSON.stringify({
+          shop: request.shop,
+          sessionKey: request.sessionKey,
+          actionId,
+          confirmationToken: token.token,
+          decision: "approve",
+          actionType: "cart_tool",
+          cart: request.cart,
+        }),
+      }),
+      params: {},
+      context: {},
+    } as never);
+
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.ok).toBe(true);
+    expect(payload.result.status).toBe("executed");
+    expect(payload.result.cart.items.find((item: { lineId: string }) => item.lineId === "line-shorts")?.quantity).toBe(5);
+    expect(payload.result.cart.items.find((item: { lineId: string }) => item.lineId === "line-jacket")?.quantity).toBe(3);
   });
 
   it("declines action without mutating cart", async () => {
@@ -454,5 +548,95 @@ describe("storefront chat action confirmation route", () => {
     expect(response.status).toBe(404);
     expect(payload.ok).toBe(false);
     expect(payload.error.code).toBe("ACTION_NOT_FOUND");
+  });
+
+  it("executes approved budget optimization selection and updates cart", async () => {
+    const chatRequest = makeStorefrontChatRequest({
+      cart: {
+        cartId: "gid://shopify/Cart/123",
+        currencyCode: "USD",
+        items: [
+          {
+            lineId: "line_1",
+            productId: "gid://shopify/Product/1",
+            productTitle: "Safety Gloves",
+            variantId: "gid://shopify/ProductVariant/1",
+            quantity: 1,
+          },
+          {
+            lineId: "line_2",
+            productId: "gid://shopify/Product/2",
+            productTitle: "Optional Bag",
+            variantId: "gid://shopify/ProductVariant/2",
+            quantity: 1,
+          },
+        ],
+      },
+      messages: [{ role: "user", content: "Optimize my cart to budget $40" }],
+    });
+
+    const chatResponse = await chatAction({
+      request: new Request("http://localhost/api/ai/chat", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://test.myshopify.com",
+        },
+        body: JSON.stringify(chatRequest),
+      }),
+      params: {},
+      context: {},
+    } as never);
+
+    const streamBody = await readResponseText(chatResponse);
+    const events = parseSseEvents(streamBody);
+    const actionEvent = events.find((event) => (
+      event.type === "tool-action-proposed"
+      && (event.action as { toolName?: string } | undefined)?.toolName === "optimizeBudget"
+    )) as {
+      type: "tool-action-proposed";
+      action: {
+        actionId: string;
+        sessionKey: string;
+        confirmationToken: string;
+        payload: {
+          actionType: "budget_optimization_select";
+          optimizationContextId: string;
+          candidateIds: string[];
+        };
+      };
+    } | undefined;
+
+    expect(actionEvent).toBeDefined();
+
+    const response = await confirmAction({
+      request: new Request("http://localhost/api/ai/chat/actions/confirm", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://test.myshopify.com",
+        },
+        body: JSON.stringify({
+          shop: chatRequest.shop,
+          sessionKey: actionEvent?.action.sessionKey,
+          actionId: actionEvent?.action.actionId,
+          confirmationToken: actionEvent?.action.confirmationToken,
+          decision: "approve",
+          actionType: "budget_optimization_select",
+          optimizationContextId: actionEvent?.action.payload.optimizationContextId,
+          candidateIds: actionEvent?.action.payload.candidateIds,
+          cart: chatRequest.cart,
+        }),
+      }),
+      params: {},
+      context: {},
+    } as never);
+
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.ok).toBe(true);
+    expect(payload.result.status).toBe("executed");
+    expect(payload.result.cart.items.length).toBeLessThan(chatRequest.cart.items.length);
   });
 });

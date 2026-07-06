@@ -64,4 +64,88 @@ describe("storefront cart ajax action application", () => {
     }));
     expect(nextCart.items[0]?.quantity).toBe(5);
   });
+
+  it("applies batched change_quantity updates through Shopify ajax", async () => {
+    const action = makeCartToolAction({
+      payload: {
+        actionType: "change_quantity",
+        lineId: "line-shorts",
+        quantity: 5,
+        changes: [
+          { lineId: "line-shorts", quantity: 5 },
+          { lineId: "line-jacket", quantity: 3 },
+        ],
+      },
+    });
+    const currentCart = makeStorefrontCartSnapshot({
+      items: [
+        {
+          lineId: "line-shorts",
+          productId: "gid://shopify/Product/20",
+          variantId: "gid://shopify/ProductVariant/201",
+          quantity: 7,
+        },
+        {
+          lineId: "line-jacket",
+          productId: "gid://shopify/Product/10",
+          variantId: "gid://shopify/ProductVariant/101",
+          quantity: 6,
+        },
+      ],
+    });
+
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        token: currentCart.cartId,
+        currency: currentCart.currencyCode,
+        items: [
+          {
+            key: "line-shorts",
+            product_id: 20,
+            product_title: "Short Venum Gladiator",
+            variant_id: 201,
+            variant_title: "M / Black",
+            quantity: 5,
+          },
+          {
+            key: "line-jacket",
+            product_id: 10,
+            product_title: "Veste Venum Elite",
+            variant_id: 101,
+            variant_title: "M / Black",
+            quantity: 3,
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }));
+
+    const nextCart = await applyStorefrontCartAction(action, currentCart, fetchMock);
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/cart/change.js", expect.objectContaining({
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify({ id: "line-shorts", quantity: 5 }),
+    }));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "/cart/change.js", expect.objectContaining({
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify({ id: "line-jacket", quantity: 3 }),
+    }));
+    expect(fetchMock).toHaveBeenNthCalledWith(3, "/cart.js", expect.objectContaining({
+      method: "GET",
+      credentials: "same-origin",
+    }));
+    expect(nextCart.items.find((item) => item.lineId === "line-shorts")?.quantity).toBe(5);
+    expect(nextCart.items.find((item) => item.lineId === "line-jacket")?.quantity).toBe(3);
+  });
 });

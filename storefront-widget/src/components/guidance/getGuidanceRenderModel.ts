@@ -14,6 +14,17 @@ export type GuidanceRenderModel =
         shopperOutcome?: string;
         safetyCritical: boolean;
         meta?: string;
+        evidenceTags: Array<
+          "profile"
+          | "history"
+          | "size"
+          | "kit"
+          | "threshold"
+          | "availability"
+          | "compatibility"
+          | "safety"
+          | "fallback"
+        >;
       }>;
     }
   | {
@@ -77,6 +88,7 @@ export function getGuidanceRenderModel(block: StructuredGuidanceBlock): Guidance
           shopperOutcome: item.shopperOutcome,
           safetyCritical: item.safetyCritical,
           meta: [item.priceLabel, item.availability].filter(Boolean).join(" • ") || undefined,
+          evidenceTags: item.evidenceTags,
         })),
       };
     case "comparison_table":

@@ -81,6 +81,8 @@ describe("storefront chat budget optimization route", () => {
     expect(result?.optimization.targetBudgetAmount).toBe(40);
     expect(result?.optimization.projectedSubtotal).toBeLessThanOrEqual(result!.optimization.targetBudgetAmount);
     expect(result?.optimization.projectedGapAmount).toBeGreaterThanOrEqual(0);
+    expect(body).not.toContain('"title":"Recommended cart actions"');
+    expect(body).toContain("Review the proposed changes below, then choose whether to apply or decline.");
   });
 
   it.todo("preserves safety-critical items when proposing changes");

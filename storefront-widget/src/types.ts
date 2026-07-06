@@ -9,6 +9,7 @@ export interface StorefrontCartSnapshot {
   cartId?: string;
   currencyCode: string;
   items: StorefrontCartLine[];
+  subtotal?: string;
 }
 
 export interface StorefrontChatMountConfig {

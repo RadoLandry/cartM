@@ -222,6 +222,11 @@
   color: #9f1239;
 }
 
+.cm-pill--reason {
+  background: rgba(12, 74, 110, 0.12);
+  color: #0f3f5f;
+}
+
 .cm-guidance-card {
   background: rgba(255, 255, 255, 0.86);
   border: 1px solid rgba(18, 24, 39, 0.08);
@@ -252,6 +257,19 @@
 .cm-guidance-list li {
   display: grid;
   gap: 0.2rem;
+}
+
+.cm-reason-chips {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.cm-reason-chips__label {
+  color: #526177;
+  font-size: 0.72rem;
+  font-weight: 600;
 }
 
 .cm-comparison-table {

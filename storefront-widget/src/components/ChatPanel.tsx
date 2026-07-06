@@ -8,6 +8,7 @@ interface ChatPanelProps {
   launcherLabel: string;
   panelTitle: string;
   assistantGreeting: string;
+  showReasonTags?: boolean;
   onOpen: () => void;
   onClose: () => void;
   onCollapse: () => void;
@@ -26,6 +27,7 @@ export function ChatPanel({
   launcherLabel,
   panelTitle,
   assistantGreeting,
+  showReasonTags = true,
   onOpen,
   onClose,
   onCollapse,
@@ -75,6 +77,7 @@ export function ChatPanel({
           <ChatMessageList
             messages={state.messages}
             assistantGreeting={assistantGreeting}
+            showReasonTags={showReasonTags}
             pendingActionId={state.pendingActionId}
             actionHistory={state.actionHistory}
             onApproveAction={onApproveAction}

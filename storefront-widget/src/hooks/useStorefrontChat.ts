@@ -254,10 +254,16 @@ export async function applyStorefrontCartAction(
     }
 
     case "change_quantity": {
-      await postStorefrontCartMutation(fetchImpl, "/cart/change.js", {
-        id: payload.lineId,
-        quantity: payload.quantity,
-      });
+      const quantityChanges = payload.changes?.length
+        ? payload.changes
+        : [{ lineId: payload.lineId, quantity: payload.quantity }];
+
+      for (const change of quantityChanges) {
+        await postStorefrontCartMutation(fetchImpl, "/cart/change.js", {
+          id: change.lineId,
+          quantity: change.quantity,
+        });
+      }
       break;
     }
 
@@ -303,6 +309,49 @@ export async function applyStorefrontCartAction(
   }
 
   return await fetchLatestStorefrontCart(fetchImpl, currentCart);
+}
+
+function normalizeCommand(raw: string) {
+  return raw
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function isTerminalActionStatus(status?: string) {
+  return status === "declined" || status === "expired" || status === "executed" || status === "failed";
+}
+
+export function resolveBudgetApprovalShortcut(state: ChatSessionState, draft: string): CartToolAction | null {
+  const command = normalizeCommand(draft);
+  const isBudgetCommand = command === "optimizebudget"
+    || command === "optimize budget"
+    || command === "apply budget plan"
+    || command === "applybudgetplan"
+    || command === "apply plan"
+    || command === "appliquer budget"
+    || command === "applique budget";
+
+  if (!isBudgetCommand) {
+    return null;
+  }
+
+  const allActions = state.messages
+    .flatMap((message) => message.actionProposals)
+    .filter((action) => action.toolName === "optimizeBudget" && action.payload.actionType === "budget_optimization_select");
+
+  for (let index = allActions.length - 1; index >= 0; index -= 1) {
+    const action = allActions[index];
+    const history = state.actionHistory.find((item) => item.actionId === action.actionId);
+
+    if (!isTerminalActionStatus(history?.status)) {
+      return action;
+    }
+  }
+
+  return null;
 }
 
 export function useStorefrontChat({
@@ -607,6 +656,12 @@ export function useStorefrontChat({
 
     if (!canSubmitChatMessage(currentState, trimmedDraft)) {
       return false;
+    }
+
+    const budgetShortcutAction = resolveBudgetApprovalShortcut(currentState, trimmedDraft);
+    if (budgetShortcutAction) {
+      dispatch({ type: "draft_changed", draft: "" });
+      return await submitActionConfirmation(budgetShortcutAction, "approve");
     }
 
     const timestamp = Date.now();

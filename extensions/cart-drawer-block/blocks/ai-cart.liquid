@@ -25,7 +25,8 @@
       "showRecommendations": {{ block.settings.show_recommendations | json }},
       "showKitCompleteness": {{ block.settings.show_kit_completeness | json }},
       "showSizeWarnings": {{ block.settings.show_size_warnings | json }},
-      "showChatEntry": {{ block.settings.show_chat_entry | json }}
+      "showChatEntry": {{ block.settings.show_chat_entry | json }},
+      "showReasonTags": {{ block.settings.show_reason_tags | json }}
     },
     "cart": {
       "cartId": {{ cart.id | json }},
@@ -96,13 +97,13 @@
       "type": "textarea",
       "id": "assistant_greeting",
       "label": "Greeting",
-      "default": "Ask about fit, comparisons, or what works well with the items already in your cart."
+      "default": "Posez une question sur la taille, les comparaisons ou ce qui va bien avec les articles de votre panier."
     },
     {
       "type": "textarea",
       "id": "fallback_message",
       "label": "Fallback message",
-      "default": "CartMind guidance is temporarily unavailable. Your cart still works normally."
+      "default": "L'assistant CartMind est temporairement indisponible. Votre panier fonctionne normalement."
     },
     {
       "type": "checkbox",
@@ -126,6 +127,12 @@
       "type": "checkbox",
       "id": "show_chat_entry",
       "label": "Show chat entry",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "show_reason_tags",
+      "label": "Show recommendation reasons",
       "default": true
     }
   ]

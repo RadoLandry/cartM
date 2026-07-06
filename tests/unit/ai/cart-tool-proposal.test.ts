@@ -148,4 +148,207 @@ describe("cart tool proposal inference", () => {
       expect(proposal.payload.quantity).toBe(1);
     }
   });
+
+  it("maps explicit French quantity to the correct mentioned cart line", () => {
+    const cart = {
+      cartId: "gid://shopify/Cart/123",
+      currencyCode: "USD",
+      items: [
+        {
+          lineId: "line-jacket",
+          productId: "gid://shopify/Product/10",
+          productTitle: "Veste Venum Elite",
+          variantId: "gid://shopify/ProductVariant/101",
+          variantTitle: "M / Black",
+          quantity: 6,
+        },
+        {
+          lineId: "line-shorts",
+          productId: "gid://shopify/Product/20",
+          productTitle: "Short Venum Gladiator",
+          variantId: "gid://shopify/ProductVariant/201",
+          variantTitle: "M / Black",
+          quantity: 7,
+        },
+      ],
+    };
+
+    const request = makeStorefrontChatRequest({
+      cart,
+      messages: [{ role: "user", content: "diminue la quantite du short a 5, et la quantite de la veste a 3" }],
+    });
+
+    const proposal = buildCartToolActionProposal(request);
+
+    expect(proposal).not.toBeNull();
+    expect(proposal?.toolName).toBe("changeQuantity");
+    expect(proposal?.payload.actionType).toBe("change_quantity");
+    if (proposal?.payload.actionType === "change_quantity") {
+      expect(proposal.payload.lineId).toBe("line-shorts");
+      expect(proposal.payload.quantity).toBe(5);
+      expect(proposal.payload.changes).toEqual([
+        { lineId: "line-shorts", quantity: 5 },
+        { lineId: "line-jacket", quantity: 3 },
+      ]);
+    }
+  });
+
+  it("maps multi-item quantity update with accented French and 'du' preposition", () => {
+    // Exact prompt from real user: "diminue la quantité du short à 5, et la quantité du veste à 3"
+    const cart = {
+      cartId: "gid://shopify/Cart/123",
+      currencyCode: "USD",
+      items: [
+        {
+          lineId: "line-jacket",
+          productId: "gid://shopify/Product/10",
+          productTitle: "Veste Venum Elite",
+          variantId: "gid://shopify/ProductVariant/101",
+          variantTitle: "M / Black",
+          quantity: 6,
+        },
+        {
+          lineId: "line-shorts",
+          productId: "gid://shopify/Product/20",
+          productTitle: "Short Venum Gladiator",
+          variantId: "gid://shopify/ProductVariant/201",
+          variantTitle: "M / Black",
+          quantity: 7,
+        },
+      ],
+    };
+
+    const request = makeStorefrontChatRequest({
+      cart,
+      messages: [{ role: "user", content: "diminue la quantité du short à 5, et la quantité du veste à 3" }],
+    });
+
+    const proposal = buildCartToolActionProposal(request);
+
+    expect(proposal?.payload.actionType).toBe("change_quantity");
+    if (proposal?.payload.actionType === "change_quantity") {
+      // Short must be 5, veste must be 3 — never the other way around
+      expect(proposal.payload.lineId).toBe("line-shorts");
+      expect(proposal.payload.quantity).toBe(5);
+      expect(proposal.payload.changes).toEqual([
+        { lineId: "line-shorts", quantity: 5 },
+        { lineId: "line-jacket", quantity: 3 },
+      ]);
+    }
+  });
+
+  it("maps singular French short mention to plural shorts product in multi-item updates", () => {
+    const cart = {
+      cartId: "gid://shopify/Cart/123",
+      currencyCode: "USD",
+      items: [
+        {
+          lineId: "line-jacket",
+          productId: "gid://shopify/Product/10",
+          productTitle: "Veste de survêtement Venum Attack 90 - Bleu Nuit",
+          variantId: "gid://shopify/ProductVariant/101",
+          variantTitle: "M / Bleu Nuit",
+          quantity: 2,
+        },
+        {
+          lineId: "line-shorts",
+          productId: "gid://shopify/Product/20",
+          productTitle: "Shorts Venum Attack 90 - Bleu Nuit",
+          variantId: "gid://shopify/ProductVariant/201",
+          variantTitle: "M / Bleu Nuit",
+          quantity: 7,
+        },
+      ],
+    };
+
+    const request = makeStorefrontChatRequest({
+      cart,
+      messages: [{ role: "user", content: "diminue la quantité du short à 5, et la quantité du veste à 1" }],
+    });
+
+    const proposal = buildCartToolActionProposal(request);
+
+    expect(proposal?.toolName).toBe("changeQuantity");
+    expect(proposal?.payload.actionType).toBe("change_quantity");
+    if (proposal?.payload.actionType === "change_quantity") {
+      expect(proposal.payload.lineId).toBe("line-shorts");
+      expect(proposal.payload.quantity).toBe(5);
+      expect(proposal.payload.changes).toEqual([
+        { lineId: "line-shorts", quantity: 5 },
+        { lineId: "line-jacket", quantity: 1 },
+      ]);
+    }
+  });
+
+  it("uses positional fallback when a cart line has no productTitle for multi-item quantity update", () => {
+    // Real-world scenario: the short product's productTitle was not populated in the
+    // cart snapshot (e.g. initial config race or missing product_title from cart.js).
+    // The veste line still matches by title.  The short line must be assigned via the
+    // positional fallback — it is the only unmatched line remaining.
+    const cart = {
+      cartId: "gid://shopify/Cart/123",
+      currencyCode: "USD",
+      items: [
+        {
+          lineId: "line-jacket",
+          productId: "gid://shopify/Product/10",
+          productTitle: "Veste de survêtement Venum Attack 90 - Bleu Nuit",
+          variantId: "gid://shopify/ProductVariant/101",
+          variantTitle: "M / Bleu Nuit",
+          quantity: 5,
+        },
+        {
+          lineId: "line-shorts",
+          productId: "gid://shopify/Product/20",
+          // productTitle intentionally omitted — matches missing data scenario
+          variantId: "gid://shopify/ProductVariant/201",
+          variantTitle: "M / Bleu Nuit",
+          quantity: 7,
+        },
+      ],
+    };
+
+    const request = makeStorefrontChatRequest({
+      cart,
+      messages: [{ role: "user", content: "diminue la quantité du short à 5, et la quantité du veste à 2" }],
+    });
+
+    const proposal = buildCartToolActionProposal(request);
+
+    expect(proposal?.toolName).toBe("changeQuantity");
+    expect(proposal?.payload.actionType).toBe("change_quantity");
+    if (proposal?.payload.actionType === "change_quantity") {
+      // Short directive (qty 5) must be assigned to line-shorts via positional fallback.
+      // Veste directive (qty 2) matches directly by title.
+      expect(proposal.payload.changes).toEqual([
+        { lineId: "line-shorts", quantity: 5 },
+        { lineId: "line-jacket", quantity: 2 },
+      ]);
+    }
+  });
+
+  it("returns null for add intent when the only cart match is a context reference (e.g. 'compatible with this short')", () => {
+    const request = makeStorefrontChatRequest({
+      cart: {
+        cartId: "gid://shopify/Cart/123",
+        currencyCode: "USD",
+        items: [
+          {
+            lineId: "line-shorts",
+            productId: "gid://shopify/Product/20",
+            productTitle: "Fightshort Venum Gladiator 3.0 - Noir/Blanc",
+            variantId: "gid://shopify/ProductVariant/201",
+            variantTitle: "M / Black",
+            quantity: 1,
+          },
+        ],
+      },
+      messages: [{ role: "user", content: "ajoute un gants de box compatible à ce short" }],
+    });
+
+    // Should NOT propose adding the Fightshort again — "à ce short" is a context
+    // reference, not the item the shopper wants to add.
+    const proposal = buildCartToolActionProposal(request);
+    expect(proposal).toBeNull();
+  });
 });

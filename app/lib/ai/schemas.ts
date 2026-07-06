@@ -15,6 +15,7 @@ export const StorefrontIntegrationFeatureFlagsSchema = z.object({
   showKitCompleteness: z.boolean().default(true),
   showSizeWarnings: z.boolean().default(true),
   showChatEntry: z.boolean().default(true),
+  showReasonTags: z.boolean().default(true),
 });
 
 export const StorefrontIntegrationLabelsSchema = z.object({
@@ -37,6 +38,7 @@ export const StorefrontCartSnapshotSchema = z.object({
   cartId: z.string().min(1).optional(),
   currencyCode: z.string().length(3).default("USD"),
   items: z.array(StorefrontCartLineSchema).default([]),
+  subtotal: z.string().min(1).optional(),
 });
 
 export const StorefrontWidgetMountConfigSchema = z.object({
@@ -54,6 +56,7 @@ export const StorefrontWidgetMountConfigSchema = z.object({
     showKitCompleteness: true,
     showSizeWarnings: true,
     showChatEntry: true,
+    showReasonTags: true,
   }),
 });
 
@@ -274,6 +277,17 @@ export const RecommendationListBlockSchema = z.object({
     safetyCritical: z.boolean().default(false),
     priceLabel: z.string().min(1).optional(),
     availability: z.enum(["available", "unavailable", "unknown"]).optional(),
+    evidenceTags: z.array(z.enum([
+      "profile",
+      "history",
+      "size",
+      "kit",
+      "threshold",
+      "availability",
+      "compatibility",
+      "safety",
+      "fallback",
+    ])).default([]),
   })),
 });
 
@@ -371,6 +385,10 @@ export const CartToolActionPayloadSchema = z.discriminatedUnion("actionType", [
     actionType: z.literal("change_quantity"),
     lineId: z.string().min(1),
     quantity: z.coerce.number().int().min(1),
+    changes: z.array(z.object({
+      lineId: z.string().min(1),
+      quantity: z.coerce.number().int().min(1),
+    })).min(1).optional(),
   }),
   z.object({
     actionType: z.literal("swap_variant"),
@@ -676,6 +694,7 @@ export const StorefrontChatRequestSchema = z.object({
     cartId: z.string().min(1).optional(),
     currencyCode: z.string().length(3).default("USD"),
     items: z.array(StorefrontCartLineSchema).default([]),
+    subtotal: z.string().min(1).optional(),
   }),
   messages: z.array(StorefrontChatMessageSchema).min(1),
 });

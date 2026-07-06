@@ -7,6 +7,7 @@ import {
   buildStorefrontChatReply,
   createBudgetOptimizationContext,
   resolveStorefrontChatBehavior,
+  resolveCompatibleAddActionProposal,
   createProductComparisonContext,
   normalizeBudgetOptimizationResult,
   normalizeProductComparisonResult,
@@ -118,7 +119,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const behaviorResolution = await resolveStorefrontChatBehavior(parsed.data.shop);
 
-  const guidanceReply = buildStorefrontChatReply(parsed.data, behaviorResolution.config);
+  const guidanceReply = await buildStorefrontChatReply(parsed.data, behaviorResolution.config);
   const comparisonValidationError = getCompareProductsValidationError(parsed.data);
   const comparisonRequest = buildCompareProductsToolRequest(parsed.data);
   const comparisonParts = [] as Array<{ type: string; [key: string]: unknown }>;
@@ -304,7 +305,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
-  const actionProposal = buildCartToolActionProposal(parsed.data);
+  const actionProposal = (await resolveCompatibleAddActionProposal(parsed.data)) ?? buildCartToolActionProposal(parsed.data);
   const toolActionEvents = [actionProposal, comparisonActionProposal, budgetActionProposal]
     .filter((action): action is NonNullable<typeof action> => Boolean(action))
     .map((action) => ({
@@ -320,6 +321,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const messageId = `${parsed.data.sessionKey}-assistant-${parsed.data.messages.length}`;
   const aiEnabled = isAIAvailable();
+  const latestMessage = parsed.data.messages[parsed.data.messages.length - 1]?.content.toLowerCase() ?? "";
+  const shouldBypassLLM = /\b(budget|optimi[sz]|compare|add|remove|swap|quantit|quantity|size|fit|sparring|combat|taille|adapt[eé])\b/.test(latestMessage);
+  const shouldUseLLM = aiEnabled && !shouldBypassLLM;
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream<Uint8Array>({
@@ -329,7 +333,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       };
 
       // 1. Texte — LLM réel ou fallback rule-based
-      if (aiEnabled) {
+      if (shouldUseLLM) {
         try {
           const result = streamText({
             model: getPrimaryModel(),

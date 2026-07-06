@@ -77,6 +77,7 @@ export function normalizeCartJsPayload(
   const raw = payload as {
     token?: string;
     currency?: string;
+    total_price?: number;
     items: Array<{
       key?: string;
       product_id?: number | string;
@@ -102,6 +103,7 @@ export function normalizeCartJsPayload(
     cartId: raw.token || fallback.cartId,
     currencyCode: raw.currency || fallback.currencyCode,
     items,
+    ...(typeof raw.total_price === "number" ? { subtotal: (raw.total_price / 100).toFixed(2) } : {}),
   };
 }
 

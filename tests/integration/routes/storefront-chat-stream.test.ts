@@ -62,6 +62,34 @@ describe("storefront chat stream route", () => {
     expect(body).toContain('"action":"keep"');
   });
 
+  it("answers product and sparring suitability questions from the current cart", async () => {
+    process.env.STOREFRONT_CHAT_SIGNING_SECRET = "test-signing-secret";
+    const input = makeStorefrontChatRequest({
+      messages: [{ role: "user", content: "Ces gants sont-ils adaptes au sparring ?" }],
+    });
+
+    const response = await action({
+      request: new Request("http://localhost/api/ai/chat", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://test.myshopify.com",
+        },
+        body: JSON.stringify(input),
+      }),
+      params: {},
+      context: {},
+    } as never);
+    const body = await readResponseText(response);
+
+    expect(body).toContain("Core Training Gloves");
+    // Response should be in French because the question is in French
+    expect(body).toContain("sparring");
+    expect(body).toContain("confirmez le poids des gants");
+    expect(body).toContain('"type":"size_summary"');
+    expect(body).toContain("R\u00e9sum\u00e9 des tailles");
+  });
+
   it("emits proposed tool action and status events for add requests", async () => {
     process.env.STOREFRONT_CHAT_SIGNING_SECRET = "test-signing-secret";
     const input = makeStorefrontChatRequest({
@@ -264,5 +292,45 @@ describe("storefront chat stream route", () => {
     const body = await readResponseText(response);
 
     expect(body).toContain("Sparring Headgear");
+  });
+
+  it("returns kit-specific fallback notice instead of generic fallback trio for missing-kit intent", async () => {
+    process.env.STOREFRONT_CHAT_SIGNING_SECRET = "test-signing-secret";
+    const input = makeStorefrontChatRequest({
+      cart: {
+        cartId: "gid://shopify/Cart/123",
+        currencyCode: "USD",
+        items: [
+          {
+            productId: "gid://shopify/Product/999999",
+            productTitle: "Unknown Training Top",
+            variantId: "gid://shopify/ProductVariant/999999",
+            variantTitle: "L",
+            quantity: 1,
+          },
+        ],
+      },
+      messages: [{ role: "user", content: "what is missing in my kit" }],
+    });
+
+    const response = await action({
+      request: new Request("http://localhost/api/ai/chat", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://test.myshopify.com",
+        },
+        body: JSON.stringify(input),
+      }),
+      params: {},
+      context: {},
+    } as never);
+
+    const body = await readResponseText(response);
+
+    expect(body).toContain('"type":"guidance-block"');
+    expect(body).toContain('"type":"fallback_notice"');
+    expect(body).toContain("No complete kit baseline was detected");
+    expect(body).not.toContain("keep current choice");
   });
 });
