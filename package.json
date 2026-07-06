@@ -3,7 +3,6 @@
   "private": true,
   "scripts": {
     "build": "react-router build",
-    "build:storefront-widget": "vite build --config storefront-widget/vite.config.ts",
     "dev": "shopify app dev",
     "config:link": "shopify app config link",
     "generate": "shopify app generate",
