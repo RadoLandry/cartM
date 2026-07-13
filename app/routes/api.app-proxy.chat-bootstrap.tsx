@@ -59,6 +59,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         ...(parsed.data.cartId ? { cartId: parsed.data.cartId } : {}),
         ...bootstrap,
         chatUrl: new URL("/api/ai/chat", appUrl).toString(),
+        kitPreviewUrl: new URL("/api/ai/kit-preview", appUrl).toString(),
       },
       integration: buildAppProxyStorefrontMountConfig({
         shop: parsed.data.shop,

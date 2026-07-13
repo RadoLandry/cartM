@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { useFetcher, useLoaderData, useRevalidator } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
@@ -26,6 +26,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     variantCount,
     latestJob: latestJob
       ? {
+          id: latestJob.id,
           status: latestJob.status,
           syncedCount: latestJob.syncedCount,
           failedCount: latestJob.failedCount,
@@ -46,8 +47,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   try {
-    await runCatalogSync(admin, session.shop);
-    return { ok: true };
+    void runCatalogSync(admin, session.shop).catch((error) => {
+      console.error(`[CatalogSync] Background sync failed for ${session.shop}:`, error);
+    });
+
+    return { ok: true, started: true };
   } catch (error) {
     return {
       ok: false,
@@ -61,23 +65,82 @@ export default function Index() {
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const shopify = useAppBridge();
+  const [syncRequested, setSyncRequested] = useState(false);
+  const hasShownStartedToast = useRef(false);
+  const lastCompletionToastJobId = useRef<string | null>(null);
+  const lastErrorToast = useRef<string | null>(null);
 
-  const isSyncing =
+  const isSubmittingSync =
     ["loading", "submitting"].includes(fetcher.state) &&
     fetcher.formMethod === "POST";
+  const isBackgroundSyncing = latestJob?.status === "IN_PROGRESS" || latestJob?.status === "PENDING";
+  const isSyncing = isSubmittingSync || isBackgroundSyncing || syncRequested;
+  const processedCount = (latestJob?.syncedCount ?? 0) + (latestJob?.failedCount ?? 0);
+  const progressValue = latestJob?.status === "COMPLETED"
+    ? 100
+    : latestJob?.status === "FAILED"
+      ? 100
+      : isBackgroundSyncing
+        ? null
+        : 0;
 
   useEffect(() => {
-    if (fetcher.data?.ok) {
-      shopify.toast.show("Catalog sync completed");
+    if (fetcher.data?.ok && fetcher.data.started && !hasShownStartedToast.current) {
+      hasShownStartedToast.current = true;
+      setSyncRequested(true);
+      shopify.toast.show("Catalog sync started");
       revalidator.revalidate();
     }
 
     if (fetcher.data && !fetcher.data.ok && fetcher.data.error) {
-      shopify.toast.show(fetcher.data.error, { isError: true });
+      if (lastErrorToast.current !== fetcher.data.error) {
+        lastErrorToast.current = fetcher.data.error;
+        shopify.toast.show(fetcher.data.error, { isError: true });
+      }
     }
   }, [fetcher.data, revalidator, shopify]);
 
+  useEffect(() => {
+    if (!isSyncing) {
+      return;
+    }
+
+    if (latestJob?.status === "COMPLETED" || latestJob?.status === "FAILED") {
+      setSyncRequested(false);
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      revalidator.revalidate();
+    }, 1500);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [isSyncing, latestJob?.status, revalidator]);
+
+  useEffect(() => {
+    if (!latestJob) {
+      return;
+    }
+
+    if (latestJob.status === "COMPLETED" && lastCompletionToastJobId.current !== latestJob.id) {
+      lastCompletionToastJobId.current = latestJob.id;
+      setSyncRequested(false);
+      shopify.toast.show("Catalog sync completed");
+      return;
+    }
+
+    if (latestJob.status === "FAILED" && lastCompletionToastJobId.current !== latestJob.id) {
+      lastCompletionToastJobId.current = latestJob.id;
+      setSyncRequested(false);
+      shopify.toast.show("Catalog sync failed", { isError: true });
+    }
+  }, [latestJob, shopify]);
+
   const triggerSync = () => {
+    hasShownStartedToast.current = false;
+    setSyncRequested(true);
     fetcher.submit({ intent: "sync-catalog" }, { method: "POST" });
   };
 
@@ -86,7 +149,8 @@ export default function Index() {
       <s-button
         slot="primary-action"
         onClick={triggerSync}
-        {...(isSyncing ? { loading: true } : {})}
+        {...(isSubmittingSync ? { loading: true } : {})}
+        {...(isSyncing ? { disabled: true } : {})}
       >
         Run catalog sync
       </s-button>
@@ -102,6 +166,28 @@ export default function Index() {
       <s-section heading="Latest sync job">
         {latestJob ? (
           <s-stack direction="block" gap="base">
+            <s-stack direction="block" gap="base">
+              <s-paragraph>
+                Progress: {latestJob.status === "COMPLETED"
+                  ? "Completed"
+                  : latestJob.status === "FAILED"
+                    ? "Failed"
+                    : "In progress"}
+              </s-paragraph>
+              <progress
+                aria-label="Catalog sync progress"
+                max={100}
+                {...(progressValue === null ? {} : { value: progressValue })}
+                style={{ width: "100%", height: "0.875rem" }}
+              />
+              <s-paragraph>
+                {latestJob.status === "COMPLETED"
+                  ? `Processed ${processedCount} products.`
+                  : latestJob.status === "FAILED"
+                    ? `Stopped after ${processedCount} processed products.`
+                    : `Processing products... ${processedCount} done so far.`}
+              </s-paragraph>
+            </s-stack>
             <s-paragraph>Status: {latestJob.status}</s-paragraph>
             <s-paragraph>Products processed: {latestJob.syncedCount}</s-paragraph>
             <s-paragraph>Failures: {latestJob.failedCount}</s-paragraph>

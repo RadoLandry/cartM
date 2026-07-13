@@ -35,6 +35,8 @@ import {
   assertAllowedStorefrontOrigin,
   verifyStorefrontChatToken,
 } from "../lib/shopify/app-proxy";
+import { getCustomerProfile } from "../lib/db/queries";
+import { resolveCustomerProfile, buildProfileKey } from "../lib/cart-intelligence/customer-profile";
 
 const CORS_BASE_HEADERS = {
   "access-control-allow-methods": "POST, OPTIONS",
@@ -118,6 +120,33 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   const behaviorResolution = await resolveStorefrontChatBehavior(parsed.data.shop);
+
+  const sessionId = verification.payload.sessionKey.startsWith("chat_")
+    ? verification.payload.sessionKey.slice(5)
+    : undefined;
+  const storedRecord = sessionId
+    ? await getCustomerProfile(parsed.data.shop, undefined, sessionId).catch(() => null)
+    : null;
+  const storedProfile = storedRecord
+    ? {
+        profileKey: buildProfileKey(storedRecord.shop, storedRecord.shopifyCustomerId, storedRecord.sessionId),
+        shop: storedRecord.shop,
+        shopifyCustomerId: storedRecord.shopifyCustomerId,
+        sessionId: storedRecord.sessionId,
+        sizeProfile: storedRecord.sizeProfile,
+        disciplineProfile: storedRecord.disciplineProfile,
+        explicitProfile: storedRecord.explicitProfile,
+        purchaseSummary: storedRecord.purchaseSummary,
+        behaviorSummary: storedRecord.behaviorSummary,
+        confidenceSummary: storedRecord.confidenceSummary,
+        lastActiveAt: storedRecord.lastActiveAt,
+      }
+    : null;
+  const resolvedProfile = resolveCustomerProfile({
+    shop: parsed.data.shop,
+    sessionId,
+    storedProfile,
+  });
 
   const guidanceReply = await buildStorefrontChatReply(parsed.data, behaviorResolution.config);
   const comparisonValidationError = getCompareProductsValidationError(parsed.data);
@@ -341,6 +370,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               shop: parsed.data.shop,
               cart: parsed.data.cart,
               behavior: behaviorResolution.config,
+              profile: resolvedProfile,
             }),
             messages: parsed.data.messages
               .filter((m) => m.role === "user" || m.role === "assistant")

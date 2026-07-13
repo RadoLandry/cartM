@@ -597,6 +597,48 @@
         color: #5b6c88;
       }
 
+      .cm-kit-preview {
+        margin: 8px 0 4px;
+        border-radius: 10px;
+        overflow: hidden;
+        background: #f7f9fc;
+        text-align: center;
+      }
+
+      .cm-kit-preview--loading {
+        padding: 10px 12px;
+        font-size: 11px;
+        color: #94a3b8;
+        font-style: italic;
+      }
+
+      .cm-kit-preview__img {
+        max-width: 100%;
+        max-height: 180px;
+        object-fit: contain;
+        display: block;
+        margin: 0 auto;
+      }
+
+      .cm-kit-preview--pair {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 6px;
+      }
+
+      .cm-kit-preview--pair .cm-kit-preview__img {
+        max-width: 44%;
+        max-height: 120px;
+      }
+
+      .cm-kit-preview__arrow {
+        font-size: 18px;
+        color: #94a3b8;
+        flex: none;
+      }
+
       .cm-action-status {
         color: #14213d;
         font-weight: 600;
@@ -847,6 +889,16 @@
     const isPending = state.pendingActionId === action.actionId;
     const status = state.actionStatusById && state.actionStatusById[action.actionId];
     const isResolved = status && ["executed", "failed", "declined", "expired"].indexOf(status.status) >= 0;
+    const preview = state.actionPreviewById && state.actionPreviewById[action.actionId];
+    const previewHtml = preview
+      ? preview.loading
+        ? `<div class="cm-kit-preview cm-kit-preview--loading">Loading visual preview…</div>`
+        : preview.comparisonAssetUrl
+          ? `<div class="cm-kit-preview"><img class="cm-kit-preview__img" src="${escapeHtml(preview.comparisonAssetUrl)}" alt="Cart visual comparison" loading="lazy"></div>`
+          : (preview.currentAssetUrl || preview.proposedAssetUrl)
+            ? `<div class="cm-kit-preview cm-kit-preview--pair">${preview.currentAssetUrl ? `<img class="cm-kit-preview__img" src="${escapeHtml(preview.currentAssetUrl)}" alt="Current" loading="lazy">` : ""}<span class="cm-kit-preview__arrow">→</span>${preview.proposedAssetUrl ? `<img class="cm-kit-preview__img" src="${escapeHtml(preview.proposedAssetUrl)}" alt="After swap" loading="lazy">` : ""}</div>`
+            : ""
+      : "";
 
     return `
       <div class="cm-action-card">
@@ -854,6 +906,7 @@
         <p>${escapeHtml(describeCartAction(action))}</p>
         ${action.preview && action.preview.before ? `<p class="cm-action-preview">Before: ${escapeHtml(action.preview.before)}</p>` : ""}
         ${action.preview && action.preview.after ? `<p class="cm-action-preview">After: ${escapeHtml(action.preview.after)}</p>` : ""}
+        ${previewHtml}
         ${renderActionStatus(action, state)}
         ${isResolved ? "" : `
           <div class="cm-action-buttons">
@@ -1145,6 +1198,55 @@
     return await fetchLatestStorefrontCart(currentCart);
   }
 
+  async function fetchKitPreview(instance, action) {
+    const state = instance.state;
+    if (!state.kitPreviewUrl || !action || !action.payload || action.payload.actionType !== "swap_variant") {
+      return;
+    }
+
+    try {
+      const response = await window.fetch(state.kitPreviewUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          shop: state.config.shop,
+          sessionId: state.sessionId,
+          cartId: state.cart.cartId || "",
+          selectedLineId: action.payload.lineId,
+          proposedVariantId: action.payload.newMerchandiseId,
+          currencyCode: state.cart.currencyCode || "USD",
+          surface: state.config.surface || "cart_drawer",
+          cart: {
+            items: state.cart.items.map((item) => ({
+              lineId: item.lineId,
+              productId: item.productId,
+              variantId: item.variantId,
+              productTitle: item.productTitle,
+              variantTitle: item.variantTitle,
+              quantity: item.quantity,
+            })),
+          },
+        }),
+      });
+
+      const payload = await response.json().catch(() => null);
+      if (payload && payload.ok && payload.comparison) {
+        state.actionPreviewById[action.actionId] = {
+          loading: false,
+          comparisonAssetUrl: payload.comparison.comparisonAssetUrl || null,
+          currentAssetUrl: payload.comparison.currentAssetUrl || null,
+          proposedAssetUrl: payload.comparison.proposedAssetUrl || null,
+        };
+      } else {
+        state.actionPreviewById[action.actionId] = { loading: false, comparisonAssetUrl: null, currentAssetUrl: null, proposedAssetUrl: null };
+      }
+    } catch {
+      state.actionPreviewById[action.actionId] = { loading: false, comparisonAssetUrl: null, currentAssetUrl: null, proposedAssetUrl: null };
+    }
+
+    render(instance);
+  }
+
   async function submitActionConfirmation(instance, action, decision) {
     const state = instance.state;
     state.pendingActionId = action.actionId;
@@ -1385,6 +1487,8 @@
       statusMessage: "",
       pendingActionId: "",
       actionStatusById: {},
+      actionPreviewById: {},
+      kitPreviewUrl: "",
       sessionId: getOrCreateSessionId(config),
       sessionKey: "",
       streamToken: "",
@@ -1513,6 +1617,7 @@
     state.streamToken = payload.bootstrap.streamToken;
     state.streamTokenExpiresAt = payload.bootstrap.expiresAt;
     state.chatUrl = payload.bootstrap.chatUrl;
+    state.kitPreviewUrl = payload.bootstrap.kitPreviewUrl || "";
     state.cartId = payload.bootstrap.cartId || state.cart.cartId || "";
 
     return {
@@ -1595,6 +1700,12 @@
 
       message.actionProposals.push(part.action);
       updateActionStatus(instance.state, part.action.actionId, "proposed", "Awaiting confirmation.");
+
+      if (part.action.payload && part.action.payload.actionType === "swap_variant") {
+        instance.state.actionPreviewById[part.action.actionId] = { loading: true, comparisonAssetUrl: null, currentAssetUrl: null, proposedAssetUrl: null };
+        void fetchKitPreview(instance, part.action);
+      }
+
       render(instance);
       return;
     }

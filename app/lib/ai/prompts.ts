@@ -4,6 +4,7 @@ import {
   resolveBehaviorPolicyConflict,
   type AIBehaviorDraftPayload,
 } from "./behavior-config";
+import type { ResolvedCustomerProfile } from "../cart-intelligence/customer-profile";
 
 function formatCartLine(line: StorefrontChatRequest["cart"]["items"][number], index: number) {
   const name = line.productTitle || `Item ${index + 1}`;
@@ -13,6 +14,7 @@ function formatCartLine(line: StorefrontChatRequest["cart"]["items"][number], in
 
 export function buildStorefrontChatSystemPrompt(input: Pick<StorefrontChatRequest, "shop" | "cart"> & {
   behavior?: AIBehaviorDraftPayload;
+  profile?: ResolvedCustomerProfile | null;
 }) {
   const behavior = resolveBehaviorPolicyConflict({
     tone: AI_BEHAVIOR_DEFAULTS.tone,
@@ -37,6 +39,27 @@ export function buildStorefrontChatSystemPrompt(input: Pick<StorefrontChatReques
     behaviorSummary.push(`Merchant guidance: ${behavior.customGuidance}`);
   }
 
+  const profileLines: string[] = [];
+  const profile = input.profile;
+  if (profile && profile.guidanceMode !== "generic") {
+    if (profile.disciplinePreferences.length > 0) {
+      profileLines.push(`Shopper discipline: ${profile.disciplinePreferences.slice(0, 2).map((d) => d.discipline).join(", ")}`);
+    }
+    const sizeEntries = Object.entries(profile.knownSizes).slice(0, 4).map(([k, v]) => `${k}: ${v}`).join(", ");
+    if (sizeEntries) {
+      profileLines.push(`Known sizes: ${sizeEntries}`);
+    }
+    if (profile.experienceLevel) {
+      profileLines.push(`Experience level: ${profile.experienceLevel}`);
+    }
+    if (profile.weightClass) {
+      profileLines.push(`Weight class: ${profile.weightClass}`);
+    }
+    if (profile.purchaseFrequency) {
+      profileLines.push(`Purchase frequency: ${profile.purchaseFrequency}`);
+    }
+  }
+
   return [
     "You are CartMind, an in-cart shopping assistant for Shopify.",
     "Keep answers concise, specific to the cart, and safe for a shopper-facing storefront.",
@@ -50,6 +73,7 @@ export function buildStorefrontChatSystemPrompt(input: Pick<StorefrontChatReques
     "Reply in the same language as the shopper's last message. If the question is in French, answer entirely in French.",
     behaviorSummary.join(". "),
     cartSummary,
+    ...(profileLines.length > 0 ? [`Shopper profile (use to personalise, do not repeat back verbatim): ${profileLines.join(". ")}.`] : []),
     `Cart currency: ${input.cart.currencyCode}`,
     `Shop: ${input.shop}`,
   ].join(" ");
