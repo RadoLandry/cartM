@@ -90,6 +90,39 @@ describe("storefront chat stream route", () => {
     expect(body).toContain("R\u00e9sum\u00e9 des tailles");
   });
 
+  it("honors storefront feature flags when streaming guidance blocks", async () => {
+    process.env.STOREFRONT_CHAT_SIGNING_SECRET = "test-signing-secret";
+    const input = makeStorefrontChatRequest({
+      features: {
+        showRecommendations: false,
+        showKitCompleteness: false,
+        showSizeWarnings: false,
+        showChatEntry: true,
+        showReasonTags: true,
+      },
+      messages: [{ role: "user", content: "Check size and kit completeness for this cart" }],
+    });
+
+    const response = await action({
+      request: new Request("http://localhost/api/ai/chat", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://test.myshopify.com",
+        },
+        body: JSON.stringify(input),
+      }),
+      params: {},
+      context: {},
+    } as never);
+    const body = await readResponseText(response);
+
+    expect(body).toContain('"type":"text-delta"');
+    expect(body).toContain('"type":"message-complete"');
+    expect(body).not.toContain('"type":"size_summary"');
+    expect(body).not.toContain('"type":"recommendation_list"');
+  });
+
   it("emits proposed tool action and status events for add requests", async () => {
     process.env.STOREFRONT_CHAT_SIGNING_SECRET = "test-signing-secret";
     const input = makeStorefrontChatRequest({

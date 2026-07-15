@@ -7,7 +7,7 @@ import {
   buildStorefrontChatReply,
   createBudgetOptimizationContext,
   resolveStorefrontChatBehavior,
-  resolveCompatibleAddActionProposal,
+  resolveCompatibleAddActionProposals,
   createProductComparisonContext,
   normalizeBudgetOptimizationResult,
   normalizeProductComparisonResult,
@@ -53,6 +53,19 @@ function getCorsHeaders(request: Request) {
 
 function encodeSseEvent(payload: unknown) {
   return `data: ${JSON.stringify(payload)}\n\n`;
+}
+
+function buildCompatibleActionIntro(latestMessage: string, count: number) {
+  const isFrench = /\b(gants|avec|article|produit|trouve|cherche|recommande|compatible)\b/i.test(latestMessage);
+  if (count > 1) {
+    return isFrench
+      ? `J'ai trouvé ${count} articles compatibles dans le catalogue. Faites défiler les propositions ci-dessous, puis validez le produit à ajouter au panier.`
+      : `I found ${count} compatible products in the catalog. Swipe through the options below, then approve the product to add to cart.`;
+  }
+
+  return isFrench
+    ? "J'ai trouvé un article compatible dans le catalogue. Vérifiez la proposition ci-dessous avant de l'ajouter au panier."
+    : "I found a compatible product in the catalog. Review the proposed cart action below before adding it.";
 }
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -148,6 +161,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     storedProfile,
   });
 
+  const compatibleActionProposals = await resolveCompatibleAddActionProposals(parsed.data);
   const guidanceReply = await buildStorefrontChatReply(parsed.data, behaviorResolution.config);
   const comparisonValidationError = getCompareProductsValidationError(parsed.data);
   const comparisonRequest = buildCompareProductsToolRequest(parsed.data);
@@ -334,8 +348,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
-  const actionProposal = (await resolveCompatibleAddActionProposal(parsed.data)) ?? buildCartToolActionProposal(parsed.data);
-  const toolActionEvents = [actionProposal, comparisonActionProposal, budgetActionProposal]
+  const cartActionProposals = compatibleActionProposals.length > 0
+    ? compatibleActionProposals
+    : [buildCartToolActionProposal(parsed.data)].filter((action): action is NonNullable<typeof action> => Boolean(action));
+  const toolActionEvents = [...cartActionProposals, comparisonActionProposal, budgetActionProposal]
     .filter((action): action is NonNullable<typeof action> => Boolean(action))
     .map((action) => ({
       type: "tool-action-proposed" as const,
@@ -351,6 +367,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const messageId = `${parsed.data.sessionKey}-assistant-${parsed.data.messages.length}`;
   const aiEnabled = isAIAvailable();
   const latestMessage = parsed.data.messages[parsed.data.messages.length - 1]?.content.toLowerCase() ?? "";
+  const hasCompatibleActionProposals = compatibleActionProposals.length > 0;
+  const replyText = hasCompatibleActionProposals ? buildCompatibleActionIntro(latestMessage, compatibleActionProposals.length) : guidanceReply.text;
+  const guidanceBlocks = hasCompatibleActionProposals ? [] : guidanceReply.guidanceBlocks;
   const shouldBypassLLM = /\b(budget|optimi[sz]|compare|add|remove|swap|quantit|quantity|size|fit|sparring|combat|taille|adapt[eé])\b/.test(latestMessage);
   const shouldUseLLM = aiEnabled && !shouldBypassLLM;
   const encoder = new TextEncoder();
@@ -382,14 +401,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             emit({ type: "text-delta", text: chunk });
           }
         } catch {
-          emit({ type: "text-delta", text: guidanceReply.text });
+          emit({ type: "text-delta", text: replyText });
         }
       } else {
-        emit({ type: "text-delta", text: guidanceReply.text });
+        emit({ type: "text-delta", text: replyText });
       }
 
       // 2. Guidance blocks structurés (cart-aware, rule-based)
-      for (const block of guidanceReply.guidanceBlocks) {
+      for (const block of guidanceBlocks) {
         emit({ type: "guidance-block", block });
       }
 

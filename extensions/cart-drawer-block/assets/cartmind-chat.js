@@ -3,6 +3,7 @@
   const LOADING_FLAG = "__cartmindChatBlockRuntimeLoading";
   const SCRIPT_MARKER = "data-cartmind-chat-runtime";
   const RUNTIME_PATH = "/storefront/cartmind-chat-block-runtime.js";
+  const RUNTIME_VERSION = "20260715-compatible-catalog-images-v4";
 
   function normalizeAppBaseUrl(rawValue) {
     if (typeof rawValue !== "string") {
@@ -52,11 +53,12 @@
 
   function buildRuntimeUrl() {
     const appBaseUrl = resolveRuntimeBaseUrl();
+    const runtimePath = `${RUNTIME_PATH}?v=${encodeURIComponent(RUNTIME_VERSION)}`;
     if (appBaseUrl) {
-      return `${appBaseUrl}${RUNTIME_PATH}`;
+      return `${appBaseUrl}${runtimePath}`;
     }
 
-    return RUNTIME_PATH;
+    return runtimePath;
   }
 
   function injectRuntime(url) {

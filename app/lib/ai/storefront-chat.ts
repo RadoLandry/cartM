@@ -684,18 +684,80 @@ function buildSizeBlock(lang: "fr" | "en" = "en"): StructuredGuidanceBlock {
       };
 }
 
+function filterGuidanceBlocksForFeatures(
+  blocks: StructuredGuidanceBlock[],
+  features: StorefrontChatRequest["features"],
+): StructuredGuidanceBlock[] {
+  return blocks.filter((block) => {
+    if (block.type === "size_summary") {
+      return features.showSizeWarnings !== false;
+    }
+
+    if (block.type === "recommendation_list") {
+      const items = block.items.filter((item) => {
+        const tags = item.evidenceTags ?? [];
+        const isKitItem = tags.includes("kit");
+        if (isKitItem && features.showKitCompleteness === false) {
+          return false;
+        }
+
+        if (!isKitItem && features.showRecommendations === false) {
+          return false;
+        }
+
+        return true;
+      });
+
+      return items.length > 0;
+    }
+
+    return true;
+  }).map((block) => {
+    if (block.type !== "recommendation_list") {
+      return block;
+    }
+
+    return {
+      ...block,
+      items: block.items.filter((item) => {
+        const tags = item.evidenceTags ?? [];
+        const isKitItem = tags.includes("kit");
+        return isKitItem
+          ? features.showKitCompleteness !== false
+          : features.showRecommendations !== false;
+      }),
+    };
+  });
+}
+
+function buildFeatureAwareReply(
+  reply: { text: string; guidanceBlocks: StructuredGuidanceBlock[] },
+  features: StorefrontChatRequest["features"],
+) {
+  return {
+    ...reply,
+    guidanceBlocks: filterGuidanceBlocksForFeatures(reply.guidanceBlocks, features),
+  };
+}
+
 async function buildIntelligentSnapshot(input: StorefrontChatRequest, lang: "fr" | "en" = "en"): Promise<ChatIntelligenceSnapshot> {
   const fallbackItems = lang === "fr" ? buildFallbackRecommendationsFr(input) : buildFallbackRecommendations(input);
 
   try {
     const resolvedLines = await resolveCartLines(input);
-    const matchedLines = resolvedLines.filter((line) => line.productRow);
-    const recommendationItems: RecommendationItem[] = [...fallbackItems];
+    const matchedLines = resolvedLines.filter((line): line is ResolvedCartLine & { productRow: NonNullable<ResolvedCartLine["productRow"]> } => Boolean(line.productRow));
+    const recommendationItems: RecommendationItem[] = [];
     let missingCount = 0;
     let sizeIssueCount = 0;
     let personalizationApplied = false;
     let historyApplied = false;
     let sizeBlock: StructuredGuidanceBlock | undefined;
+
+    const catalogComplementItems = await buildDatabaseComplementRecommendations(input, matchedLines, lang);
+    recommendationItems.push(...catalogComplementItems);
+    if (catalogComplementItems.length > 0) {
+      missingCount += catalogComplementItems.length;
+    }
 
     const unavailableLines = matchedLines.filter((line) => (line.variantRow?.inventoryQuantity ?? 1) <= 0);
     for (const line of unavailableLines.slice(0, 2)) {
@@ -960,7 +1022,17 @@ async function buildIntelligentSnapshot(input: StorefrontChatRequest, lang: "fr"
       }
     }
 
-    const prioritized = dedupeRecommendationItems(recommendationItems)
+    const hasRealCatalogAddRecommendation = recommendationItems.some((item) => (
+      item.action === "add"
+      && Boolean(item.productId)
+      && !hasEvidenceTag(item, "fallback")
+      && !input.cart.items.some((line) => toProductGid(line.productId) === item.productId)
+    ));
+    const recommendationPool = hasRealCatalogAddRecommendation
+      ? recommendationItems
+      : [...recommendationItems, ...fallbackItems];
+
+    const prioritized = dedupeRecommendationItems(recommendationPool)
       .sort((left, right) => {
         const rank = { high: 0, medium: 1, low: 2 } as const;
         if ((left.safetyCritical ? 0 : 1) !== (right.safetyCritical ? 0 : 1)) {
@@ -1030,9 +1102,16 @@ export async function buildStorefrontChatReply(
     ...input,
     ...(behavior ? { behavior } : {}),
   });
+  const features = input.features ?? {
+    showRecommendations: true,
+    showKitCompleteness: true,
+    showSizeWarnings: true,
+    showChatEntry: true,
+    showReasonTags: true,
+  };
 
   if (input.cart.items.length === 0) {
-    return {
+    return buildFeatureAwareReply({
       text: lang === "fr"
         ? `${systemPrompt} Votre panier est vide. Ajoutez au moins un article pour que je puisse vous donner des conseils personnalisés (garder/ajouter/retirer/échanger/taille).`
         : `${systemPrompt} Your cart is empty right now, so I can only give general guidance. Add at least one item and I can give specific keep/add/remove/swap/size advice.`,
@@ -1042,7 +1121,7 @@ export async function buildStorefrontChatReply(
           : "Add at least one cart item, then ask what to keep, add, remove, swap, or resize.",
         lang,
       )],
-    };
+    }, features);
   }
 
   const intelligence = await buildIntelligentSnapshotWithTimeout(input, lang);
@@ -1066,15 +1145,15 @@ export async function buildStorefrontChatReply(
   const sizeGuidanceBlock = intelligence.sizeBlock || buildSizeBlock(lang);
 
   if (isSizeOrUseCaseIntentMessage(latestMessage) || isRecommendationExplanationIntentMessage(latestMessage)) {
-    return {
+    return buildFeatureAwareReply({
       text: buildCartAwareQuestionAnswer(input, intelligence, lang),
       guidanceBlocks: [sizeGuidanceBlock, recommendationBlock],
-    };
+    }, features);
   }
 
   if (kitIntent) {
     if (hasKitRecommendations) {
-      return {
+      return buildFeatureAwareReply({
         text: lang === "fr"
           ? summaryParts.length > 0
             ? `Voici ce qu'il manque encore pour compléter votre kit, en commençant par les essentiels. ${summaryParts.join(" ")}`
@@ -1083,11 +1162,11 @@ export async function buildStorefrontChatReply(
             ? `Here is what is still missing to complete your kit, prioritized by required essentials first. ${summaryParts.join(" ")}`
             : "Here is what is still missing to complete your kit, prioritized by required essentials first.",
         guidanceBlocks: [buildRecommendationBlock(kitRecommendationItems, lang), ...(intelligence.sizeBlock ? [intelligence.sizeBlock] : [])],
-      };
+      }, features);
     }
 
     if (fallbackOnly) {
-      return {
+      return buildFeatureAwareReply({
         text: lang === "fr"
           ? "Je ne peux pas encore déduire un kit complet à partir du panier actuel. Ajoutez au moins un article de discipline principale (gants, bandages, protège-tibias ou pièce de gi) et je listerai exactement ce qui manque."
           : "I cannot reliably infer a full kit baseline from the current cart yet. Add at least one core discipline item (for example gloves, wraps, shin guards, or gi pieces), and I will list exactly what is missing.",
@@ -1100,10 +1179,10 @@ export async function buildStorefrontChatReply(
           ),
           ...(intelligence.sizeBlock ? [intelligence.sizeBlock] : []),
         ],
-      };
+      }, features);
     }
 
-    return {
+    return buildFeatureAwareReply({
       text: lang === "fr"
         ? summaryParts.length > 0
           ? `Voici les manques prioritaires que je peux déduire de votre panier actuel. ${summaryParts.join(" ")}`
@@ -1112,11 +1191,11 @@ export async function buildStorefrontChatReply(
           ? `Here are the highest-priority gaps I can infer from your current cart. ${summaryParts.join(" ")}`
           : "Here are the highest-priority gaps I can infer from your current cart.",
       guidanceBlocks: [recommendationBlock, ...(intelligence.sizeBlock ? [intelligence.sizeBlock] : [])],
-    };
+    }, features);
   }
 
   if (latestMessage.includes("missing") || latestMessage.includes("budget") || /optimi[sz]/.test(latestMessage)) {
-    return {
+    return buildFeatureAwareReply({
       text: lang === "fr"
         ? summaryParts.length > 0
           ? `J'ai préparé un plan d'optimisation budgétaire. Consultez les modifications proposées ci-dessous, puis choisissez d'appliquer ou de refuser. ${summaryParts.join(" ")}`
@@ -1125,20 +1204,20 @@ export async function buildStorefrontChatReply(
           ? `I prepared a budget optimization plan for your target. Review the proposed changes below, then choose whether to apply or decline. ${summaryParts.join(" ")}`
           : "I prepared a budget optimization plan for your target. Review the proposed changes below, then choose whether to apply or decline.",
       guidanceBlocks: [],
-    };
+    }, features);
   }
 
   if (latestMessage.includes("compare")) {
-    return {
+    return buildFeatureAwareReply({
       text: lang === "fr"
         ? "Voici une comparaison rapide des articles actuellement dans le panier."
         : "Here is a quick comparison based on the items currently in the cart.",
       guidanceBlocks: [buildComparisonBlock(input)],
-    };
+    }, features);
   }
 
   if (latestMessage.includes("size") || latestMessage.includes("fit")) {
-    return {
+    return buildFeatureAwareReply({
       text: lang === "fr"
         ? intelligence.sizeIssueCount > 0
           ? "Voici le guide de taille basé sur les règles enregistrées, les signaux de profil et les vérifications de cohérence."
@@ -1147,10 +1226,10 @@ export async function buildStorefrontChatReply(
           ? "Here is fit guidance from stored size rules, profile signals, and cart-level consistency checks."
           : "Here is the fit guidance I can infer from the current cart.",
       guidanceBlocks: [sizeGuidanceBlock, recommendationBlock],
-    };
+    }, features);
   }
 
-  return {
+  return buildFeatureAwareReply({
     text: lang === "fr"
       ? summaryParts.length > 0
         ? `Voici des recommandations personnalisées pour votre panier. ${summaryParts.join(" ")}`
@@ -1159,7 +1238,7 @@ export async function buildStorefrontChatReply(
         ? `Here are cart-specific recommendations grounded in your shop data. ${summaryParts.join(" ")}`
         : "Here is a relevant, cart-specific recommendation based on your current items.",
     guidanceBlocks: [recommendationBlock, ...(intelligence.sizeBlock ? [intelligence.sizeBlock] : [])],
-  };
+  }, features);
 }
 
 // ─── Compatible-add: knowledge-graph powered proposal ───────────────────────
@@ -1187,76 +1266,119 @@ function scoreCompatibleProduct(
   return tokens.reduce((score, token) => score + (haystack.includes(token) ? 1 : 0), 0);
 }
 
-/**
- * When a shopper says "add boxing gloves compatible with this short", look up
- * COMPLEMENTS relationships in the knowledge graph for the referenced cart
- * product and propose an addToCart action for the best-matching compatible
- * product.  Returns null if intent cannot be resolved or no match is found.
- */
-export async function resolveCompatibleAddActionProposal(
+function hasPositiveInventory(variant: { inventoryQuantity: number | null }) {
+  return (variant.inventoryQuantity ?? 0) > 0;
+}
+
+function inferComplementSearchTerms(
+  matchedLines: Array<ResolvedCartLine & { productRow: NonNullable<ResolvedCartLine["productRow"]> }>,
+) {
+  const terms = new Set<string>();
+  const contextTitles: string[] = [];
+
+  for (const line of matchedLines) {
+    const haystack = normalizeForCompatSearch([
+      line.inputLine.productTitle,
+      line.productRow.title,
+      ...line.productRow.tags,
+      ...line.productRow.categoryTags,
+      ...line.productRow.disciplineTags,
+    ].filter(Boolean).join(" "));
+
+    contextTitles.push(line.inputLine.productTitle || line.productRow.title);
+
+    if (/\b(glove|gloves|gants?|boxing-gloves|boxe|boxing)\b/.test(haystack)) {
+      ["wraps", "hand-wraps", "bandages", "bandage", "mouthguard", "mouthguards", "protege-dents", "protection", "protective"].forEach((term) => terms.add(term));
+    }
+
+    if (/\b(shin|tibia|prot[eè]ge-tibias?|shin-guards?)\b/.test(haystack)) {
+      ["ankle", "ankle-guards", "foot-protection", "protection", "protective", "tape"].forEach((term) => terms.add(term));
+    }
+
+    if (/\b(gi|kimono|bjj|jiu-jitsu)\b/.test(haystack)) {
+      ["belt", "ceinture", "rashguard", "mouthguard", "protege-dents", "protection"].forEach((term) => terms.add(term));
+    }
+
+    if (/\b(t-?shirt|tee|top|tops|shirt|dry-tech|rashguard|apparel|vetement|v[eê]tement|hommes?)\b/.test(haystack)) {
+      ["shorts", "fight-shorts", "fightshort", "rashguard", "compression", "leggings", "spats", "apparel", "bottoms"].forEach((term) => terms.add(term));
+    }
+  }
+
+  return {
+    terms: Array.from(terms),
+    contextTitle: contextTitles[0] ?? "your cart",
+  };
+}
+
+function buildInferredCatalogProductFilters(terms: string[]) {
+  return [
+    { tags: { hasSome: terms } },
+    { categoryTags: { hasSome: terms } },
+    ...terms.map((term) => ({ title: { contains: term.replace(/-/g, " "), mode: "insensitive" as const } })),
+  ];
+}
+
+async function buildDatabaseComplementRecommendations(
   input: StorefrontChatRequest,
-): Promise<CartToolAction | null> {
-  const latest = input.messages[input.messages.length - 1]?.content ?? "";
-  const normalized = normalizeForCompatSearch(latest);
+  matchedLines: Array<ResolvedCartLine & { productRow: NonNullable<ResolvedCartLine["productRow"]> }>,
+  lang: "fr" | "en" = "en",
+): Promise<RecommendationItem[]> {
+  const cartInternalIds = new Set(matchedLines.map((line) => line.productRow.id));
+  const cartShopifyProductIds = new Set(input.cart.items.map((line) => toProductGid(line.productId)));
+  const relationshipSets = await Promise.all(
+    matchedLines.map((line) => getActiveRelationshipsForProduct(input.shop, line.productRow.id).catch(() => [])),
+  );
+  const complementStrengthById = new Map<string, number>();
+  const complementContextById = new Map<string, string>();
 
-  // Must be an add intent with a reference-relation phrase
-  if (!/\b(add|ajoute|insert|include)\b/.test(normalized)) return null;
-  if (!COMPATIBLE_RELATION_PHRASE_RE.test(normalized)) return null;
+  for (let index = 0; index < relationshipSets.length; index += 1) {
+    const sourceLine = matchedLines[index];
+    if (!sourceLine) continue;
 
-  // Split on the reference phrase: [before] [after]
-  const parts = normalized.split(COMPATIBLE_RELATION_PHRASE_RE);
-  const beforeRef = parts[0] ?? "";
-  const afterRef = parts[1]?.trim() ?? normalized;
+    for (const relationship of relationshipSets[index] ?? []) {
+      if (relationship.relationshipType !== "COMPLEMENTS") continue;
+      const complementId = relationship.sourceProductId === sourceLine.productRow.id
+        ? relationship.targetProductId
+        : relationship.sourceProductId;
 
-  // Extract add-target keywords (strip verb + articles)
-  const addTargetText = beforeRef
-    .replace(/^\s*\b(ajoute|add|insert|include)\b\s*/i, "")
-    .replace(/\b(un|une|des|a|an|some|le|la|les|du|de|l|d)\b\s*/gi, "")
-    .trim();
+      if (cartInternalIds.has(complementId)) continue;
 
-  const searchTokens = addTargetText.split(/[^a-z0-9]+/).filter((t) => t.length >= 3);
-  if (searchTokens.length === 0) return null;
+      const currentStrength = complementStrengthById.get(complementId) ?? -1;
+      if ((relationship.strength ?? 0) >= currentStrength) {
+        complementStrengthById.set(complementId, relationship.strength ?? 0);
+        complementContextById.set(complementId, sourceLine.inputLine.productTitle || sourceLine.productRow.title);
+      }
+    }
+  }
 
-  // Resolve cart lines to DB product records
-  const resolvedLines = await resolveCartLines(input).catch(() => [] as ResolvedCartLine[]);
+  const complementIds = Array.from(complementStrengthById.keys());
+  const inferredSearch = inferComplementSearchTerms(matchedLines);
+  const inferredProductFilters = buildInferredCatalogProductFilters(inferredSearch.terms);
+  if (complementIds.length === 0 && inferredSearch.terms.length === 0) return [];
 
-  // Identify the referenced cart item from the text after the relation phrase
-  const referencedLine = resolvedLines.find((line) => {
-    const title = line.inputLine.productTitle;
-    if (!title) return false;
-    const normalizedTitle = normalizeForCompatSearch(title);
-    return normalizedTitle
-      .split(/[^a-z0-9]+/)
-      .some((t) => t.length >= 4 && afterRef.includes(t));
-  }) ?? resolvedLines[0];
-
-  if (!referencedLine?.productRow?.id) return null;
-
-  // Query COMPLEMENTS relationships for the referenced product
-  const relationships = await getActiveRelationshipsForProduct(
-    input.shop,
-    referencedLine.productRow.id,
-  ).catch(() => []);
-
-  const complementIds = relationships
-    .filter((r) => r.relationshipType === "COMPLEMENTS")
-    .map((r) =>
-      r.sourceProductId === referencedLine.productRow!.id ? r.targetProductId : r.sourceProductId,
-    );
-
-  if (complementIds.length === 0) return null;
-
-  // Fetch compatible products with up to 3 variants for availability check
-  const relatedProducts = await db.product.findMany({
-    where: {
-      shop: input.shop,
-      id: { in: complementIds },
-      status: "ACTIVE",
-    },
+  let products = await db.product.findMany({
+    where: complementIds.length > 0
+      ? {
+          shop: input.shop,
+          id: { in: complementIds },
+          status: "ACTIVE",
+        }
+      : {
+          shop: input.shop,
+          status: "ACTIVE",
+          NOT: [
+            { id: { in: Array.from(cartInternalIds) } },
+            { shopifyProductId: { in: Array.from(cartShopifyProductIds) } },
+          ],
+          OR: inferredProductFilters,
+        },
+    orderBy: { title: "asc" },
+    take: 6,
     select: {
       id: true,
       shopifyProductId: true,
       title: true,
+      handle: true,
       tags: true,
       disciplineTags: true,
       categoryTags: true,
@@ -1268,28 +1390,147 @@ export async function resolveCompatibleAddActionProposal(
           shopifyVariantId: true,
           title: true,
           inventoryQuantity: true,
+          price: true,
+          imageUrl: true,
         },
       },
     },
   }).catch(() => []);
 
-  if (relatedProducts.length === 0) return null;
+  if (products.length === 0 && complementIds.length > 0 && inferredSearch.terms.length > 0) {
+    products = await db.product.findMany({
+      where: {
+        shop: input.shop,
+        status: "ACTIVE",
+        NOT: [
+          { id: { in: Array.from(cartInternalIds) } },
+          { shopifyProductId: { in: Array.from(cartShopifyProductIds) } },
+        ],
+        OR: inferredProductFilters,
+      },
+      orderBy: { title: "asc" },
+      take: 6,
+      select: {
+        id: true,
+        shopifyProductId: true,
+        title: true,
+        handle: true,
+        tags: true,
+        disciplineTags: true,
+        categoryTags: true,
+        variants: {
+          orderBy: { inventoryQuantity: "desc" },
+          take: 3,
+          select: {
+            id: true,
+            shopifyVariantId: true,
+            title: true,
+            inventoryQuantity: true,
+            price: true,
+            imageUrl: true,
+          },
+        },
+      },
+    }).catch(() => []);
+  }
 
-  // Score each product and pick the best keyword match
-  const best = relatedProducts
-    .map((p) => ({ product: p, score: scoreCompatibleProduct(p, searchTokens) }))
-    .filter(({ score }) => score > 0)
-    .sort((a, b) => b.score - a.score)[0]?.product;
+  return products
+    .filter((product) => !cartShopifyProductIds.has(product.shopifyProductId))
+    .map((product) => {
+      const variant = product.variants.find(hasPositiveInventory);
+      if (!variant) return null;
 
-  if (!best) return null;
+      const isSafetyProduct = (product.tags ?? []).some((tag) => /protect|safety|protection|bandage|wrap/i.test(tag));
+      const contextTitle = complementContextById.get(product.id) ?? inferredSearch.contextTitle ?? (lang === "fr" ? "votre panier" : "your cart");
+      const price = variant.price !== null && variant.price !== undefined ? Number(variant.price) : null;
+      const variantLabel = variant.title && variant.title !== "Default Title" ? variant.title : undefined;
 
-  // Prefer in-stock variants; fall back to first available
-  const variant =
-    best.variants.find((v) => (v.inventoryQuantity ?? 1) > 0) ?? best.variants[0];
+      const recommendation: RecommendationItem = {
+        productId: product.shopifyProductId,
+        productTitle: product.title,
+        variantId: variant.shopifyVariantId,
+        ...(variantLabel ? { variantTitle: variantLabel } : {}),
+        ...(variant.imageUrl ? { imageUrl: variant.imageUrl } : {}),
+        ...(product.handle ? { productHandle: product.handle } : {}),
+        title: product.title,
+        action: "add" as const,
+        priorityLabel: (complementStrengthById.get(product.id) ?? 0.65) >= 0.75 ? "high" as const : "medium" as const,
+        reason: lang === "fr"
+          ? `${product.title} est relié dans le catalogue comme complément compatible avec ${contextTitle}.`
+          : `${product.title} is linked in the catalog as a compatible complement for ${contextTitle}.`,
+        shopperOutcome: lang === "fr"
+          ? "Ajoute un produit réel de la boutique qui complète l'article déjà au panier."
+          : "Adds a real shop product that complements the item already in the cart.",
+        safetyCritical: isSafetyProduct,
+        ...(price && price > 0 ? { priceLabel: new Intl.NumberFormat(lang === "fr" ? "fr-FR" : "en-US", { style: "currency", currency: input.cart.currencyCode }).format(price) } : {}),
+        availability: "available" as const,
+        evidenceTags: ["compatibility" as const, ...(isSafetyProduct ? ["safety" as const] : [])],
+      };
 
-  if (!variant) return null;
+      return recommendation;
+    })
+    .filter((item): item is RecommendationItem => item !== null)
+    .sort((left, right) => (
+      (right.safetyCritical ? 1 : 0) - (left.safetyCritical ? 1 : 0)
+      || ({ high: 2, medium: 1, low: 0 }[right.priorityLabel] - { high: 2, medium: 1, low: 0 }[left.priorityLabel])
+    ));
+}
 
-  // Build the CartToolAction
+function isCompatibleDiscoveryIntent(message: string) {
+  return /\b(add|ajoute|insert|include|find|cherche|trouve|recommend|recommande|suggest|suggere|propose|show|montre|help)\b/.test(message);
+}
+
+function extractCompatibleTargetTokens(text: string) {
+  const genericWords = new Set([
+    "add",
+    "ajoute",
+    "insert",
+    "include",
+    "find",
+    "cherche",
+    "trouve",
+    "recommend",
+    "recommande",
+    "suggest",
+    "suggere",
+    "propose",
+    "show",
+    "montre",
+    "help",
+    "me",
+    "to",
+    "with",
+    "for",
+    "un",
+    "une",
+    "des",
+    "a",
+    "an",
+    "some",
+    "le",
+    "la",
+    "les",
+    "du",
+    "de",
+    "article",
+    "articles",
+    "product",
+    "products",
+    "produit",
+    "produits",
+    "item",
+    "items",
+    "accessory",
+    "accessoire",
+    "compatible",
+  ]);
+
+  return text
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length >= 3 && !genericWords.has(token));
+}
+
+function buildCompatibleAddToCartAction(input: StorefrontChatRequest, productTitle: string, variantId: string, variantTitle?: string, imageUrl?: string, productHandle?: string): CartToolAction {
   const actionId = crypto.randomUUID();
   const token = issueActionConfirmationToken({
     actionId,
@@ -1297,9 +1538,7 @@ export async function resolveCompatibleAddActionProposal(
     sessionKey: input.sessionKey,
     cartId: input.cart.cartId,
   });
-
-  const variantLabel = variant.title && variant.title !== "Default Title" ? ` / ${variant.title}` : "";
-
+  const variantLabel = variantTitle && variantTitle !== "Default Title" ? ` / ${variantTitle}` : "";
   const action: CartToolAction = {
     actionId,
     toolName: "addToCart",
@@ -1308,11 +1547,13 @@ export async function resolveCompatibleAddActionProposal(
     ...(input.cart.cartId ? { cartId: input.cart.cartId } : {}),
     payload: {
       actionType: "add",
-      merchandiseId: variant.shopifyVariantId,
+      merchandiseId: variantId,
       quantity: 1,
     },
     preview: {
-      after: `Add 1 x ${best.title}${variantLabel}`,
+      after: `Add 1 x ${productTitle}${variantLabel}`,
+      ...(imageUrl ? { imageUrl } : {}),
+      ...(productHandle ? { productHandle } : {}),
     },
     confirmationToken: token.token,
     expiresAt: token.expiresAt,
@@ -1327,6 +1568,162 @@ export async function resolveCompatibleAddActionProposal(
   });
 
   return action;
+}
+
+/**
+ * When a shopper says "add boxing gloves compatible with this short" or
+ * "find an article compatible with these gloves", look up
+ * COMPLEMENTS relationships in the knowledge graph for the referenced cart
+ * product and propose addToCart actions for matching compatible products.
+ * Returns an empty array if intent cannot be resolved or no match is found.
+ */
+export async function resolveCompatibleAddActionProposals(
+  input: StorefrontChatRequest,
+): Promise<CartToolAction[]> {
+  const latest = input.messages[input.messages.length - 1]?.content ?? "";
+  const normalized = normalizeForCompatSearch(latest);
+
+  // Must be an add/discovery intent with a reference-relation phrase
+  if (!isCompatibleDiscoveryIntent(normalized)) return [];
+  if (!COMPATIBLE_RELATION_PHRASE_RE.test(normalized)) return [];
+
+  // Split on the reference phrase: [before] [after]
+  const parts = normalized.split(COMPATIBLE_RELATION_PHRASE_RE);
+  const beforeRef = parts[0] ?? "";
+  const afterRef = parts[1]?.trim() ?? normalized;
+
+  const searchTokens = extractCompatibleTargetTokens(beforeRef);
+
+  // Resolve cart lines to DB product records
+  const resolvedLines = await resolveCartLines(input).catch(() => [] as ResolvedCartLine[]);
+
+  // Identify the referenced cart item from the text after the relation phrase
+  const explicitlyReferencedLine = resolvedLines.find((line) => {
+    const title = line.inputLine.productTitle;
+    if (!title) return false;
+    const normalizedTitle = normalizeForCompatSearch(title);
+    return normalizedTitle
+      .split(/[^a-z0-9]+/)
+      .some((t) => t.length >= 4 && afterRef.includes(t));
+  });
+  const referencedLine = explicitlyReferencedLine ?? resolvedLines[0];
+
+  if (!referencedLine?.productRow?.id) return [];
+  const catalogSearchLines = explicitlyReferencedLine?.productRow
+    ? [explicitlyReferencedLine as ResolvedCartLine & { productRow: NonNullable<ResolvedCartLine["productRow"]> }]
+    : resolvedLines.filter((line): line is ResolvedCartLine & { productRow: NonNullable<ResolvedCartLine["productRow"]> } => Boolean(line.productRow));
+
+  // Query COMPLEMENTS relationships for the referenced product
+  const relationships = await getActiveRelationshipsForProduct(
+    input.shop,
+    referencedLine.productRow.id,
+  ).catch(() => []);
+
+  const complementIds = relationships
+    .filter((r) => r.relationshipType === "COMPLEMENTS")
+    .map((r) =>
+      r.sourceProductId === referencedLine.productRow!.id ? r.targetProductId : r.sourceProductId,
+    );
+
+  const complementStrengthById = new Map(
+    relationships
+      .filter((r) => r.relationshipType === "COMPLEMENTS")
+      .map((r) => [
+        r.sourceProductId === referencedLine.productRow!.id ? r.targetProductId : r.sourceProductId,
+        r.strength ?? 0,
+      ]),
+  );
+
+  if (complementIds.length === 0) {
+    if (searchTokens.length > 0) return [];
+
+    const catalogRecommendations = await buildDatabaseComplementRecommendations(
+      input,
+      catalogSearchLines,
+      detectMessageLanguage(latest),
+    );
+    return catalogRecommendations
+      .filter((item) => item.action === "add" && item.variantId)
+      .slice(0, 6)
+      .map((item) => buildCompatibleAddToCartAction(input, item.title, item.variantId!, item.variantTitle, item.imageUrl, item.productHandle));
+  }
+
+  // Fetch compatible products with up to 3 variants for availability check
+  const relatedProducts = await db.product.findMany({
+    where: {
+      shop: input.shop,
+      id: { in: complementIds },
+      status: "ACTIVE",
+    },
+    select: {
+      id: true,
+      shopifyProductId: true,
+      title: true,
+      handle: true,
+      tags: true,
+      disciplineTags: true,
+      categoryTags: true,
+      variants: {
+        orderBy: { inventoryQuantity: "desc" },
+        take: 3,
+        select: {
+          id: true,
+          shopifyVariantId: true,
+          title: true,
+          inventoryQuantity: true,
+          imageUrl: true,
+        },
+      },
+    },
+  }).catch(() => []);
+
+  if (relatedProducts.length === 0) {
+    if (searchTokens.length > 0) return [];
+
+    const catalogRecommendations = await buildDatabaseComplementRecommendations(
+      input,
+      catalogSearchLines,
+      detectMessageLanguage(latest),
+    );
+    return catalogRecommendations
+      .filter((item) => item.action === "add" && item.variantId)
+      .slice(0, 6)
+      .map((item) => buildCompatibleAddToCartAction(input, item.title, item.variantId!, item.variantTitle, item.imageUrl, item.productHandle));
+  }
+
+  // Score each product. If the shopper asked generically for an "article" or
+  // "product", prefer the strongest graph complement instead of requiring a
+  // keyword match against generic words.
+  const scoredProducts = relatedProducts
+    .map((product) => ({
+      product,
+      tokenScore: scoreCompatibleProduct(product, searchTokens),
+      relationshipStrength: complementStrengthById.get(product.id) ?? 0,
+    }))
+    .sort((a, b) => (
+      b.tokenScore - a.tokenScore
+      || b.relationshipStrength - a.relationshipStrength
+    ));
+  const matchingProducts = (searchTokens.length > 0
+    ? scoredProducts.filter(({ tokenScore }) => tokenScore > 0)
+    : scoredProducts)
+    .slice(0, 6);
+
+  return matchingProducts
+    .map(({ product }) => {
+      const variant = product.variants.find(hasPositiveInventory);
+      return variant
+        ? buildCompatibleAddToCartAction(input, product.title, variant.shopifyVariantId, variant.title, variant.imageUrl ?? undefined, product.handle)
+        : null;
+    })
+    .filter((action): action is CartToolAction => action !== null);
+}
+
+export async function resolveCompatibleAddActionProposal(
+  input: StorefrontChatRequest,
+): Promise<CartToolAction | null> {
+  const proposals = await resolveCompatibleAddActionProposals(input);
+  return proposals[0] ?? null;
 }
 
 export async function buildStorefrontChatStreamParts(

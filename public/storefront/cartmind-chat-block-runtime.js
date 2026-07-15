@@ -1,5 +1,5 @@
 (() => {
-  console.info("[CartMind] Extension script v1.1.0 loaded");
+  console.info("[CartMind] Extension script v1.1.3-compatible-image-fallback loaded");
 
   const SURFACE_CONTAINER_SELECTORS = {
     cart_drawer: [
@@ -157,6 +157,34 @@
     ].join("::");
   }
 
+    function shouldRunProactiveAnalysis(config) {
+      const features = config && config.features ? config.features : {};
+      return features.showRecommendations !== false
+        || features.showKitCompleteness !== false
+        || features.showSizeWarnings !== false;
+    }
+
+    function buildProactivePrompt(config) {
+      const features = config && config.features ? config.features : {};
+      const checks = [];
+
+      if (features.showKitCompleteness !== false) {
+        checks.push("les articles manquants pour completer le kit");
+      }
+
+      if (features.showSizeWarnings !== false) {
+        checks.push("les risques de taille ou de fit");
+      }
+
+      if (features.showRecommendations !== false) {
+        checks.push("les recommandations utiles pour ce panier");
+      }
+
+      return checks.length > 0
+        ? `Analyse proactive apres ajout au panier: verifie ${checks.join(", ")}. Reponds brievement et uniquement si une action utile existe.`
+        : "Analyse proactive apres ajout au panier.";
+    }
+
   function buildSessionStorageKey(config) {
     return `cartmind-chat:browser:${config.shop}:${config.surface}`;
   }
@@ -189,6 +217,10 @@
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;");
+  }
+
+  function renderInlineText(value) {
+    return escapeHtml(value).replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   }
 
   function resolveDrawerMountAnchor(container) {
@@ -523,6 +555,10 @@
         white-space: pre-wrap;
       }
 
+      .cm-message__content strong {
+        font-weight: 800;
+      }
+
       .cm-guidance-list {
         display: grid;
         gap: 8px;
@@ -554,6 +590,7 @@
         align-items: center;
         gap: 6px;
         margin-top: 6px;
+        margin-bottom: 6px;
       }
 
       .cm-reason-chips__label {
@@ -563,6 +600,8 @@
       }
 
       .cm-reason-chip {
+        display: inline-flex;
+        align-items: center;
         border: 1px solid #c9d6e8;
         border-radius: 999px;
         background: #eef4fb;
@@ -591,6 +630,22 @@
         margin: 6px 0 0;
         font-size: 12px;
         color: #40516d;
+      }
+
+      .cm-action-media {
+        margin: 8px 0 6px;
+        border-radius: 10px;
+        background: #f7f9fc;
+        border: 1px solid #edf1f7;
+        overflow: hidden;
+        text-align: center;
+      }
+
+      .cm-action-media__img {
+        display: block;
+        width: 100%;
+        max-height: 180px;
+        object-fit: contain;
       }
 
       .cm-action-preview {
@@ -648,6 +703,54 @@
         display: flex;
         gap: 8px;
         margin-top: 10px;
+      }
+
+      .cm-compatible-slider-shell {
+        display: grid;
+        grid-template-columns: 32px minmax(0, 1fr) 32px;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .cm-compatible-slider {
+        display: grid;
+        grid-auto-flow: column;
+        grid-auto-columns: minmax(220px, 82%);
+        gap: 12px;
+        overflow-x: auto;
+        overscroll-behavior-x: contain;
+        scroll-snap-type: x mandatory;
+        scrollbar-width: none;
+        padding: 2px;
+        min-width: 263px;
+      }
+
+      .cm-compatible-slider::-webkit-scrollbar {
+        display: none;
+      }
+
+      .cm-compatible-slider .cm-action-card {
+        scroll-snap-align: start;
+        height: 100%;
+      }
+
+      .cm-slider-nav {
+        width: 32px;
+        height: 32px;
+        border: 1px solid #d8dde6;
+        border-radius: 999px;
+        background: #ffffff;
+        color: #14213d;
+        cursor: pointer;
+        font-size: 20px;
+        line-height: 1;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .cm-slider-nav:hover {
+        background: #edf1f7;
       }
 
       .cm-action-button {
@@ -804,9 +907,9 @@
       const items = Array.isArray(block.items)
         ? block.items.slice(0, 4).map((item) => {
           const title = escapeHtml(item.title || item.productTitle || "Recommendation");
-          const reason = escapeHtml(item.reason || "");
+          const reason = renderInlineText(item.reason || "");
           const outcome = item && item.shopperOutcome
-            ? `<div>${escapeHtml(item.shopperOutcome)}</div>`
+            ? `<div>${renderInlineText(item.shopperOutcome)}</div>`
             : "";
           const reasons = renderReasonTags(item, config);
 
@@ -871,6 +974,75 @@
     return `<p class="cm-action-status">Status: ${escapeHtml(status.status)}${summary}</p>`;
   }
 
+  function normalizeStorefrontImageUrl(rawValue) {
+    if (typeof rawValue !== "string" || !rawValue.trim()) {
+      return "";
+    }
+
+    const trimmed = rawValue.trim();
+    if (trimmed.indexOf("//") === 0) {
+      return `${window.location.protocol}${trimmed}`;
+    }
+
+    return trimmed;
+  }
+
+  function pickProductJsonImage(payload, action) {
+    if (!payload || typeof payload !== "object") {
+      return "";
+    }
+
+    const variantId = action && action.payload && action.payload.merchandiseId
+      ? String(action.payload.merchandiseId).split("/").pop()
+      : "";
+    const variants = Array.isArray(payload.variants) ? payload.variants : [];
+    const matchedVariant = variants.find((variant) => variant && String(variant.id) === variantId);
+    const variantImage = matchedVariant && matchedVariant.featured_image
+      ? matchedVariant.featured_image.src || matchedVariant.featured_image.url
+      : "";
+
+    if (variantImage) {
+      return normalizeStorefrontImageUrl(variantImage);
+    }
+
+    if (payload.featured_image) {
+      return normalizeStorefrontImageUrl(payload.featured_image);
+    }
+
+    const images = Array.isArray(payload.images) ? payload.images : [];
+    return normalizeStorefrontImageUrl(images[0] || "");
+  }
+
+  async function fetchActionProductImage(instance, action) {
+    if (!action || !action.preview || action.preview.imageUrl || !action.preview.productHandle) {
+      return;
+    }
+
+    try {
+      const handle = encodeURIComponent(action.preview.productHandle);
+      const response = await window.fetch(`/products/${handle}.js`, {
+        method: "GET",
+        credentials: "same-origin",
+        headers: { accept: "application/json" },
+      });
+
+      if (!response.ok) {
+        return;
+      }
+
+      const payload = await response.json().catch(() => null);
+      const imageUrl = pickProductJsonImage(payload, action);
+      if (!imageUrl) {
+        return;
+      }
+
+      action.preview.imageUrl = imageUrl;
+      render(instance);
+    } catch {
+      // Image preview is optional; leave the action usable if lookup fails.
+    }
+  }
+
   function renderActionProposal(action, state) {
     if (!action || !action.payload) {
       return "";
@@ -889,6 +1061,9 @@
     const isPending = state.pendingActionId === action.actionId;
     const status = state.actionStatusById && state.actionStatusById[action.actionId];
     const isResolved = status && ["executed", "failed", "declined", "expired"].indexOf(status.status) >= 0;
+    const imageHtml = action.preview && action.preview.imageUrl
+      ? `<div class="cm-action-media"><img class="cm-action-media__img" src="${escapeHtml(action.preview.imageUrl)}" alt="${escapeHtml(action.preview.after || action.toolName || "Recommended product")}" loading="lazy"></div>`
+      : "";
     const preview = state.actionPreviewById && state.actionPreviewById[action.actionId];
     const previewHtml = preview
       ? preview.loading
@@ -904,6 +1079,7 @@
       <div class="cm-action-card">
         <strong>${escapeHtml(action.toolName || "Cart action")}</strong>
         <p>${escapeHtml(describeCartAction(action))}</p>
+        ${imageHtml}
         ${action.preview && action.preview.before ? `<p class="cm-action-preview">Before: ${escapeHtml(action.preview.before)}</p>` : ""}
         ${action.preview && action.preview.after ? `<p class="cm-action-preview">After: ${escapeHtml(action.preview.after)}</p>` : ""}
         ${previewHtml}
@@ -916,6 +1092,34 @@
         `}
       </div>
     `;
+  }
+
+  function isCompatibleAddProposal(action) {
+    return action
+      && action.toolName === "addToCart"
+      && action.payload
+      && action.payload.actionType === "add"
+      && action.preview
+      && (action.preview.productHandle || action.preview.imageUrl);
+  }
+
+  function renderActionProposals(actions, state) {
+    if (!Array.isArray(actions) || actions.length === 0) {
+      return "";
+    }
+
+    const allCompatibleAdds = actions.length > 1 && actions.every(isCompatibleAddProposal);
+    if (allCompatibleAdds) {
+      return `
+        <div class="cm-guidance-list cm-compatible-slider-shell">
+          <button class="cm-slider-nav" type="button" data-action="compatible-slider-prev" aria-label="Previous compatible product">&lsaquo;</button>
+          <div class="cm-compatible-slider" data-role="compatible-slider">${actions.map((action) => renderActionProposal(action, state)).join("")}</div>
+          <button class="cm-slider-nav" type="button" data-action="compatible-slider-next" aria-label="Next compatible product">&rsaquo;</button>
+        </div>
+      `;
+    }
+
+    return `<div class="cm-guidance-list">${actions.map((action) => renderActionProposal(action, state)).join("")}</div>`;
   }
 
   function updateActionStatus(state, actionId, status, summary) {
@@ -1357,12 +1561,12 @@
     const messagesHtml = state.messages.map((message) => `
       <article class="cm-message cm-message--${escapeHtml(message.role)}">
         <span class="cm-message__label">${message.role === "assistant" ? "CartMind" : "You"}</span>
-        <div class="cm-message__content">${escapeHtml(message.content || (message.role === "assistant" && state.sending ? "Thinking..." : ""))}</div>
+        <div class="cm-message__content">${renderInlineText(message.content || (message.role === "assistant" && state.sending ? "Thinking..." : ""))}</div>
         ${Array.isArray(message.guidanceBlocks) && message.guidanceBlocks.length > 0
           ? `<div class="cm-guidance-list">${message.guidanceBlocks.map((block) => renderGuidanceBlock(block, state.config)).join("")}</div>`
           : ""}
         ${Array.isArray(message.actionProposals) && message.actionProposals.length > 0
-          ? `<div class="cm-guidance-list">${message.actionProposals.map((action) => renderActionProposal(action, state)).join("")}</div>`
+          ? renderActionProposals(message.actionProposals, state)
           : ""}
       </article>
     `).join("");
@@ -1405,6 +1609,7 @@
     const textarea = instance.mountNode.querySelector('textarea[name="message"]');
     const messagesContainer = instance.mountNode.querySelector(".cm-messages");
     const actionButtons = instance.mountNode.querySelectorAll("[data-action-id][data-action]");
+    const sliderButtons = instance.mountNode.querySelectorAll('[data-action="compatible-slider-prev"], [data-action="compatible-slider-next"]');
 
     if (toggleButton) {
       toggleButton.addEventListener("click", () => {
@@ -1455,6 +1660,23 @@
       });
     }
 
+    if (sliderButtons && sliderButtons.length > 0) {
+      sliderButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+          const shell = button.closest(".cm-compatible-slider-shell");
+          const slider = shell ? shell.querySelector('[data-role="compatible-slider"]') : null;
+          if (!slider) {
+            return;
+          }
+
+          const direction = button.getAttribute("data-action") === "compatible-slider-prev" ? -1 : 1;
+          const firstCard = slider.querySelector(".cm-action-card");
+          const step = firstCard ? firstCard.getBoundingClientRect().width + 12 : slider.clientWidth;
+          slider.scrollBy({ left: direction * step, behavior: "smooth" });
+        });
+      });
+    }
+
     if (messagesContainer) {
       messagesContainer.scrollTop = messagesContainer.scrollHeight;
     }
@@ -1489,6 +1711,8 @@
       actionStatusById: {},
       actionPreviewById: {},
       kitPreviewUrl: "",
+      proactiveAnalysisFingerprint: "",
+      proactiveAnalysisPending: false,
       sessionId: getOrCreateSessionId(config),
       sessionKey: "",
       streamToken: "",
@@ -1563,6 +1787,7 @@
       }
 
       render(instance);
+      queueProactiveAnalysis(instance, source, nextFingerprint);
     } catch {
       instance.state.statusMessage = "Unable to refresh the cart snapshot.";
       render(instance);
@@ -1706,6 +1931,10 @@
         void fetchKitPreview(instance, part.action);
       }
 
+      if (part.action.preview && part.action.preview.productHandle && !part.action.preview.imageUrl) {
+        void fetchActionProductImage(instance, part.action);
+      }
+
       render(instance);
       return;
     }
@@ -1727,6 +1956,7 @@
         sessionKey: bootstrap.sessionKey,
         streamToken: bootstrap.streamToken,
         cart: instance.state.cart,
+        features: instance.state.config.features || {},
         messages: buildMessagesPayload(instance.state.messages.slice(0, -2), userText),
       }),
     });
@@ -1763,6 +1993,67 @@
         const part = JSON.parse(payload);
         handleStreamPart(instance, assistantMessage, part);
       }
+    }
+  }
+
+  function isCartMutationSyncSource(source) {
+    return source === "fetch_intercept" || source === "xhr_intercept" || source === "cart_action";
+  }
+
+  function queueProactiveAnalysis(instance, source, fingerprint) {
+    const state = instance.state;
+
+    if (!isCartMutationSyncSource(source)
+      || !shouldRunProactiveAnalysis(state.config)
+      || !state.cart.items.length
+      || state.sending
+      || state.proactiveAnalysisPending
+      || state.proactiveAnalysisFingerprint === fingerprint) {
+      return;
+    }
+
+    state.proactiveAnalysisFingerprint = fingerprint;
+    state.proactiveAnalysisPending = true;
+    window.setTimeout(() => {
+      void submitProactiveAnalysis(instance);
+    }, 250);
+  }
+
+  async function submitProactiveAnalysis(instance) {
+    const state = instance.state;
+
+    if (state.sending || !state.cart.items.length || !shouldRunProactiveAnalysis(state.config)) {
+      state.proactiveAnalysisPending = false;
+      return;
+    }
+
+    const timestamp = Date.now();
+    const prompt = buildProactivePrompt(state.config);
+    const assistantMessage = {
+      id: `assistant-proactive-${timestamp}`,
+      role: "assistant",
+      content: "",
+      guidanceBlocks: [],
+    };
+
+    state.messages.push(assistantMessage);
+    state.sending = true;
+    state.panelOpen = true;
+    state.error = "";
+    state.statusMessage = "Analyzing updated cart...";
+    render(instance);
+
+    try {
+      await streamAssistantReply(instance, assistantMessage, prompt);
+      state.statusMessage = "Cart analysis updated.";
+    } catch (error) {
+      state.messages = state.messages.filter((message) => message.id !== assistantMessage.id);
+      state.error = error instanceof Error ? error.message : "Unable to analyze the updated cart.";
+      state.statusMessage = "Cart analysis failed.";
+    } finally {
+      state.sending = false;
+      state.proactiveAnalysisPending = false;
+      render(instance);
     }
   }
 
