@@ -90,6 +90,46 @@ describe("storefront chat stream route", () => {
     expect(body).toContain("R\u00e9sum\u00e9 des tailles");
   });
 
+  it("answers discipline compatibility questions like a cart-aware coach", async () => {
+    process.env.STOREFRONT_CHAT_SIGNING_SECRET = "test-signing-secret";
+    const input = makeStorefrontChatRequest({
+      cart: {
+        cartId: "gid://shopify/Cart/123",
+        currencyCode: "EUR",
+        items: [
+          {
+            productId: "gid://shopify/Product/99",
+            productTitle: "Gants de Boxe Venum Impact Evo Scales - Muay Thai",
+            variantId: "gid://shopify/ProductVariant/991",
+            variantTitle: "10 oz / Vert Armee",
+            quantity: 1,
+          },
+        ],
+      },
+      messages: [{ role: "user", content: "est ce que ce gant est compatible a la pratique du Muay Thai?" }],
+    });
+
+    const response = await action({
+      request: new Request("http://localhost/api/ai/chat", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://test.myshopify.com",
+        },
+        body: JSON.stringify(input),
+      }),
+      params: {},
+      context: {},
+    } as never);
+    const body = await readResponseText(response);
+
+    expect(body).toContain("Oui");
+    expect(body).toContain("Muay Thai");
+    expect(body).toContain("10 oz");
+    expect(body).toContain("v\u00e9rifiez aussi le rembourrage");
+    expect(body).toContain('"type":"size_summary"');
+  });
+
   it("honors storefront feature flags when streaming guidance blocks", async () => {
     process.env.STOREFRONT_CHAT_SIGNING_SECRET = "test-signing-secret";
     const input = makeStorefrontChatRequest({

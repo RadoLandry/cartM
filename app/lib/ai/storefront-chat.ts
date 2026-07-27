@@ -571,7 +571,7 @@ function isKitIntentMessage(message: string) {
 }
 
 function isSizeOrUseCaseIntentMessage(message: string) {
-  return /(size|fit|sizing|taille|pointure|oz\b|ounce|sparring|combat|entrainement|entra[iî]nement|training|adapt[eé]|convient|suitable)/i.test(message);
+  return /(size|fit|sizing|taille|pointure|oz\b|ounce|sparring|combat|entrainement|entra[iî]nement|training|pratique|adapt[eé]|convient|compatible|suitable|muay\s*thai|tha[iï]|kick\s*boxing|kickboxing|boxe|boxing|mma)/i.test(message);
 }
 
 function isRecommendationExplanationIntentMessage(message: string) {
@@ -588,10 +588,43 @@ function formatCartItemForAnswer(item: StorefrontChatRequest["cart"]["items"][nu
   return `${title}${variant}`;
 }
 
+function detectDisciplineIntent(message: string, lang: "fr" | "en") {
+  const disciplines = [
+    { pattern: /muay\s*thai|tha[iï]/i, fr: "Muay Thai", en: "Muay Thai" },
+    { pattern: /kick\s*boxing|kickboxing/i, fr: "kickboxing", en: "kickboxing" },
+    { pattern: /boxe|boxing/i, fr: "boxe", en: "boxing" },
+    { pattern: /mma|mixed martial arts/i, fr: "MMA", en: "MMA" },
+  ];
+
+  return disciplines.find((discipline) => discipline.pattern.test(message))?.[lang];
+}
+
+function inferUseCaseEvidence(label: string, message: string, lang: "fr" | "en") {
+  const source = `${label} ${message}`.toLowerCase();
+  const evidence: string[] = [];
+
+  if (/gant|glove/.test(source)) {
+    evidence.push(lang === "fr" ? "il s'agit de gants" : "it is a glove product");
+  }
+
+  if (/\b\d{1,2}\s*oz\b|ounce/.test(source)) {
+    const weight = source.match(/\b\d{1,2}\s*oz\b|\b\d{1,2}\s*ounce/i)?.[0];
+    evidence.push(lang === "fr" ? `la variante indique ${weight}` : `the variant shows ${weight}`);
+  }
+
+  if (/boxe|boxing|kick\s*boxing|kickboxing|muay\s*thai|tha[iï]/.test(source)) {
+    evidence.push(lang === "fr" ? "le libellé mentionne un usage boxe/kickboxing/Muay Thai" : "the label mentions boxing/kickboxing/Muay Thai use");
+  }
+
+  return evidence;
+}
+
 function buildCartAwareQuestionAnswer(input: StorefrontChatRequest, intelligence: ChatIntelligenceSnapshot, lang: "fr" | "en" = "en") {
   const latestMessage = input.messages[input.messages.length - 1]?.content.toLowerCase() ?? "";
   const primaryItem = input.cart.items[0];
   const primaryLabel = primaryItem ? formatCartItemForAnswer(primaryItem) : (lang === "fr" ? "ce produit" : "this cart item");
+  const discipline = detectDisciplineIntent(latestMessage, lang);
+  const useCaseEvidence = inferUseCaseEvidence(primaryLabel, latestMessage, lang);
   const asksAboutSparring = /(sparring|combat)/i.test(latestMessage);
   const asksAboutSize = /(size|fit|sizing|taille|pointure|oz\b|ounce)/i.test(latestMessage);
   const safetyRecommendation = intelligence.recommendationItems.find((item) => item.safetyCritical);
@@ -601,6 +634,20 @@ function buildCartAwareQuestionAnswer(input: StorefrontChatRequest, intelligence
         ? ` Contexte : ${usefulRecommendation.title} — ${usefulRecommendation.reason}`
         : ` Recommendation context: ${usefulRecommendation.title} because ${usefulRecommendation.reason}`)
     : "";
+
+  if (discipline) {
+    const evidenceSentence = useCaseEvidence.length > 0
+      ? (lang === "fr"
+          ? ` Les signaux disponibles: ${useCaseEvidence.join(", ")}.`
+          : ` Available signals: ${useCaseEvidence.join(", ")}.`)
+      : (lang === "fr"
+          ? " Le panier ne contient pas assez de détails techniques pour confirmer plus finement."
+          : " The cart does not include enough technical detail for a finer confirmation.");
+
+    return lang === "fr"
+      ? `Oui, **${primaryLabel}** semble compatible avec la pratique du **${discipline}** d'après les informations visibles dans le panier.${evidenceSentence} Pour un conseil vraiment fiable, vérifiez aussi le rembourrage, le maintien du poignet, le poids adapté à votre usage et les règles de votre salle.${recommendationReason}`
+      : `Yes, **${primaryLabel}** appears compatible with **${discipline}** based on the cart-visible information.${evidenceSentence} For reliable final advice, also verify padding, wrist support, the right weight for your use case, and your gym rules.${recommendationReason}`;
+  }
 
   if (asksAboutSparring) {
     return lang === "fr"

@@ -370,7 +370,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const hasCompatibleActionProposals = compatibleActionProposals.length > 0;
   const replyText = hasCompatibleActionProposals ? buildCompatibleActionIntro(latestMessage, compatibleActionProposals.length) : guidanceReply.text;
   const guidanceBlocks = hasCompatibleActionProposals ? [] : guidanceReply.guidanceBlocks;
-  const shouldBypassLLM = /\b(budget|optimi[sz]|compare|add|remove|swap|quantit|quantity|size|fit|sparring|combat|taille|adapt[eé])\b/.test(latestMessage);
+  const shouldBypassLLM = /\b(budget|optimi[sz]|compare|add|remove|swap|quantit|quantity|size|fit|sparring|combat|taille|pratique|compatible|adapt[eé]|muay\s*thai|tha[iï]|kick\s*boxing|kickboxing|boxe|boxing|mma)\b/.test(latestMessage);
   const shouldUseLLM = aiEnabled && !shouldBypassLLM;
   const encoder = new TextEncoder();
 
