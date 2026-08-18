@@ -257,7 +257,7 @@ interface ChatIntelligenceSnapshot {
   historyApplied: boolean;
 }
 
-const CHAT_INTELLIGENCE_TIMEOUT_MS = 400;
+const CHAT_INTELLIGENCE_TIMEOUT_MS = 2500;
 
 function toProductGid(rawValue: string) {
   if (rawValue.startsWith("gid://shopify/Product/")) {
@@ -576,6 +576,10 @@ function isSizeOrUseCaseIntentMessage(message: string) {
 
 function isRecommendationExplanationIntentMessage(message: string) {
   return /(why|pourquoi|explain|explique|recommend|recommand|suggest|conseil|propose)/i.test(message);
+}
+
+function isProactiveAnalysisPrompt(message: string) {
+  return /^analyse\s+proactive/i.test(message);
 }
 
 function detectMessageLanguage(message: string): "fr" | "en" {
@@ -1069,17 +1073,15 @@ async function buildIntelligentSnapshot(input: StorefrontChatRequest, lang: "fr"
       }
     }
 
-    const hasRealCatalogAddRecommendation = recommendationItems.some((item) => (
-      item.action === "add"
-      && Boolean(item.productId)
-      && !hasEvidenceTag(item, "fallback")
-      && !input.cart.items.some((line) => toProductGid(line.productId) === item.productId)
-    ));
-    const recommendationPool = hasRealCatalogAddRecommendation
+    // any non-fallback item (size conflict, kit gap, profile, availability) counts as real intelligence
+    const hasRealNonFallbackContent = recommendationItems.some((item) => !hasEvidenceTag(item, "fallback"));
+    const recommendationPool = hasRealNonFallbackContent
       ? recommendationItems
       : [...recommendationItems, ...fallbackItems];
 
     const prioritized = dedupeRecommendationItems(recommendationPool)
+      // strip "keep" actions and "add" items that have no resolvable variant (nothing to render in the carousel)
+      .filter((item) => item.action !== "keep" && (item.action !== "add" || Boolean(item.variantId)))
       .sort((left, right) => {
         const rank = { high: 0, medium: 1, low: 2 } as const;
         if ((left.safetyCritical ? 0 : 1) !== (right.safetyCritical ? 0 : 1)) {
@@ -1142,9 +1144,12 @@ export async function buildStorefrontChatReply(
   input: StorefrontChatRequest,
   behavior?: AIBehaviorDraftPayload,
 ) {
-  const latestMessage = input.messages[input.messages.length - 1]?.content.toLowerCase() ?? "";
+  const rawMessage = input.messages[input.messages.length - 1]?.content ?? "";
+  const latestMessage = rawMessage.toLowerCase();
   const lang = detectMessageLanguage(latestMessage);
-  const kitIntent = isKitIntentMessage(latestMessage);
+  const proactive = isProactiveAnalysisPrompt(latestMessage);
+  const kitIntent = !proactive && isKitIntentMessage(latestMessage);
+
   const systemPrompt = buildStorefrontChatSystemPrompt({
     ...input,
     ...(behavior ? { behavior } : {}),
@@ -1191,7 +1196,7 @@ export async function buildStorefrontChatReply(
   const fallbackOnly = isFallbackOnlyRecommendations(intelligence.recommendationItems);
   const sizeGuidanceBlock = intelligence.sizeBlock || buildSizeBlock(lang);
 
-  if (isSizeOrUseCaseIntentMessage(latestMessage) || isRecommendationExplanationIntentMessage(latestMessage)) {
+  if (!proactive && (isSizeOrUseCaseIntentMessage(latestMessage) || isRecommendationExplanationIntentMessage(latestMessage))) {
     return buildFeatureAwareReply({
       text: buildCartAwareQuestionAnswer(input, intelligence, lang),
       guidanceBlocks: [sizeGuidanceBlock, recommendationBlock],
@@ -1303,6 +1308,15 @@ function normalizeForCompatSearch(text: string) {
     .trim();
 }
 
+function shuffleArray<T>(array: T[]): T[] {
+  const result = array.slice();
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [result[i], result[j]] = [result[j]!, result[i]!];
+  }
+  return result;
+}
+
 function scoreCompatibleProduct(
   product: { title: string; tags: string[]; categoryTags: string[]; disciplineTags: string[] },
   tokens: string[],
@@ -1315,6 +1329,35 @@ function scoreCompatibleProduct(
 
 function hasPositiveInventory(variant: { inventoryQuantity: number | null }) {
   return (variant.inventoryQuantity ?? 0) > 0;
+}
+
+type CatalogCompatibilityRole = "gloves" | "shin_guards" | "gi" | "top" | "bottom" | "protective" | "unknown";
+
+function detectCatalogCompatibilityRole(text: string): CatalogCompatibilityRole {
+  const haystack = normalizeForCompatSearch(text);
+
+  if (/\b(wraps?|bandages?|mouthguards?|protege-dents|protection|protective)\b/.test(haystack)) return "protective";
+  if (/\b(glove|gloves|gants?|boxing-gloves|gant-de-boxe|gants-de-boxe)\b/.test(haystack)) return "gloves";
+  if (/\b(shin|tibia|prot[eè]ge-tibias?|shin-guards?)\b/.test(haystack)) return "shin_guards";
+  if (/\b(gi|kimono|bjj|jiu-jitsu)\b/.test(haystack)) return "gi";
+  if (/\b(pants?|pantalons?|trousers?|joggers?|legging|leggings|spats|shorts?|fight-shorts?|fightshort)\b/.test(haystack)) return "bottom";
+  if (/\b(t-?shirt|tee|top|tops|shirt|dry-tech|rashguard|vetement|v[eê]tement)\b/.test(haystack)) return "top";
+
+  return "unknown";
+}
+
+function detectProductCompatibilityRole(product: { title: string; tags: string[]; categoryTags: string[]; disciplineTags: string[] }) {
+  return detectCatalogCompatibilityRole([product.title, ...product.tags, ...product.categoryTags, ...product.disciplineTags].join(" "));
+}
+
+function excludesSameApparelRole(
+  product: { title: string; tags: string[]; categoryTags: string[]; disciplineTags: string[] },
+  sourceRoles: Set<CatalogCompatibilityRole>,
+) {
+  const productRole = detectProductCompatibilityRole(product);
+  // exclude same-role duplicates for all gear/apparel categories
+  const singleRoleCategories = new Set<CatalogCompatibilityRole>(["gloves", "shin_guards", "gi", "top", "bottom"]);
+  return !(singleRoleCategories.has(productRole) && sourceRoles.has(productRole));
 }
 
 function inferComplementSearchTerms(
@@ -1334,20 +1377,26 @@ function inferComplementSearchTerms(
 
     contextTitles.push(line.inputLine.productTitle || line.productRow.title);
 
-    if (/\b(glove|gloves|gants?|boxing-gloves|boxe|boxing)\b/.test(haystack)) {
+    const role = detectCatalogCompatibilityRole(haystack);
+
+    if (role === "gloves") {
       ["wraps", "hand-wraps", "bandages", "bandage", "mouthguard", "mouthguards", "protege-dents", "protection", "protective"].forEach((term) => terms.add(term));
     }
 
-    if (/\b(shin|tibia|prot[eè]ge-tibias?|shin-guards?)\b/.test(haystack)) {
+    if (role === "shin_guards") {
       ["ankle", "ankle-guards", "foot-protection", "protection", "protective", "tape"].forEach((term) => terms.add(term));
     }
 
-    if (/\b(gi|kimono|bjj|jiu-jitsu)\b/.test(haystack)) {
+    if (role === "gi") {
       ["belt", "ceinture", "rashguard", "mouthguard", "protege-dents", "protection"].forEach((term) => terms.add(term));
     }
 
-    if (/\b(t-?shirt|tee|top|tops|shirt|dry-tech|rashguard|apparel|vetement|v[eê]tement|hommes?)\b/.test(haystack)) {
+    if (role === "top") {
       ["shorts", "fight-shorts", "fightshort", "rashguard", "compression", "leggings", "spats", "apparel", "bottoms"].forEach((term) => terms.add(term));
+    }
+
+    if (role === "bottom") {
+      ["rashguard", "t-shirt", "tee", "top", "tops", "shirt", "compression", "protection", "protective"].forEach((term) => terms.add(term));
     }
   }
 
@@ -1401,9 +1450,10 @@ async function buildDatabaseComplementRecommendations(
   const complementIds = Array.from(complementStrengthById.keys());
   const inferredSearch = inferComplementSearchTerms(matchedLines);
   const inferredProductFilters = buildInferredCatalogProductFilters(inferredSearch.terms);
+  const sourceCompatibilityRoles = new Set(matchedLines.map((line) => detectProductCompatibilityRole(line.productRow)));
   if (complementIds.length === 0 && inferredSearch.terms.length === 0) return [];
 
-  let products = await db.product.findMany({
+  let products = await (db.product.findMany({
     where: complementIds.length > 0
       ? {
           shop: input.shop,
@@ -1420,7 +1470,7 @@ async function buildDatabaseComplementRecommendations(
           OR: inferredProductFilters,
         },
     orderBy: { title: "asc" },
-    take: 6,
+    take: 20,
     select: {
       id: true,
       shopifyProductId: true,
@@ -1442,10 +1492,16 @@ async function buildDatabaseComplementRecommendations(
         },
       },
     },
-  }).catch(() => []);
+  }) ?? Promise.resolve([])).catch(() => []);
+
+  // sort by relationship strength desc, shuffle only for tie-breaking
+  products = products.slice().sort((a, b) => (
+    (complementStrengthById.get(b.id) ?? 0) - (complementStrengthById.get(a.id) ?? 0)
+    || Math.random() - 0.5
+  ));
 
   if (products.length === 0 && complementIds.length > 0 && inferredSearch.terms.length > 0) {
-    products = await db.product.findMany({
+    products = await (db.product.findMany({
       where: {
         shop: input.shop,
         status: "ACTIVE",
@@ -1456,7 +1512,7 @@ async function buildDatabaseComplementRecommendations(
         OR: inferredProductFilters,
       },
       orderBy: { title: "asc" },
-      take: 6,
+      take: 20,
       select: {
         id: true,
         shopifyProductId: true,
@@ -1478,11 +1534,15 @@ async function buildDatabaseComplementRecommendations(
           },
         },
       },
-    }).catch(() => []);
+    }) ?? Promise.resolve([])).catch(() => []);
+    // for inferred search fallback, randomize to avoid always showing same catalog order
+    products = shuffleArray(products);
   }
 
   return products
     .filter((product) => !cartShopifyProductIds.has(product.shopifyProductId))
+    .filter((product) => excludesSameApparelRole(product, sourceCompatibilityRoles))
+    .slice(0, 6)
     .map((product) => {
       const variant = product.variants.find(hasPositiveInventory);
       if (!variant) return null;
@@ -1741,22 +1801,26 @@ export async function resolveCompatibleAddActionProposals(
   // Score each product. If the shopper asked generically for an "article" or
   // "product", prefer the strongest graph complement instead of requiring a
   // keyword match against generic words.
+  const sourceCompatibilityRoles = new Set(catalogSearchLines.map((line) => detectProductCompatibilityRole(line.productRow)));
   const scoredProducts = relatedProducts
+    .filter((product) => searchTokens.length > 0 || excludesSameApparelRole(product, sourceCompatibilityRoles))
     .map((product) => ({
       product,
       tokenScore: scoreCompatibleProduct(product, searchTokens),
       relationshipStrength: complementStrengthById.get(product.id) ?? 0,
+      _rand: Math.random(),
     }))
     .sort((a, b) => (
       b.tokenScore - a.tokenScore
       || b.relationshipStrength - a.relationshipStrength
+      || a._rand - b._rand
     ));
   const matchingProducts = (searchTokens.length > 0
     ? scoredProducts.filter(({ tokenScore }) => tokenScore > 0)
     : scoredProducts)
     .slice(0, 6);
 
-  return matchingProducts
+  const explicitActions = matchingProducts
     .map(({ product }) => {
       const variant = product.variants.find(hasPositiveInventory);
       return variant
@@ -1764,6 +1828,23 @@ export async function resolveCompatibleAddActionProposals(
         : null;
     })
     .filter((action): action is CartToolAction => action !== null);
+
+  // Supplement with catalog-inferred recommendations when explicit complements are few
+  if (explicitActions.length < 6) {
+    const alreadyFoundShopifyIds = new Set(matchingProducts.map(({ product }) => product.shopifyProductId));
+    const supplemental = await buildDatabaseComplementRecommendations(
+      input,
+      catalogSearchLines,
+      detectMessageLanguage(latest),
+    );
+    const extras = supplemental
+      .filter((item) => item.action === "add" && item.variantId && item.productId && !alreadyFoundShopifyIds.has(item.productId))
+      .slice(0, 6 - explicitActions.length)
+      .map((item) => buildCompatibleAddToCartAction(input, item.title, item.variantId!, item.variantTitle, item.imageUrl, item.productHandle));
+    return [...explicitActions, ...extras];
+  }
+
+  return explicitActions;
 }
 
 export async function resolveCompatibleAddActionProposal(

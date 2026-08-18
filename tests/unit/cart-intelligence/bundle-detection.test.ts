@@ -19,6 +19,7 @@ describe("detectBundles", () => {
 
     expect(result).toEqual({
       matches: [],
+      winningMatch: null,
       summary: {
         qualifiedCount: 0,
         nearCompleteCount: 0,
@@ -115,14 +116,14 @@ describe("detectBundles", () => {
 
     expect(result.summary.qualifiedCount).toBe(2);
     expect(result.summary.competingOfferCount).toBe(2);
-    expect(result.matches.map((match) => ({ key: match.bundleKey, competition: match.competitionGroupKeys }))).toEqual([
-      {
-        key: "boxing-starter-bundle",
-        competition: ["boxing-premium-bundle"],
-      },
+    expect(result.matches.map((match) => ({ key: match.bundleKey, competition: match.competitionGroupKeys })).sort((left, right) => left.key.localeCompare(right.key))).toEqual([
       {
         key: "boxing-premium-bundle",
         competition: ["boxing-starter-bundle"],
+      },
+      {
+        key: "boxing-starter-bundle",
+        competition: ["boxing-premium-bundle"],
       },
     ]);
   });

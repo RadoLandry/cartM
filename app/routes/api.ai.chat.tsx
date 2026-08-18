@@ -1,6 +1,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { streamText } from "ai";
 
+import type { StorefrontChatRequest } from "../lib/ai/schemas";
 import { StorefrontChatRequestSchema } from "../lib/ai/schemas";
 import {
   buildProductComparisonDataError,
@@ -35,8 +36,9 @@ import {
   assertAllowedStorefrontOrigin,
   verifyStorefrontChatToken,
 } from "../lib/shopify/app-proxy";
-import { getCustomerProfile } from "../lib/db/queries";
+import { findSimilarProducts, getCustomerProfile } from "../lib/db/queries";
 import { resolveCustomerProfile, buildProfileKey } from "../lib/cart-intelligence/customer-profile";
+import { generateEmbedding } from "../lib/knowledge-graph/embeddings";
 
 const CORS_BASE_HEADERS = {
   "access-control-allow-methods": "POST, OPTIONS",
@@ -66,6 +68,37 @@ function buildCompatibleActionIntro(latestMessage: string, count: number) {
   return isFrench
     ? "J'ai trouvé un article compatible dans le catalogue. Vérifiez la proposition ci-dessous avant de l'ajouter au panier."
     : "I found a compatible product in the catalog. Review the proposed cart action below before adding it.";
+}
+
+function formatCatalogContextProduct(product: Awaited<ReturnType<typeof findSimilarProducts>>[number]) {
+  const parts: string[] = [product.title];
+  if (product.productType) parts.push(`Type: ${product.productType}`);
+  if (product.disciplineTags.length > 0) parts.push(`Discipline: ${product.disciplineTags.join(", ")}`);
+  if (product.categoryTags.length > 0) parts.push(`Category: ${product.categoryTags.join(", ")}`);
+  if (product.description) parts.push(product.description.slice(0, 200));
+  return parts.join(" | ");
+}
+
+async function retrieveCatalogContextForChat(input: StorefrontChatRequest) {
+  const latestMessage = input.messages[input.messages.length - 1]?.content ?? "";
+  if (!latestMessage.trim() || !isAIAvailable()) {
+    return undefined;
+  }
+
+  const cartContextText = input.cart.items
+    .map((item) => `${item.productTitle ?? item.productId} ${item.variantTitle ?? ""}`.trim())
+    .join("; ");
+  const cartProductIds = input.cart.items.map((item) => item.productId);
+
+  try {
+    const queryEmbedding = await generateEmbedding(`${latestMessage}\nCart: ${cartContextText}`);
+    const similarProducts = await findSimilarProducts(input.shop, queryEmbedding, 5, cartProductIds);
+    return similarProducts.length > 0
+      ? similarProducts.map(formatCatalogContextProduct)
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -350,7 +383,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const cartActionProposals = compatibleActionProposals.length > 0
     ? compatibleActionProposals
-    : [buildCartToolActionProposal(parsed.data)].filter((action): action is NonNullable<typeof action> => Boolean(action));
+    : [(await buildCartToolActionProposal(parsed.data))].filter((action): action is NonNullable<typeof action> => Boolean(action));
   const toolActionEvents = [...cartActionProposals, comparisonActionProposal, budgetActionProposal]
     .filter((action): action is NonNullable<typeof action> => Boolean(action))
     .map((action) => ({
@@ -366,12 +399,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const messageId = `${parsed.data.sessionKey}-assistant-${parsed.data.messages.length}`;
   const aiEnabled = isAIAvailable();
-  const latestMessage = parsed.data.messages[parsed.data.messages.length - 1]?.content.toLowerCase() ?? "";
+  const latestRawMessage = parsed.data.messages[parsed.data.messages.length - 1]?.content ?? "";
+  const latestMessage = latestRawMessage.toLowerCase();
   const hasCompatibleActionProposals = compatibleActionProposals.length > 0;
   const replyText = hasCompatibleActionProposals ? buildCompatibleActionIntro(latestMessage, compatibleActionProposals.length) : guidanceReply.text;
   const guidanceBlocks = hasCompatibleActionProposals ? [] : guidanceReply.guidanceBlocks;
-  const shouldBypassLLM = /\b(budget|optimi[sz]|compare|add|remove|swap|quantit|quantity|size|fit|sparring|combat|taille|pratique|compatible|adapt[eé]|muay\s*thai|tha[iï]|kick\s*boxing|kickboxing|boxe|boxing|mma)\b/.test(latestMessage);
-  const shouldUseLLM = aiEnabled && !shouldBypassLLM;
+  const isCompatibilityDiscoveryMessage = /\b(compatible|compatibles|compatibility|compl[eé]mentaire|compl[eé]mentaires|goes?\s+with|va\s+avec)\b/.test(latestMessage);
+  const shouldBypassLLM = /\b(budget|optimi[sz]|compare|add|remove|swap|quantit|quantity|size|fit|sparring|combat|taille|pratique|adapt[eé]|muay\s*thai|tha[iï]|kick\s*boxing|kickboxing|boxe|boxing|mma)\b/.test(latestMessage);
+  const shouldUseLLM = aiEnabled && (!shouldBypassLLM || isCompatibilityDiscoveryMessage);
+  const catalogContext = shouldUseLLM
+    ? await retrieveCatalogContextForChat(parsed.data)
+    : undefined;
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream<Uint8Array>({
@@ -390,6 +428,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               cart: parsed.data.cart,
               behavior: behaviorResolution.config,
               profile: resolvedProfile,
+              ...(catalogContext ? { catalogContext } : {}),
             }),
             messages: parsed.data.messages
               .filter((m) => m.role === "user" || m.role === "assistant")

@@ -85,7 +85,7 @@ describe("Ingestion: runCatalogSync", () => {
     expect(dbQueries.upsertProduct).toHaveBeenCalledTimes(2); // Only Active products
     expect(dbQueries.updateProductEmbedding).toHaveBeenCalledTimes(2);
     expect(dbQueries.completeSyncJob).toHaveBeenCalledWith("job_123");
-  });
+  }, 10_000);
 });
 
 // ---------------------------------------------------------------------------

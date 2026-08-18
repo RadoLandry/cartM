@@ -33,6 +33,13 @@ function noDiscount() {
   };
 }
 
+function getCartLines(input) {
+  const lines = input?.cart?.lines;
+  if (Array.isArray(lines)) return lines;
+  if (Array.isArray(lines?.nodes)) return lines.nodes;
+  return [];
+}
+
 function applyBundleDiscounts(input) {
   const cartAttribute = input?.cart?.attribute?.value;
   if (!cartAttribute) {
@@ -62,7 +69,7 @@ function applyBundleDiscounts(input) {
 
   const selectedIds = new Set(projection.resolution.selectedOutcomeIds);
   const cartLineIds = new Set(
-    (input?.cart?.lines ?? []).map((line) => line.id),
+    getCartLines(input).map((line) => line.id),
   );
 
   const discounts = [];

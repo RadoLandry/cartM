@@ -30,6 +30,13 @@ function noOp() {
   return { operations: [] };
 }
 
+function getCartLines(input) {
+  const lines = input?.cart?.lines;
+  if (Array.isArray(lines)) return lines;
+  if (Array.isArray(lines?.nodes)) return lines.nodes;
+  return [];
+}
+
 function applyBundlePresentation(input) {
   const cartAttribute = input?.cart?.attribute?.value;
   if (!cartAttribute) {
@@ -59,7 +66,7 @@ function applyBundlePresentation(input) {
 
   const selectedIds = new Set(projection.resolution.selectedOutcomeIds);
   const cartLineMap = new Map(
-    (input?.cart?.lines ?? []).map((line) => [line.id, line]),
+    getCartLines(input).map((line) => [line.id, line]),
   );
 
   const operations = [];

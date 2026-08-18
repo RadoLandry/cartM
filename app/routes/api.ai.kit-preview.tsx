@@ -4,7 +4,7 @@ import {
   ColorwayPreviewRequestSchema,
   parseColorwayPreviewRequestInput,
 } from "../lib/visual/colorway-preview.types";
-import { generateColorwayPreview } from "../lib/visual/colorway-preview";
+import { generateColorwayPreview, generateKitPreview } from "../lib/visual/colorway-preview";
 
 export const runtime = "nodejs";
 
@@ -89,15 +89,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     );
   }
 
-  const lineResolution = resolveColorwayPreviewLine({
-    selectedLineId: parsed.data.selectedLineId,
-    proposedVariantId: parsed.data.proposedVariantId,
-    availableVariantIds: parsed.data.availableVariantIds,
-    cart: {
-      currencyCode: parsed.data.currencyCode,
-      items: parsed.data.cart.items,
-    },
-  });
+  const isComparisonRequest = Boolean(parsed.data.selectedLineId && parsed.data.proposedVariantId);
+  const lineResolution = isComparisonRequest
+    ? resolveColorwayPreviewLine({
+        selectedLineId: parsed.data.selectedLineId!,
+        proposedVariantId: parsed.data.proposedVariantId!,
+        availableVariantIds: parsed.data.availableVariantIds,
+        cart: {
+          currencyCode: parsed.data.currencyCode,
+          items: parsed.data.cart.items,
+        },
+      })
+    : { valid: true as const };
 
   if (!lineResolution.valid) {
     const telemetry = buildOutcomeTelemetry({
@@ -132,13 +135,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   try {
-    const preview = await generateColorwayPreview(
-      parseColorwayPreviewRequestInput(parsed.data),
-    );
+    const preview = isComparisonRequest
+      ? await generateColorwayPreview(parseColorwayPreviewRequestInput(parsed.data))
+      : await generateKitPreview(parseColorwayPreviewRequestInput(parsed.data));
 
     const telemetry = buildOutcomeTelemetry({
       status: preview.status,
-      reused: preview.comparison.reused,
+      reused: "comparison" in preview ? preview.comparison.reused : preview.preview.reused,
       omissionCount: preview.omissions.length,
       generationMs: preview.diagnostics.generationMs,
       forceRegenerate: Boolean(parsed.data.forceRegenerate),
@@ -155,12 +158,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       ok: preview.status !== "error",
       status: preview.status,
       requestId,
-      comparison: preview.comparison,
-      change: preview.change,
+      ...("comparison" in preview ? { comparison: preview.comparison, change: preview.change } : { preview: preview.preview }),
       context: preview.context,
       omissions: preview.omissions,
       diagnostics: {
-        reused: preview.comparison.reused,
+        reused: "comparison" in preview ? preview.comparison.reused : preview.preview.reused,
         generationMs: preview.diagnostics.generationMs,
         telemetry,
       },

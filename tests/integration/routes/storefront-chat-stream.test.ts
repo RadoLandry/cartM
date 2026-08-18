@@ -59,7 +59,7 @@ describe("storefront chat stream route", () => {
     expect(body).toContain('"type":"guidance-block"');
     expect(body).toContain('"type":"message-complete"');
     expect(body).toContain("Core Training Gloves");
-    expect(body).toContain('"action":"keep"');
+    expect(body).toContain('"action":"size_adjust"');
   });
 
   it("answers product and sparring suitability questions from the current cart", async () => {

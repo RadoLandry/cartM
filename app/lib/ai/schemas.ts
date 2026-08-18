@@ -31,6 +31,8 @@ export const StorefrontCartLineSchema = z.object({
   productTitle: z.string().min(1).optional(),
   variantId: z.string().min(1).optional(),
   variantTitle: z.string().min(1).optional(),
+  imageUrl: z.string().url().optional(),
+  discipline: z.string().min(1).optional(),
   quantity: z.coerce.number().int().min(1).default(1),
 });
 

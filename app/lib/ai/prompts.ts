@@ -15,6 +15,7 @@ function formatCartLine(line: StorefrontChatRequest["cart"]["items"][number], in
 export function buildStorefrontChatSystemPrompt(input: Pick<StorefrontChatRequest, "shop" | "cart"> & {
   behavior?: AIBehaviorDraftPayload;
   profile?: ResolvedCustomerProfile | null;
+  catalogContext?: string[];
 }) {
   const behavior = resolveBehaviorPolicyConflict({
     tone: AI_BEHAVIOR_DEFAULTS.tone,
@@ -78,5 +79,8 @@ export function buildStorefrontChatSystemPrompt(input: Pick<StorefrontChatReques
     ...(profileLines.length > 0 ? [`Shopper profile (use to personalise, do not repeat back verbatim): ${profileLines.join(". ")}.`] : []),
     `Cart currency: ${input.cart.currencyCode}`,
     `Shop: ${input.shop}`,
+    ...(input.catalogContext && input.catalogContext.length > 0
+      ? [`Relevant catalog products (from vector search — use to answer questions about availability, compatibility, or suggestions): ${input.catalogContext.join(" | ")}`]
+      : []),
   ].join(" ");
 }

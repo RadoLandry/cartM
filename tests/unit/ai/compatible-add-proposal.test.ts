@@ -128,6 +128,25 @@ const FIGHT_SHORTS_PRODUCT = {
   ],
 };
 
+const MMA_RASHGUARD_PRODUCT = {
+  id: "internal-rashguard-id",
+  shopifyProductId: "gid://shopify/Product/55",
+  title: "Rashguard Venum Tempest - Noir/Gris",
+  handle: "rashguard-venum-tempest-noir-gris",
+  tags: ["rashguard", "compression", "apparel", "mma"],
+  disciplineTags: ["mma"],
+  categoryTags: ["tops", "rashguard", "apparel"],
+  variants: [
+    {
+      id: "internal-variant-rashguard",
+      shopifyVariantId: "gid://shopify/ProductVariant/551",
+      title: "M / Noir-Gris",
+      inventoryQuantity: 9,
+      imageUrl: "https://cdn.example.com/rashguard.jpg",
+    },
+  ],
+};
+
 const SHORT_COMPLEMENTS_GLOVES_RELATIONSHIP = {
   id: "rel-1",
   sourceProductId: "internal-short-id",
@@ -470,6 +489,57 @@ describe("resolveCompatibleAddActionProposal", () => {
       });
       expect(recommendationBlock.items.some((item) => item.productId === "gid://shopify/Product/77" && item.action === "keep")).toBe(false);
     }
+  });
+
+  it("does not recommend another bottom as a generic compatible product for pants", async () => {
+    vi.mocked(getActiveRelationshipsForProduct).mockResolvedValue([]);
+    vi.mocked(db.product.findMany)
+      .mockReset()
+      .mockResolvedValueOnce([
+        {
+          id: "internal-pants-id",
+          shopifyProductId: "gid://shopify/Product/44",
+          title: "Pantalon de compression Venum Tempest - Noir/Gris",
+          status: "ACTIVE",
+          tags: ["pantalon", "compression", "apparel", "mma"],
+          disciplineTags: ["mma"],
+          categoryTags: ["bottoms", "pants", "apparel"],
+          variants: [{
+            id: "internal-pants-variant",
+            shopifyVariantId: "gid://shopify/ProductVariant/441",
+            title: "M / Noir-Gris",
+            sizeValue: "M",
+            sizeCategory: "clothing",
+            inventoryQuantity: 4,
+            price: 59.99 as never,
+          }],
+        },
+      ] as never)
+      .mockResolvedValueOnce([FIGHT_SHORTS_PRODUCT, MMA_RASHGUARD_PRODUCT] as never);
+
+    const request = makeStorefrontChatRequest({
+      cart: {
+        cartId: "gid://shopify/Cart/123",
+        currencyCode: "EUR",
+        items: [
+          {
+            lineId: "line-pants",
+            productId: "gid://shopify/Product/44",
+            productTitle: "Pantalon de compression Venum Tempest - Noir/Gris",
+            variantId: "gid://shopify/ProductVariant/441",
+            variantTitle: "M / Noir-Gris",
+            quantity: 1,
+          },
+        ],
+      },
+      messages: [{ role: "user", content: "help me to find article compatible with this pantalon" }],
+    });
+
+    const proposals = await resolveCompatibleAddActionProposals(request);
+
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]?.preview?.after).toContain("Rashguard Venum Tempest");
+    expect(proposals[0]?.preview?.after).not.toContain("Short de Combat Venum Tempest");
   });
 
   it("builds recommendations from compatible catalog products outside the cart", async () => {

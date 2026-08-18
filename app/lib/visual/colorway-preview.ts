@@ -3,8 +3,9 @@ import type {
   ColorwayPreviewComparison,
   ColorwayPreviewRequestInput,
   ColorwayPreviewResult,
+  KitPreviewResult,
 } from "./colorway-preview.types";
-import { composeColorwayComparison } from "./compositor";
+import { composeColorwayComparison, composeKitPreview } from "./compositor";
 import { buildColorwayPreviewSignature, normalizeColorwaySignatureSeed } from "./colorway-signature";
 import { resolveLayoutProfile } from "./templates";
 import { normalizeStorefrontCartForPreview } from "../shopify/storefront-cart";
@@ -102,11 +103,61 @@ function classifyOmissionReason(input: {
   return input.rawReason;
 }
 
+export async function generateKitPreview(
+  input: ColorwayPreviewRequestInput,
+): Promise<KitPreviewResult> {
+  const requestId = crypto.randomUUID();
+  const snapshot = normalizeStorefrontCartForPreview({
+    cartId: input.cartId,
+    currencyCode: input.currencyCode,
+    items: input.cart.items,
+  });
+  const layoutProfile = resolveLayoutProfile(
+    snapshot.inferredDiscipline,
+    snapshot.items.length,
+    {
+      nonComposable: snapshot.items.every((item) => !item.renderEligible),
+    },
+  );
+  const preview = composeKitPreview({
+    snapshot,
+    layoutProfile,
+    forceRegenerate: input.forceRegenerate,
+  });
+
+  return {
+    status: preview.status,
+    preview: preview.preview,
+    context: preview.context,
+    omissions: preview.omissions.map((entry) => {
+      const line = input.cart.items.find((cartLine) => cartLine.lineId === entry.lineId);
+
+      return {
+        lineId: entry.lineId,
+        scope: "both" as const,
+        reasonCode: classifyOmissionReason({
+          line,
+          rawReason: entry.reasonCode,
+        }),
+        ...(entry.reasonDetail ? { reasonDetail: entry.reasonDetail } : {}),
+      };
+    }),
+    diagnostics: {
+      requestId,
+      generationMs: preview.diagnostics.generationMs,
+    },
+  };
+}
+
 // Phase 1 scaffold: orchestration logic will be implemented in Phase 2+
 export async function generateColorwayPreview(
   input: ColorwayPreviewRequestInput,
 ): Promise<ColorwayPreviewResult> {
   const requestId = crypto.randomUUID();
+
+  if (!input.selectedLineId || !input.proposedVariantId) {
+    throw new Error("Colorway comparison requires selectedLineId and proposedVariantId.");
+  }
 
   const snapshot = normalizeStorefrontCartForPreview({
     cartId: input.cartId,

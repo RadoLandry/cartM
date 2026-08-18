@@ -82,7 +82,7 @@ describe("app._index catalog sync route", () => {
     const result = await action({ request, params: {}, context: {} } as any);
 
     expect(runCatalogSync).toHaveBeenCalledWith(admin, "test.myshopify.com");
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ ok: true, started: true });
   });
 
   it("rejects unknown form actions", async () => {

@@ -1,6 +1,6 @@
 import { generateObject } from "ai";
-import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
+import { getPrimaryModel, isAIAvailable } from "../ai/providers";
 import {
   DISCIPLINES,
   CATEGORIES,
@@ -84,9 +84,8 @@ function buildClassificationPrompt(product: ProductClassificationInput): string 
 export async function classifyProduct(
   product: ProductClassificationInput
 ): Promise<ClassificationResult> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    console.warn("[Classifier] OPENAI_API_KEY not set. Skipping classification.");
+  if (!isAIAvailable()) {
+    console.warn("[Classifier] OPENAI_API_KEY or OPENROUTER_API_KEY not set. Skipping classification.");
     return {
       disciplineTags: FALLBACK_DISCIPLINES,
       categoryTags: FALLBACK_CATEGORIES,
@@ -94,12 +93,11 @@ export async function classifyProduct(
     };
   }
 
-  const openai = createOpenAI({ apiKey });
   const productContext = buildClassificationPrompt(product);
 
   try {
     const { object } = await generateObject({
-      model: openai("gpt-4o-mini"),
+      model: getPrimaryModel(),
       schema: ClassificationSchema,
       system: `You are a product classification expert for a combat sports and fitness e-commerce store.
 Your task is to classify products into disciplines and functional categories.

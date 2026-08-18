@@ -13,6 +13,7 @@ import {
 
 describe("resolveCustomerProfile", () => {
   it("builds a strong recognized-shopper profile from stored history", () => {
+    const now = new Date("2026-05-26T12:00:00.000Z");
     const resolved = resolveCustomerProfile({
       shop: TEST_SHOP,
       shopifyCustomerId: TEST_CUSTOMER_ID,
@@ -20,7 +21,7 @@ describe("resolveCustomerProfile", () => {
         profileKey: `${TEST_SHOP}:customer:${TEST_CUSTOMER_ID}`,
         ...makeStoredCustomerProfileFixture(),
       },
-    });
+    }, now);
 
     expect(resolved).toMatchObject({
       profileKey: `${TEST_SHOP}:customer:${TEST_CUSTOMER_ID}`,
@@ -75,6 +76,7 @@ describe("resolveCustomerProfile", () => {
   });
 
   it("builds a session-scoped profile for an anonymous shopper without leaking purchase frequency", () => {
+    const now = new Date("2026-05-26T12:00:00.000Z");
     const resolved = resolveCustomerProfile({
       shop: TEST_SHOP,
       sessionId: TEST_SESSION_ID,
@@ -94,7 +96,7 @@ describe("resolveCustomerProfile", () => {
           confidenceSummary: { overall: 0.68, sizeProfile: 0.8 },
         }),
       },
-    });
+    }, now);
 
     expect(resolved).toMatchObject({
       profileKey: `${TEST_SHOP}:session:${TEST_SESSION_ID}`,

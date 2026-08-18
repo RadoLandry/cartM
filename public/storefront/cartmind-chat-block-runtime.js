@@ -16,6 +16,7 @@
   };
   const CART_MUTATION_PATHS = ["/cart/add.js", "/cart/change.js", "/cart/update.js", "/cart/clear.js"];
   const instances = new Map();
+  const TYPEWRITER_INTERVAL_MS = 14;
   let mountQueued = false;
   let fetchPatched = false;
   let xhrPatched = false;
@@ -141,6 +142,7 @@
           productTitle: item && item.product_title ? String(item.product_title) : "",
           variantId: item && item.variant_id ? String(item.variant_id) : undefined,
           variantTitle: item && item.variant_title ? String(item.variant_title) : "",
+          imageUrl: normalizeStorefrontImageUrl(item && (item.image || (item.featured_image && (item.featured_image.url || item.featured_image.src)))) || undefined,
           quantity: item && Number(item.quantity || 0) > 0 ? Number(item.quantity) : 1,
         }))
         .filter((item) => item.productId.length > 0),
@@ -559,6 +561,19 @@
         font-weight: 800;
       }
 
+      .cm-typing-cursor {
+        display: inline-block;
+        width: 7px;
+        margin-left: 1px;
+        color: #c97b2d;
+        animation: cm-cursor-blink 0.9s steps(2, start) infinite;
+      }
+
+      @keyframes cm-cursor-blink {
+        0%, 45% { opacity: 1; }
+        46%, 100% { opacity: 0; }
+      }
+
       .cm-guidance-list {
         display: grid;
         gap: 8px;
@@ -582,6 +597,110 @@
         margin: 0;
         font-size: 12px;
         color: #40516d;
+      }
+
+      .cm-recommendation-block {
+        padding: 12px;
+      }
+
+      .cm-recommendation-block__header {
+        margin-bottom: 10px;
+      }
+
+      .cm-recommendation-slider-shell {
+        display: grid;
+        grid-template-columns: 32px minmax(0, 1fr) 32px;
+        gap: 8px;
+        align-items: stretch;
+      }
+
+      .cm-recommendation-slider,
+      .cm-recommendation-grid {
+        display: grid;
+        gap: 12px;
+      }
+
+      .cm-recommendation-slider {
+        grid-auto-flow: column;
+        grid-auto-columns: minmax(230px, 88%);
+        overflow-x: auto;
+        overscroll-behavior-x: contain;
+        scroll-snap-type: x mandatory;
+        scrollbar-width: none;
+        min-width: 0;
+      }
+
+      .cm-recommendation-slider::-webkit-scrollbar {
+        display: none;
+      }
+
+      .cm-recommendation-card {
+        border: 1px solid #e3e7ef;
+        border-radius: 12px;
+        background: #ffffff;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        min-height: 100%;
+        scroll-snap-align: start;
+      }
+
+      .cm-recommendation-media {
+        aspect-ratio: 4 / 3;
+        background: #f7f9fc;
+        border-bottom: 1px solid #edf1f7;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+      }
+
+      .cm-recommendation-media__img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+
+      .cm-recommendation-media--empty {
+        color: #94a3b8;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+
+      .cm-recommendation-card__body {
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        flex: 1;
+      }
+
+      .cm-recommendation-title {
+        font-size: 12px;
+        font-weight: 800;
+        color: #14213d;
+        line-height: 1.35;
+      }
+
+      .cm-recommendation-meta,
+      .cm-recommendation-reason,
+      .cm-recommendation-outcome,
+      .cm-recommendation-status {
+        font-size: 11px;
+        line-height: 1.45;
+        color: #40516d;
+      }
+
+      .cm-recommendation-meta {
+        color: #6b7c95;
+        font-weight: 700;
+      }
+
+      .cm-recommendation-status {
+        color: #14213d;
+        font-weight: 700;
       }
 
       .cm-reason-chips {
@@ -898,25 +1017,95 @@
     return `<div class="cm-reason-chips"><span class="cm-reason-chips__label">Pourquoi:</span>${chips}</div>`;
   }
 
-  function renderGuidanceBlock(block, config) {
+  function buildRecommendationItemKey(item, index) {
+    return [
+      item && item.variantId ? item.variantId : "",
+      item && item.productId ? item.productId : "",
+      item && (item.title || item.productTitle) ? (item.title || item.productTitle) : "",
+      String(index),
+    ].join("::");
+  }
+
+  function isAddableRecommendation(item) {
+    return item
+      && item.action === "add"
+      && typeof item.variantId === "string"
+      && item.variantId.trim().length > 0;
+  }
+
+  function renderRecommendationProductImage(item) {
+    const imageUrl = normalizeStorefrontImageUrl(item && item.imageUrl);
+    if (imageUrl) {
+      return `<div class="cm-recommendation-media"><img class="cm-recommendation-media__img" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(item.title || item.productTitle || "Produit recommandé")}" loading="lazy"></div>`;
+    }
+
+    return `<div class="cm-recommendation-media cm-recommendation-media--empty">Image produit</div>`;
+  }
+
+  function renderRecommendationItem(item, index, state, config) {
+    const title = escapeHtml(item.title || item.productTitle || "Recommendation");
+    const variant = item.variantTitle ? `<div class="cm-recommendation-meta">${escapeHtml(item.variantTitle)}</div>` : "";
+    const price = item.priceLabel ? `<div class="cm-recommendation-meta">${escapeHtml(item.priceLabel)}</div>` : "";
+    const reason = item.reason ? `<div class="cm-recommendation-reason">${renderInlineText(item.reason)}</div>` : "";
+    const outcome = item.shopperOutcome ? `<div class="cm-recommendation-outcome">${renderInlineText(item.shopperOutcome)}</div>` : "";
+    const reasons = renderReasonTags(item, config);
+    const key = buildRecommendationItemKey(item, index);
+    const status = state && state.recommendationStatusByKey ? state.recommendationStatusByKey[key] : null;
+    const isPending = state && state.pendingRecommendationKey === key;
+    const addable = isAddableRecommendation(item);
+    const added = status && status.status === "added";
+    const failed = status && status.status === "failed";
+    const statusHtml = status && status.summary
+      ? `<div class="cm-recommendation-status">${escapeHtml(status.summary)}</div>`
+      : "";
+    const buttonHtml = addable
+      ? `<button class="cm-action-button cm-action-button--approve" type="button" data-action="add-recommendation-item" data-recommendation-key="${escapeHtml(key)}" data-variant-id="${escapeHtml(item.variantId)}" data-quantity="1" data-title="${title}" ${isPending || added ? "disabled" : ""}>${isPending ? "Ajout..." : added ? "Ajouté" : failed ? "Réessayer" : "Ajouter au panier"}</button>`
+      : "";
+
+    return `
+      <article class="cm-recommendation-card">
+        ${renderRecommendationProductImage(item)}
+        <div class="cm-recommendation-card__body">
+          <div class="cm-recommendation-title">${title}</div>
+          ${variant}
+          ${price}
+          ${reasons}
+          ${reason}
+          ${outcome}
+          ${statusHtml}
+          ${buttonHtml ? `<div class="cm-action-buttons">${buttonHtml}</div>` : ""}
+        </div>
+      </article>
+    `;
+  }
+
+  function renderGuidanceBlock(block, config, state) {
     if (!block || typeof block !== "object") {
       return "";
     }
 
     if (block.type === "recommendation_list") {
-      const items = Array.isArray(block.items)
-        ? block.items.slice(0, 4).map((item) => {
-          const title = escapeHtml(item.title || item.productTitle || "Recommendation");
-          const reason = renderInlineText(item.reason || "");
-          const outcome = item && item.shopperOutcome
-            ? `<div>${renderInlineText(item.shopperOutcome)}</div>`
-            : "";
-          const reasons = renderReasonTags(item, config);
+      // skip "keep" cards and "add" cards without a resolvable variant to avoid "IMAGE PRODUIT" placeholders
+      const items = (Array.isArray(block.items) ? block.items : [])
+        .filter((item) => item.action !== "keep" && (item.action !== "add" || (typeof item.variantId === "string" && item.variantId.trim().length > 0)))
+        .slice(0, 8);
+      const cards = items.map((item, index) => renderRecommendationItem(item, index, state, config)).join("");
 
-          return `<li><strong>${title}</strong>${reasons}<div>${reason}</div>${outcome}</li>`;
-        }).join("")
-        : "";
-      return `<div class="cm-guidance-card"><strong>${escapeHtml(block.title)}</strong><p>${escapeHtml(block.summary)}</p>${items ? `<ul>${items}</ul>` : ""}</div>`;
+      if (!cards) {
+        return `<div class="cm-guidance-card"><strong>${escapeHtml(block.title)}</strong><p>${escapeHtml(block.summary)}</p></div>`;
+      }
+
+      const body = items.length > 1
+        ? `
+          <div class="cm-recommendation-slider-shell">
+            <button class="cm-slider-nav" type="button" data-action="recommendation-slider-prev" aria-label="Produit recommandé précédent">&lsaquo;</button>
+            <div class="cm-recommendation-slider" data-role="recommendation-slider">${cards}</div>
+            <button class="cm-slider-nav" type="button" data-action="recommendation-slider-next" aria-label="Produit recommandé suivant">&rsaquo;</button>
+          </div>
+        `
+        : `<div class="cm-recommendation-grid">${cards}</div>`;
+
+      return `<div class="cm-guidance-card cm-recommendation-block"><div class="cm-recommendation-block__header"><strong>${escapeHtml(block.title)}</strong><p>${escapeHtml(block.summary)}</p></div>${body}</div>`;
     }
 
     if (block.type === "size_summary") {
@@ -1037,10 +1226,60 @@
       }
 
       action.preview.imageUrl = imageUrl;
+      if (action.payload && action.payload.actionType === "add") {
+        instance.state.actionPreviewById[action.actionId] = { loading: true, comparisonAssetUrl: null, currentAssetUrl: null, proposedAssetUrl: null };
+        void fetchKitPreview(instance, action);
+      }
       render(instance);
     } catch {
       // Image preview is optional; leave the action usable if lookup fails.
     }
+  }
+
+  async function fetchRecommendationProductImage(instance, item) {
+    if (!item || item.imageUrl || item._cartmindImageLookupStarted || !item.productHandle) {
+      return;
+    }
+
+    item._cartmindImageLookupStarted = true;
+
+    try {
+      const handle = encodeURIComponent(item.productHandle);
+      const response = await window.fetch(`/products/${handle}.js`, {
+        method: "GET",
+        credentials: "same-origin",
+        headers: { accept: "application/json" },
+      });
+
+      if (!response.ok) {
+        return;
+      }
+
+      const payload = await response.json().catch(() => null);
+      const imageUrl = pickProductJsonImage(payload, {
+        payload: { merchandiseId: item.variantId || "" },
+      });
+      if (!imageUrl) {
+        return;
+      }
+
+      item.imageUrl = imageUrl;
+      render(instance);
+    } catch {
+      // Recommendation images are progressive enhancement only.
+    }
+  }
+
+  function queueRecommendationImageLookups(instance, block) {
+    if (!block || block.type !== "recommendation_list" || !Array.isArray(block.items)) {
+      return;
+    }
+
+    block.items.forEach((item) => {
+      if (item && item.productHandle && !item.imageUrl) {
+        void fetchRecommendationProductImage(instance, item);
+      }
+    });
   }
 
   function renderActionProposal(action, state) {
@@ -1148,6 +1387,8 @@
         productTitle: item.productTitle || "",
         variantId: item.variantId,
         variantTitle: item.variantTitle || "",
+        imageUrl: item.imageUrl || "",
+        discipline: item.discipline || "",
         quantity: Number(item.quantity || 1),
       })),
     };
@@ -1351,10 +1592,16 @@
       }
 
       case "change_quantity": {
-        await postStorefrontCartMutation("/cart/change.js", {
-          id: action.payload.lineId,
-          quantity: action.payload.quantity,
-        });
+        const changes = Array.isArray(action.payload.changes) && action.payload.changes.length > 0
+          ? action.payload.changes
+          : [{ lineId: action.payload.lineId, quantity: action.payload.quantity }];
+
+        for (const change of changes) {
+          await postStorefrontCartMutation("/cart/change.js", {
+            id: change.lineId,
+            quantity: change.quantity,
+          });
+        }
         break;
       }
 
@@ -1402,13 +1649,94 @@
     return await fetchLatestStorefrontCart(currentCart);
   }
 
+  async function addRecommendationItemToCart(instance, input) {
+    const state = instance.state;
+    const key = input.key || "";
+    const variantId = normalizeAjaxMerchandiseId(input.variantId || "");
+    const quantity = Number(input.quantity || 1) > 0 ? Number(input.quantity || 1) : 1;
+
+    if (!variantId) {
+      return;
+    }
+
+    if (!state.recommendationStatusByKey) {
+      state.recommendationStatusByKey = {};
+    }
+
+    state.pendingRecommendationKey = key;
+    state.error = "";
+    state.recommendationStatusByKey[key] = {
+      status: "pending",
+      summary: "Ajout au panier en cours...",
+    };
+    render(instance);
+
+    try {
+      await postStorefrontCartMutation("/cart/add.js", {
+        id: variantId,
+        quantity,
+      });
+
+      const nextCart = await fetchLatestStorefrontCart(state.cart);
+      applyUpdatedCart(state, nextCart);
+      await refreshThemeCartDrawer(nextCart);
+      state.recommendationStatusByKey[key] = {
+        status: "added",
+        summary: `${input.title || "Produit"} ajouté au panier.`,
+      };
+      state.statusMessage = "Produit recommandé ajouté au panier.";
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Impossible d'ajouter ce produit au panier.";
+      state.recommendationStatusByKey[key] = {
+        status: "failed",
+        summary: message,
+      };
+      state.error = message;
+      state.statusMessage = "Ajout au panier impossible.";
+    } finally {
+      state.pendingRecommendationKey = "";
+      render(instance);
+    }
+  }
+
   async function fetchKitPreview(instance, action) {
     const state = instance.state;
-    if (!state.kitPreviewUrl || !action || !action.payload || action.payload.actionType !== "swap_variant") {
+    if (!state.kitPreviewUrl || !action || !action.payload) {
+      return;
+    }
+
+    const canPreviewSwap = action.payload.actionType === "swap_variant";
+    const canPreviewAdd = action.payload.actionType === "add" && action.preview && action.preview.imageUrl;
+
+    if (!canPreviewSwap && !canPreviewAdd) {
       return;
     }
 
     try {
+      const cartItems = state.cart.items.map((item) => ({
+        lineId: item.lineId,
+        productId: item.productId,
+        variantId: item.variantId,
+        productTitle: item.productTitle,
+        variantTitle: item.variantTitle,
+        imageUrl: item.imageUrl,
+        discipline: item.discipline,
+        quantity: item.quantity,
+      }));
+
+      if (canPreviewAdd) {
+        cartItems.push({
+          lineId: `proposal-${action.actionId}`,
+          productId: action.payload.merchandiseId,
+          variantId: action.payload.merchandiseId,
+          productTitle: action.preview.after || action.toolName || "Recommended product",
+          variantTitle: "",
+          imageUrl: action.preview.imageUrl,
+          discipline: "",
+          quantity: Number(action.payload.quantity || 1),
+        });
+      }
+
       const response = await window.fetch(state.kitPreviewUrl, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -1416,19 +1744,11 @@
           shop: state.config.shop,
           sessionId: state.sessionId,
           cartId: state.cart.cartId || "",
-          selectedLineId: action.payload.lineId,
-          proposedVariantId: action.payload.newMerchandiseId,
+          ...(canPreviewSwap ? { selectedLineId: action.payload.lineId, proposedVariantId: action.payload.newMerchandiseId } : {}),
           currencyCode: state.cart.currencyCode || "USD",
           surface: state.config.surface || "cart_drawer",
           cart: {
-            items: state.cart.items.map((item) => ({
-              lineId: item.lineId,
-              productId: item.productId,
-              variantId: item.variantId,
-              productTitle: item.productTitle,
-              variantTitle: item.variantTitle,
-              quantity: item.quantity,
-            })),
+            items: cartItems,
           },
         }),
       });
@@ -1440,6 +1760,13 @@
           comparisonAssetUrl: payload.comparison.comparisonAssetUrl || null,
           currentAssetUrl: payload.comparison.currentAssetUrl || null,
           proposedAssetUrl: payload.comparison.proposedAssetUrl || null,
+        };
+      } else if (payload && payload.ok && payload.preview) {
+        state.actionPreviewById[action.actionId] = {
+          loading: false,
+          comparisonAssetUrl: null,
+          currentAssetUrl: null,
+          proposedAssetUrl: payload.preview.assetUrl || null,
         };
       } else {
         state.actionPreviewById[action.actionId] = { loading: false, comparisonAssetUrl: null, currentAssetUrl: null, proposedAssetUrl: null };
@@ -1547,6 +1874,111 @@
     return { payloads, remainder };
   }
 
+  function isAssistantTyping(message) {
+    return Boolean(message && message.role === "assistant" && message._cartmindTypingActive);
+  }
+
+  function renderMessageContent(message, state) {
+    const fallback = message.role === "assistant" && state.sending ? "Thinking..." : "";
+    const content = renderInlineText(message.content || fallback);
+    return `${content}${isAssistantTyping(message) ? '<span class="cm-typing-cursor" aria-hidden="true">|</span>' : ""}`;
+  }
+
+  function updateMessageContentDom(instance, message) {
+    if (!instance || !instance.mountNode || !message || !message.id) {
+      return false;
+    }
+
+    const selector = `[data-message-id="${String(message.id).replace(/"/g, "\\\"")}"] .cm-message__content`;
+    const contentElement = instance.mountNode.querySelector(selector);
+    if (!contentElement) {
+      return false;
+    }
+
+    contentElement.innerHTML = renderMessageContent(message, instance.state);
+
+    const messagesContainer = instance.mountNode.querySelector(".cm-messages");
+    if (messagesContainer) {
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+
+    return true;
+  }
+
+  function resolveTypingWaiters(message) {
+    if (!message || !Array.isArray(message._cartmindTypingResolvers)) {
+      return;
+    }
+
+    const resolvers = message._cartmindTypingResolvers.splice(0);
+    resolvers.forEach((resolve) => resolve());
+  }
+
+  function scheduleTypewriterTick(instance, message) {
+    if (!message || message._cartmindTypingTimer) {
+      return;
+    }
+
+    message._cartmindTypingActive = true;
+    message._cartmindTypingTimer = window.setTimeout(() => {
+      message._cartmindTypingTimer = null;
+      const fullContent = message._cartmindFullContent || "";
+      const visibleContent = message.content || "";
+
+      if (visibleContent.length < fullContent.length) {
+        message.content = fullContent.slice(0, visibleContent.length + 1);
+        updateMessageContentDom(instance, message);
+        scheduleTypewriterTick(instance, message);
+        return;
+      }
+
+      if (message._cartmindStreamComplete) {
+        message._cartmindTypingActive = false;
+        updateMessageContentDom(instance, message);
+        resolveTypingWaiters(message);
+      }
+    }, TYPEWRITER_INTERVAL_MS);
+  }
+
+  function appendAnimatedTextDelta(instance, message, text) {
+    if (!text) {
+      return;
+    }
+
+    message._cartmindFullContent = `${message._cartmindFullContent || message.content || ""}${text}`;
+    scheduleTypewriterTick(instance, message);
+  }
+
+  function completeAnimatedMessage(instance, message) {
+    if (!message) {
+      return;
+    }
+
+    message._cartmindStreamComplete = true;
+    if ((message.content || "").length >= (message._cartmindFullContent || "").length) {
+      message._cartmindTypingActive = false;
+      updateMessageContentDom(instance, message);
+      resolveTypingWaiters(message);
+      return;
+    }
+
+    scheduleTypewriterTick(instance, message);
+  }
+
+  function waitForAnimatedMessage(message) {
+    if (!message || !message._cartmindTypingActive) {
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+      if (!Array.isArray(message._cartmindTypingResolvers)) {
+        message._cartmindTypingResolvers = [];
+      }
+
+      message._cartmindTypingResolvers.push(resolve);
+    });
+  }
+
   function render(instance) {
     const state = instance.state;
     const labels = state.config.labels || {};
@@ -1559,11 +1991,11 @@
       ? state.cart.items.slice(0, 3).map((item) => `${escapeHtml(item.productTitle || "Product")} x${escapeHtml(item.quantity)}`).join("<br>")
       : "Add at least one product to enable cart-aware answers.";
     const messagesHtml = state.messages.map((message) => `
-      <article class="cm-message cm-message--${escapeHtml(message.role)}">
+      <article class="cm-message cm-message--${escapeHtml(message.role)}" data-message-id="${escapeHtml(message.id || "")}">
         <span class="cm-message__label">${message.role === "assistant" ? "CartMind" : "You"}</span>
-        <div class="cm-message__content">${renderInlineText(message.content || (message.role === "assistant" && state.sending ? "Thinking..." : ""))}</div>
+        <div class="cm-message__content">${renderMessageContent(message, state)}</div>
         ${Array.isArray(message.guidanceBlocks) && message.guidanceBlocks.length > 0
-          ? `<div class="cm-guidance-list">${message.guidanceBlocks.map((block) => renderGuidanceBlock(block, state.config)).join("")}</div>`
+          ? `<div class="cm-guidance-list">${message.guidanceBlocks.map((block) => renderGuidanceBlock(block, state.config, state)).join("")}</div>`
           : ""}
         ${Array.isArray(message.actionProposals) && message.actionProposals.length > 0
           ? renderActionProposals(message.actionProposals, state)
@@ -1609,7 +2041,8 @@
     const textarea = instance.mountNode.querySelector('textarea[name="message"]');
     const messagesContainer = instance.mountNode.querySelector(".cm-messages");
     const actionButtons = instance.mountNode.querySelectorAll("[data-action-id][data-action]");
-    const sliderButtons = instance.mountNode.querySelectorAll('[data-action="compatible-slider-prev"], [data-action="compatible-slider-next"]');
+    const recommendationButtons = instance.mountNode.querySelectorAll('[data-action="add-recommendation-item"]');
+    const sliderButtons = instance.mountNode.querySelectorAll('[data-action="compatible-slider-prev"], [data-action="compatible-slider-next"], [data-action="recommendation-slider-prev"], [data-action="recommendation-slider-next"]');
 
     if (toggleButton) {
       toggleButton.addEventListener("click", () => {
@@ -1660,17 +2093,31 @@
       });
     }
 
+    if (recommendationButtons && recommendationButtons.length > 0) {
+      recommendationButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+          void addRecommendationItemToCart(instance, {
+            key: button.getAttribute("data-recommendation-key") || "",
+            variantId: button.getAttribute("data-variant-id") || "",
+            quantity: button.getAttribute("data-quantity") || "1",
+            title: button.getAttribute("data-title") || "Produit recommandé",
+          });
+        });
+      });
+    }
+
     if (sliderButtons && sliderButtons.length > 0) {
       sliderButtons.forEach((button) => {
         button.addEventListener("click", () => {
-          const shell = button.closest(".cm-compatible-slider-shell");
-          const slider = shell ? shell.querySelector('[data-role="compatible-slider"]') : null;
+          const shell = button.closest(".cm-compatible-slider-shell") || button.closest(".cm-recommendation-slider-shell");
+          const slider = shell ? shell.querySelector('[data-role="compatible-slider"], [data-role="recommendation-slider"]') : null;
           if (!slider) {
             return;
           }
 
-          const direction = button.getAttribute("data-action") === "compatible-slider-prev" ? -1 : 1;
-          const firstCard = slider.querySelector(".cm-action-card");
+          const action = button.getAttribute("data-action") || "";
+          const direction = action.indexOf("-prev") > 0 ? -1 : 1;
+          const firstCard = slider.querySelector(".cm-action-card") || slider.querySelector(".cm-recommendation-card");
           const step = firstCard ? firstCard.getBoundingClientRect().width + 12 : slider.clientWidth;
           slider.scrollBy({ left: direction * step, behavior: "smooth" });
         });
@@ -1708,7 +2155,9 @@
       error: "",
       statusMessage: "",
       pendingActionId: "",
+      pendingRecommendationKey: "",
       actionStatusById: {},
+      recommendationStatusByKey: {},
       actionPreviewById: {},
       kitPreviewUrl: "",
       proactiveAnalysisFingerprint: "",
@@ -1866,13 +2315,13 @@
     }
 
     if (part.type === "text-delta") {
-      message.content += part.text || "";
-      render(instance);
+      appendAnimatedTextDelta(instance, message, part.text || "");
       return;
     }
 
     if (part.type === "guidance-block") {
       appendGuidanceBlock(message, part.block);
+      queueRecommendationImageLookups(instance, part.block);
       render(instance);
       return;
     }
@@ -1926,7 +2375,7 @@
       message.actionProposals.push(part.action);
       updateActionStatus(instance.state, part.action.actionId, "proposed", "Awaiting confirmation.");
 
-      if (part.action.payload && part.action.payload.actionType === "swap_variant") {
+      if (part.action.payload && (part.action.payload.actionType === "swap_variant" || (part.action.payload.actionType === "add" && part.action.preview && part.action.preview.imageUrl))) {
         instance.state.actionPreviewById[part.action.actionId] = { loading: true, comparisonAssetUrl: null, currentAssetUrl: null, proposedAssetUrl: null };
         void fetchKitPreview(instance, part.action);
       }
@@ -1994,6 +2443,9 @@
         handleStreamPart(instance, assistantMessage, part);
       }
     }
+
+    completeAnimatedMessage(instance, assistantMessage);
+    await waitForAnimatedMessage(assistantMessage);
   }
 
   function isCartMutationSyncSource(source) {

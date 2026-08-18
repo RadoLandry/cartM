@@ -17,8 +17,8 @@ export interface ColorwayPreviewRequestInput {
   shopDomain: string;
   sessionId: string;
   cartId: string;
-  selectedLineId: string;
-  proposedVariantId: string;
+  selectedLineId?: string;
+  proposedVariantId?: string;
   availableVariantIds?: string[];
   currencyCode: string;
   surface: "cart_drawer" | "cart_page" | "chat";
@@ -51,10 +51,31 @@ export interface ColorwayPreviewComparison {
   currentAssetUrl: string | null;
   proposedAssetUrl: string | null;
   comparisonAssetUrl: string | null;
-  mimeType: "image/png" | "image/webp" | null;
+  mimeType: "image/png" | "image/webp" | "image/svg+xml" | null;
   width: number | null;
   height: number | null;
   reused: boolean;
+}
+
+export interface KitPreviewResult {
+  status: ColorwayPreviewStatus;
+  preview: {
+    assetUrl: string | null;
+    mimeType: "image/png" | "image/webp" | "image/svg+xml" | null;
+    width: number | null;
+    height: number | null;
+    reused: boolean;
+  };
+  context: {
+    inferredDiscipline: string | null;
+    layoutId: string;
+    templateVersion: string;
+  };
+  omissions: ColorwayPreviewOmission[];
+  diagnostics: {
+    requestId: string;
+    generationMs: number | null;
+  };
 }
 
 export interface ColorwayPreviewOmission {
@@ -95,8 +116,8 @@ export const ColorwayPreviewRequestSchema = z.object({
   shopDomain: z.string().min(1),
   sessionId: z.string().min(1),
   cartId: z.string().min(1),
-  selectedLineId: z.string().min(1),
-  proposedVariantId: z.string().min(1),
+  selectedLineId: z.string().min(1).optional(),
+  proposedVariantId: z.string().min(1).optional(),
   availableVariantIds: z.array(z.string().min(1)).optional(),
   currencyCode: z.string().min(3).max(3).default("USD"),
   surface: z.enum(["cart_drawer", "cart_page", "chat"]),

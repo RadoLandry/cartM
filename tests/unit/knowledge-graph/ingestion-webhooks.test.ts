@@ -4,10 +4,13 @@ vi.mock("../../../app/lib/db/queries", () => ({
   createSyncJob: vi.fn(),
   deleteProduct: vi.fn().mockResolvedValue(undefined),
   getActiveSyncJob: vi.fn(),
-  upsertProduct: vi.fn().mockResolvedValue(undefined),
+  upsertProduct: vi.fn().mockResolvedValue({ id: "product-1" }),
   updateProductEmbedding: vi.fn().mockResolvedValue(undefined),
+  updateProductClassification: vi.fn().mockResolvedValue(undefined),
   findProductByShopifyId: vi.fn().mockResolvedValue(null),
+  getProductVisualProfile: vi.fn().mockResolvedValue(null),
   getProductSnapshotsForShop: vi.fn().mockResolvedValue([]),
+  upsertProductVisualProfile: vi.fn().mockResolvedValue(null),
   upsertCandidateRelationship: vi.fn().mockResolvedValue(null),
   invalidateRelationshipsForProduct: vi.fn().mockResolvedValue(undefined),
 }));
@@ -18,6 +21,21 @@ vi.mock("../../../app/lib/knowledge-graph/embeddings", () => ({
 
 vi.mock("../../../app/lib/knowledge-graph/colorways", () => ({
   extractDominantColors: vi.fn().mockResolvedValue(["black"]),
+  mapProductToVisualProfile: vi.fn().mockReturnValue({
+    dominantColors: ["black"],
+    colorwayKey: "black",
+    colorFamily: "black",
+    visualSignature: "black",
+    confidence: 0.8,
+  }),
+}));
+
+vi.mock("../../../app/lib/knowledge-graph/llm-classifier", () => ({
+  classifyProduct: vi.fn().mockResolvedValue({
+    disciplineTags: ["Boxing"],
+    categoryTags: ["Protection"],
+    classificationConfidence: 0.9,
+  }),
 }));
 
 import { deleteProduct, upsertProduct, updateProductEmbedding } from "../../../app/lib/db/queries";

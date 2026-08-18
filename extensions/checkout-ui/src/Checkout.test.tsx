@@ -1,24 +1,65 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@shopify/ui-extensions/preact", () => ({}));
-
-vi.mock("preact", () => {
+vi.mock("@shopify/ui-extensions/checkout", () => {
   let lastRenderedTree: any = undefined;
 
+  function makeNode(type: string, props: Record<string, unknown> = {}, children: any[] = []) {
+    const node = {
+      type,
+      props,
+      children: [...children],
+      appendChild(child: any) {
+        this.children.push(child);
+      },
+    };
+    node.props.children = node.children;
+    return node;
+  }
+
   return {
-    render: vi.fn((vnode: any) => {
-      if (vnode && typeof vnode.type === "function") {
-        lastRenderedTree = vnode.type(vnode.props ?? {});
-      } else {
-        lastRenderedTree = vnode;
-      }
+    Banner: "s-banner",
+    BlockStack: "s-stack",
+    Text: "s-text",
+    Link: "s-link",
+    Divider: "s-divider",
+    extension: vi.fn((_target: string, callback: any) => () => {
+      const root = {
+        children: [] as any[],
+        createComponent(type: string, props: Record<string, unknown> = {}, ...children: any[]) {
+          const mappedProps = type === "s-banner"
+            ? { tone: props.status, heading: props.title }
+            : type === "s-link"
+              ? { href: props.to }
+              : props;
+          return makeNode(type, mappedProps, children);
+        },
+        appendChild(child: any) {
+          this.children.push(child);
+          lastRenderedTree = child;
+        },
+        removeChild(child: any) {
+          this.children = this.children.filter((item) => item !== child);
+          lastRenderedTree = this.children[0] ?? null;
+        },
+      };
+      const shopify = (globalThis as any).shopify;
+      callback(root, {
+        appMetafields: {
+          current: shopify?.appMetafields?.value ?? [],
+          subscribe: vi.fn(),
+        },
+        settings: {
+          current: shopify?.settings?.value ?? {},
+        },
+      });
+      lastRenderedTree = root.children[0] ?? null;
     }),
     __getLastRenderedTree: () => lastRenderedTree,
   };
 });
 
 const { default: extension } = await import("./Checkout");
-const { render, __getLastRenderedTree } = await import("preact");
+const { __getLastRenderedTree } = await import("@shopify/ui-extensions/checkout");
 
 function makeGuidanceFeed(items: unknown[] = [], overrides = {}) {
   return JSON.stringify({
@@ -88,9 +129,10 @@ describe("CartMind checkout extension (preact)", () => {
     setupShopify({ guidanceValue: null });
   });
 
-  it("calls preact render", () => {
+  it("renders through the checkout extension root", () => {
+    setupShopify({ guidanceValue: makeGuidanceFeed([makeSizeWarningItem()]) });
     extension();
-    expect(render).toHaveBeenCalledTimes(1);
+    expect(__getLastRenderedTree()).not.toBeNull();
   });
 
   it("renders nothing when there are no metafields", () => {

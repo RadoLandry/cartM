@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { action } from "../../../app/routes/api.ai.recommendations";
 import * as dbQueries from "../../../app/lib/db/queries";
@@ -21,6 +21,8 @@ vi.mock("../../../app/lib/db/queries", () => ({
 
 describe("customer profile recommendations route scaffold", () => {
   beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-27T12:00:00.000Z"));
     vi.clearAllMocks();
     vi.mocked(dbQueries.getColorCompatibilityRulesForKeys).mockResolvedValue([] as never);
     vi.mocked(dbQueries.getCustomerProfile).mockResolvedValue(null as never);
@@ -29,6 +31,10 @@ describe("customer profile recommendations route scaffold", () => {
     vi.mocked(dbQueries.listCustomerPurchaseSnapshots).mockResolvedValue([] as never);
     vi.mocked(dbQueries.listCartVisualItems).mockResolvedValue(makeCoordinatedCart() as never);
     vi.mocked(dbQueries.listStyleCandidateProducts).mockResolvedValue([] as never);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("accepts customer-profile scenario fixtures without breaking the existing style response", async () => {

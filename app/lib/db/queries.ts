@@ -511,6 +511,40 @@ export async function updateProductEmbedding(shopifyProductId: string, embedding
   `;
 }
 
+export interface SimilarProduct {
+  shopifyProductId: string;
+  title: string;
+  description: string | null;
+  disciplineTags: string[];
+  categoryTags: string[];
+  productType: string | null;
+}
+
+// Returns the top-k products nearest to the query vector using cosine distance (<=>).
+export async function findSimilarProducts(
+  shop: string,
+  queryEmbedding: number[],
+  limit = 5,
+  excludeShopifyProductIds: string[] = [],
+): Promise<SimilarProduct[]> {
+  const literal = `[${queryEmbedding.join(",")}]`;
+  const excludedProductIds = Array.from(new Set(excludeShopifyProductIds));
+  const excludeClause = excludedProductIds.length > 0
+    ? Prisma.sql`AND "shopifyProductId" NOT IN (${Prisma.join(excludedProductIds)})`
+    : Prisma.empty;
+
+  return db.$queryRaw<SimilarProduct[]>`
+    SELECT "shopifyProductId", title, description, "disciplineTags", "categoryTags", "productType"
+    FROM "Product"
+    WHERE shop = ${shop}
+      AND embedding IS NOT NULL
+      AND status = 'ACTIVE'
+      ${excludeClause}
+    ORDER BY embedding <=> ${literal}::vector
+    LIMIT ${limit}
+  `;
+}
+
 /**
  * Apply a merchant override to a product's taxonomy classification.
  * Sets isManuallyClassified = true to prevent future automated overwrites.

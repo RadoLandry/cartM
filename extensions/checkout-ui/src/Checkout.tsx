@@ -45,11 +45,15 @@ function toneFromSeverity(severity) {
 
 export default extension("purchase.checkout.block.render", (root, api) => {
   const metafields = api.appMetafields;
+  const settings = api.settings;
 
   function render() {
     while (root.children.length > 0) {
       root.removeChild(root.children[root.children.length - 1]);
     }
+
+    const placement = settings?.current?.cartmind_guidance_path;
+    if (placement && placement !== "purchase.checkout.block.render") return;
 
     const entry = metafields.current && metafields.current[0];
     const rawValue = entry && entry.metafield && entry.metafield.value;

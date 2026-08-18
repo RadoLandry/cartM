@@ -8,12 +8,12 @@ describe("cart tool proposal inference", () => {
     process.env.STOREFRONT_CHAT_SIGNING_SECRET = "test-signing-secret";
   });
 
-  it("proposes add-to-cart action with requested quantity", () => {
+  it("proposes add-to-cart action with requested quantity", async () => {
     const request = makeStorefrontChatRequest({
       messages: [{ role: "user", content: "add 2 of these gloves" }],
     });
 
-    const proposal = buildCartToolActionProposal(request);
+    const proposal = await buildCartToolActionProposal(request);
 
     expect(proposal).not.toBeNull();
     expect(proposal?.toolName).toBe("addToCart");
@@ -24,7 +24,7 @@ describe("cart tool proposal inference", () => {
     }
   });
 
-  it("proposes remove action targeting a matched cart line", () => {
+  it("proposes remove action targeting a matched cart line", async () => {
     const request = makeStorefrontChatRequest({
       cart: {
         cartId: "gid://shopify/Cart/123",
@@ -51,7 +51,7 @@ describe("cart tool proposal inference", () => {
       messages: [{ role: "user", content: "remove hand wraps" }],
     });
 
-    const proposal = buildCartToolActionProposal(request);
+    const proposal = await buildCartToolActionProposal(request);
 
     expect(proposal).not.toBeNull();
     expect(proposal?.toolName).toBe("removeFromCart");
@@ -61,7 +61,7 @@ describe("cart tool proposal inference", () => {
     }
   });
 
-  it("proposes quantity change with increase intent and explicit quantity", () => {
+  it("proposes quantity change with increase intent and explicit quantity", async () => {
     const request = makeStorefrontChatRequest({
       cart: {
         cartId: "gid://shopify/Cart/123",
@@ -80,7 +80,7 @@ describe("cart tool proposal inference", () => {
       messages: [{ role: "user", content: "increase quantity to 3" }],
     });
 
-    const proposal = buildCartToolActionProposal(request);
+    const proposal = await buildCartToolActionProposal(request);
 
     expect(proposal).not.toBeNull();
     expect(proposal?.toolName).toBe("changeQuantity");
@@ -91,7 +91,7 @@ describe("cart tool proposal inference", () => {
     }
   });
 
-  it("proposes swap action using explicitly requested variant id", () => {
+  it("proposes swap action using explicitly requested variant id", async () => {
     const request = makeStorefrontChatRequest({
       cart: {
         cartId: "gid://shopify/Cart/123",
@@ -110,7 +110,7 @@ describe("cart tool proposal inference", () => {
       messages: [{ role: "user", content: "replace with gid://shopify/ProductVariant/22" }],
     });
 
-    const proposal = buildCartToolActionProposal(request);
+    const proposal = await buildCartToolActionProposal(request);
 
     expect(proposal).not.toBeNull();
     expect(proposal?.toolName).toBe("swapVariant");
@@ -121,7 +121,7 @@ describe("cart tool proposal inference", () => {
     }
   });
 
-  it("proposes quantity decrease but never below one", () => {
+  it("proposes quantity decrease but never below one", async () => {
     const request = makeStorefrontChatRequest({
       cart: {
         cartId: "gid://shopify/Cart/123",
@@ -140,7 +140,7 @@ describe("cart tool proposal inference", () => {
       messages: [{ role: "user", content: "decrease quantity" }],
     });
 
-    const proposal = buildCartToolActionProposal(request);
+    const proposal = await buildCartToolActionProposal(request);
 
     expect(proposal).not.toBeNull();
     expect(proposal?.payload.actionType).toBe("change_quantity");
@@ -149,7 +149,7 @@ describe("cart tool proposal inference", () => {
     }
   });
 
-  it("maps explicit French quantity to the correct mentioned cart line", () => {
+  it("maps explicit French quantity to the correct mentioned cart line", async () => {
     const cart = {
       cartId: "gid://shopify/Cart/123",
       currencyCode: "USD",
@@ -178,7 +178,7 @@ describe("cart tool proposal inference", () => {
       messages: [{ role: "user", content: "diminue la quantite du short a 5, et la quantite de la veste a 3" }],
     });
 
-    const proposal = buildCartToolActionProposal(request);
+    const proposal = await buildCartToolActionProposal(request);
 
     expect(proposal).not.toBeNull();
     expect(proposal?.toolName).toBe("changeQuantity");
@@ -193,7 +193,7 @@ describe("cart tool proposal inference", () => {
     }
   });
 
-  it("maps multi-item quantity update with accented French and 'du' preposition", () => {
+  it("maps multi-item quantity update with accented French and 'du' preposition", async () => {
     // Exact prompt from real user: "diminue la quantité du short à 5, et la quantité du veste à 3"
     const cart = {
       cartId: "gid://shopify/Cart/123",
@@ -223,7 +223,7 @@ describe("cart tool proposal inference", () => {
       messages: [{ role: "user", content: "diminue la quantité du short à 5, et la quantité du veste à 3" }],
     });
 
-    const proposal = buildCartToolActionProposal(request);
+    const proposal = await buildCartToolActionProposal(request);
 
     expect(proposal?.payload.actionType).toBe("change_quantity");
     if (proposal?.payload.actionType === "change_quantity") {
@@ -237,7 +237,50 @@ describe("cart tool proposal inference", () => {
     }
   });
 
-  it("maps singular French short mention to plural shorts product in multi-item updates", () => {
+  it("maps exact French gants and veste quantity update to both cart lines", async () => {
+    const cart = {
+      cartId: "gid://shopify/Cart/123",
+      currencyCode: "USD",
+      items: [
+        {
+          lineId: "line-gloves",
+          productId: "gid://shopify/Product/10",
+          productTitle: "Gants de boxe Venum Elite",
+          variantId: "gid://shopify/ProductVariant/101",
+          variantTitle: "12 oz / Black",
+          quantity: 1,
+        },
+        {
+          lineId: "line-jacket",
+          productId: "gid://shopify/Product/20",
+          productTitle: "Veste Venum Elite",
+          variantId: "gid://shopify/ProductVariant/201",
+          variantTitle: "M / Black",
+          quantity: 1,
+        },
+      ],
+    };
+
+    const request = makeStorefrontChatRequest({
+      cart,
+      messages: [{ role: "user", content: "modifie la quantité du gants à 5 et la quantité du veste à 3" }],
+    });
+
+    const proposal = await buildCartToolActionProposal(request);
+
+    expect(proposal?.toolName).toBe("changeQuantity");
+    expect(proposal?.payload.actionType).toBe("change_quantity");
+    if (proposal?.payload.actionType === "change_quantity") {
+      expect(proposal.payload.lineId).toBe("line-gloves");
+      expect(proposal.payload.quantity).toBe(5);
+      expect(proposal.payload.changes).toEqual([
+        { lineId: "line-gloves", quantity: 5 },
+        { lineId: "line-jacket", quantity: 3 },
+      ]);
+    }
+  });
+
+  it("maps singular French short mention to plural shorts product in multi-item updates", async () => {
     const cart = {
       cartId: "gid://shopify/Cart/123",
       currencyCode: "USD",
@@ -266,7 +309,7 @@ describe("cart tool proposal inference", () => {
       messages: [{ role: "user", content: "diminue la quantité du short à 5, et la quantité du veste à 1" }],
     });
 
-    const proposal = buildCartToolActionProposal(request);
+    const proposal = await buildCartToolActionProposal(request);
 
     expect(proposal?.toolName).toBe("changeQuantity");
     expect(proposal?.payload.actionType).toBe("change_quantity");
@@ -280,7 +323,7 @@ describe("cart tool proposal inference", () => {
     }
   });
 
-  it("uses positional fallback when a cart line has no productTitle for multi-item quantity update", () => {
+  it("uses positional fallback when a cart line has no productTitle for multi-item quantity update", async () => {
     // Real-world scenario: the short product's productTitle was not populated in the
     // cart snapshot (e.g. initial config race or missing product_title from cart.js).
     // The veste line still matches by title.  The short line must be assigned via the
@@ -313,7 +356,7 @@ describe("cart tool proposal inference", () => {
       messages: [{ role: "user", content: "diminue la quantité du short à 5, et la quantité du veste à 2" }],
     });
 
-    const proposal = buildCartToolActionProposal(request);
+    const proposal = await buildCartToolActionProposal(request);
 
     expect(proposal?.toolName).toBe("changeQuantity");
     expect(proposal?.payload.actionType).toBe("change_quantity");
@@ -327,7 +370,7 @@ describe("cart tool proposal inference", () => {
     }
   });
 
-  it("returns null for add intent when the only cart match is a context reference (e.g. 'compatible with this short')", () => {
+  it("returns null for add intent when the only cart match is a context reference (e.g. 'compatible with this short')", async () => {
     const request = makeStorefrontChatRequest({
       cart: {
         cartId: "gid://shopify/Cart/123",
@@ -348,7 +391,7 @@ describe("cart tool proposal inference", () => {
 
     // Should NOT propose adding the Fightshort again — "à ce short" is a context
     // reference, not the item the shopper wants to add.
-    const proposal = buildCartToolActionProposal(request);
+    const proposal = await buildCartToolActionProposal(request);
     expect(proposal).toBeNull();
   });
 });

@@ -10,6 +10,7 @@ import type {
 } from "./schemas";
 import { createCartToolActionRecord, getCartToolActionRecord, isCartToolActionTerminalStatus } from "./storefront-chat";
 import { issueActionConfirmationToken } from "../shopify/app-proxy";
+import db from "../../db.server";
 
 function createActionId() {
   return crypto.randomUUID();
@@ -392,30 +393,98 @@ function inferToolFromMessage(input: StorefrontChatRequest): {
   }
 
   if (/\b(swap|replace)\b/.test(normalized) && targetLine?.variantId) {
-    const beforeLabel = `${targetLine.productTitle || "Item"}${targetLine.variantTitle ? ` / ${targetLine.variantTitle}` : ""}`;
     const requestedVariantId = parseRequestedVariantId(latest);
-    const nextVariantId = requestedVariantId || `${targetLine.variantId}-swap`;
-
-    return {
-      toolName: "swapVariant",
-      payload: {
-        actionType: "swap_variant",
-        lineId: targetLine.lineId || targetLine.productId,
-        newMerchandiseId: nextVariantId,
-        quantity: targetLine.quantity,
-      },
-      preview: {
-        before: beforeLabel,
-        after: `${beforeLabel} (requested variant)`,
-      },
-    };
+    return { _swapTargetLine: targetLine, _requestedVariantId: requestedVariantId };
   }
 
   return null;
 }
 
-export function buildCartToolActionProposal(input: StorefrontChatRequest): CartToolAction | null {
+// Looks up available variant siblings for a swap when the user didn't specify a target GID.
+async function resolveSwapVariantId(
+  shop: string,
+  productId: string,
+  currentVariantId: string,
+): Promise<{ variantId: string; variantTitle: string | null } | null> {
+  try {
+    const product = await db.product.findFirst({
+      where: { shop, shopifyProductId: { contains: productId.replace(/^.*\//, "") } },
+      select: {
+        variants: {
+          orderBy: { inventoryQuantity: "desc" },
+          select: { shopifyVariantId: true, title: true, inventoryQuantity: true },
+        },
+      },
+    });
+
+    const alternative = product?.variants.find(
+      (v) => v.shopifyVariantId !== currentVariantId && (v.inventoryQuantity ?? 0) > 0,
+    );
+
+    return alternative ? { variantId: alternative.shopifyVariantId, variantTitle: alternative.title } : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function buildCartToolActionProposal(input: StorefrontChatRequest): Promise<CartToolAction | null> {
   const inferred = inferToolFromMessage(input);
+
+  // Handle deferred swap resolution requiring a DB lookup.
+  if (inferred && "_swapTargetLine" in inferred) {
+    const { _swapTargetLine: targetLine, _requestedVariantId: requestedVariantId } = inferred as {
+      _swapTargetLine: StorefrontChatRequest["cart"]["items"][number];
+      _requestedVariantId: string | null;
+    };
+
+    const resolvedVariantId = requestedVariantId ?? (
+      await resolveSwapVariantId(input.shop, targetLine.productId, targetLine.variantId ?? "")
+    )?.variantId;
+
+    if (!resolvedVariantId) {
+      // No specific variant requested and no alternative found — let chat provide guidance.
+      return null;
+    }
+
+    const resolved = await resolveSwapVariantId(input.shop, targetLine.productId, targetLine.variantId ?? "");
+    const newTitle = requestedVariantId ? "(requested variant)" : (resolved?.variantTitle ?? "alternate variant");
+    const beforeLabel = `${targetLine.productTitle || "Item"}${targetLine.variantTitle ? ` / ${targetLine.variantTitle}` : ""}`;
+
+    const swapActionId = createActionId();
+    const swapToken = issueActionConfirmationToken({
+      actionId: swapActionId,
+      shop: input.shop,
+      sessionKey: input.sessionKey,
+      cartId: input.cart.cartId,
+    });
+    const swapAction: CartToolAction = {
+      actionId: swapActionId,
+      toolName: "swapVariant",
+      shop: input.shop,
+      sessionKey: input.sessionKey,
+      ...(input.cart.cartId ? { cartId: input.cart.cartId } : {}),
+      payload: {
+        actionType: "swap_variant",
+        lineId: targetLine.lineId || targetLine.productId,
+        newMerchandiseId: resolvedVariantId,
+        quantity: targetLine.quantity,
+      },
+      preview: {
+        before: beforeLabel,
+        after: `${targetLine.productTitle || "Item"} / ${newTitle}`,
+      },
+      confirmationToken: swapToken.token,
+      expiresAt: swapToken.expiresAt,
+    };
+    createCartToolActionRecord({
+      actionId: swapActionId,
+      shop: swapAction.shop,
+      sessionKey: swapAction.sessionKey,
+      cartId: swapAction.cartId,
+      payload: swapAction.payload,
+    });
+    return swapAction;
+  }
 
   if (!inferred) {
     return null;

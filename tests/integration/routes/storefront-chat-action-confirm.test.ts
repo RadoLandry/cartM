@@ -53,7 +53,7 @@ describe("storefront chat action confirmation route", () => {
       messages: [{ role: "user", content: "add 2 more" }],
     });
 
-    const proposal = buildCartToolActionProposal(request);
+    const proposal = await buildCartToolActionProposal(request);
     expect(proposal).not.toBeNull();
 
     const response = await confirmAction({
@@ -100,7 +100,7 @@ describe("storefront chat action confirmation route", () => {
       messages: [{ role: "user", content: "remove gloves" }],
     });
 
-    const proposal = buildCartToolActionProposal(request);
+    const proposal = await buildCartToolActionProposal(request);
     expect(proposal?.payload.actionType).toBe("remove");
 
     const response = await confirmAction({
@@ -146,7 +146,7 @@ describe("storefront chat action confirmation route", () => {
       messages: [{ role: "user", content: "increase quantity to 3" }],
     });
 
-    const proposal = buildCartToolActionProposal(request);
+    const proposal = await buildCartToolActionProposal(request);
     expect(proposal?.payload.actionType).toBe("change_quantity");
 
     const response = await confirmAction({
@@ -274,7 +274,7 @@ describe("storefront chat action confirmation route", () => {
       messages: [{ role: "user", content: "remove gloves" }],
     });
 
-    const proposal = buildCartToolActionProposal(request);
+    const proposal = await buildCartToolActionProposal(request);
 
     const response = await confirmAction({
       request: new Request("http://localhost/api/ai/chat/actions/confirm", {
@@ -320,7 +320,7 @@ describe("storefront chat action confirmation route", () => {
       messages: [{ role: "user", content: "replace with gid://shopify/ProductVariant/22" }],
     });
 
-    const proposal = buildCartToolActionProposal(request);
+    const proposal = await buildCartToolActionProposal(request);
     expect(proposal?.payload.actionType).toBe("swap_variant");
 
     const response = await confirmAction({
@@ -367,7 +367,7 @@ describe("storefront chat action confirmation route", () => {
       messages: [{ role: "user", content: "replace with gid://shopify/ProductVariant/unavailable" }],
     });
 
-    const proposal = buildCartToolActionProposal(request);
+    const proposal = await buildCartToolActionProposal(request);
     expect(proposal?.payload.actionType).toBe("swap_variant");
 
     const response = await confirmAction({
@@ -464,7 +464,7 @@ describe("storefront chat action confirmation route", () => {
       messages: [{ role: "user", content: "increase quantity to 3" }],
     });
 
-    const proposal = buildCartToolActionProposal(request);
+    const proposal = await buildCartToolActionProposal(request);
     expect(proposal?.payload.actionType).toBe("change_quantity");
 
     const baseBody = {

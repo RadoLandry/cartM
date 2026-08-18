@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { action } from "../../../app/routes/api.ai.kit-preview";
+import { loader as assetLoader } from "../../../app/routes/api.ai.kit-preview.assets.$asset";
 import { clearPreviewCache } from "../../../app/lib/visual/compositor";
 
 import {
@@ -69,6 +70,42 @@ describe("kit preview route", () => {
     expect(payload.preview.assetUrl).toContain("/api/ai/kit-preview/assets/");
     expect(payload.preview.reused).toBe(false);
     expect(payload.context.layoutId).toBe("boxing-default");
+  });
+
+  it("serves generated preview assets as SVG images", async () => {
+    const cart = makeKitPreviewCartFixture();
+    const response = await action({
+      request: new Request("http://localhost/api/ai/kit-preview", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          shop: "test.myshopify.com",
+          sessionId: "session-asset",
+          cartId: cart.cartId,
+          surface: "cart_drawer",
+          currencyCode: cart.currencyCode,
+          cart: {
+            items: cart.items,
+          },
+        }),
+      }),
+      params: {},
+      context: {},
+    } as never);
+
+    const payload = await response.json();
+    const asset = String(payload.preview.assetUrl).split("/").pop();
+    const assetResponse = await assetLoader({
+      request: new Request(`http://localhost${payload.preview.assetUrl}`),
+      params: { asset },
+      context: {},
+    } as never);
+
+    expect(assetResponse.status).toBe(200);
+    expect(assetResponse.headers.get("content-type")).toContain("image/svg+xml");
+    await expect(assetResponse.text()).resolves.toContain("Boxing Gloves");
   });
 
   it("reuses cached preview for unchanged cart signatures and regenerates after cart updates", async () => {
