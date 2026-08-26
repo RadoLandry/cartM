@@ -107,6 +107,41 @@ export interface CartToolActionLifecycleRecord {
 
 const actionLifecycleStore = new Map<string, CartToolActionLifecycleRecord>();
 
+export interface CatalogActionCandidate {
+  shopifyProductId: string;
+  title: string;
+  variantId: string;
+  variantTitle?: string;
+  imageUrl?: string;
+  productHandle?: string;
+}
+
+const catalogActionCandidateStore = new Map<string, CatalogActionCandidate[]>();
+
+function catalogActionCandidateStoreKey(shop: string, sessionKey: string) {
+  return `${shop}::${sessionKey}`;
+}
+
+export function rememberCatalogActionCandidates(input: {
+  shop: string;
+  sessionKey: string;
+  candidates: CatalogActionCandidate[];
+}) {
+  if (input.candidates.length === 0) {
+    return;
+  }
+
+  const key = catalogActionCandidateStoreKey(input.shop, input.sessionKey);
+  const existing = catalogActionCandidateStore.get(key) ?? [];
+  const byProductId = new Map(existing.map((candidate) => [candidate.shopifyProductId, candidate]));
+
+  for (const candidate of input.candidates) {
+    byProductId.set(candidate.shopifyProductId, candidate);
+  }
+
+  catalogActionCandidateStore.set(key, Array.from(byProductId.values()).slice(-20));
+}
+
 export interface ProductComparisonContextRecord {
   comparisonContextId: string;
   requestId: string;
@@ -575,7 +610,7 @@ function isSizeOrUseCaseIntentMessage(message: string) {
 }
 
 function isRecommendationExplanationIntentMessage(message: string) {
-  return /(why|pourquoi|explain|explique|recommend|recommand|suggest|conseil|propose)/i.test(message);
+  return /(why|pourquoi|explain|explique|recommend|recommand|suggest|conseil|propose|s['’]?accorde|accorde|va\s+bien|works?\s+well|goes?\s+well|pair)/i.test(message);
 }
 
 function isProactiveAnalysisPrompt(message: string) {
@@ -1298,7 +1333,7 @@ export async function buildStorefrontChatReply(
 // Detects add-intent messages that reference a cart item as context
 // (mirrors the REFERENCE_RELATION_PATTERN guard in tools.ts — keep in sync).
 const COMPATIBLE_RELATION_PHRASE_RE =
-  /\b(?:compatible\s+(?:with|avec|a|au)?|(?:for|pour|for\s+this|pour\s+ce[tte]?|for\s+my|pour\s+mon(?:ma)?)|(?:with|avec)|(?:that\s+goes?\s+with|qui\s+va\s+avec)|(?:to\s+use\s+with|a\s+utiliser\s+avec))\s+/i;
+  /\b(?:compatible\s+(?:with|avec|a|au)?|(?:for|pour|for\s+this|pour\s+ce[tte]?|for\s+my|pour\s+mon(?:ma)?)|(?:with|avec)|(?:that\s+goes?\s+with|qui\s+va\s+avec)|(?:qui\s+correspond\s+(?:a|au|avec)|correspond\s+(?:a|au|avec))|(?:to\s+use\s+with|a\s+utiliser\s+avec))\s+/i;
 
 function normalizeForCompatSearch(text: string) {
   return text
@@ -1336,7 +1371,7 @@ type CatalogCompatibilityRole = "gloves" | "shin_guards" | "gi" | "top" | "botto
 function detectCatalogCompatibilityRole(text: string): CatalogCompatibilityRole {
   const haystack = normalizeForCompatSearch(text);
 
-  if (/\b(wraps?|bandages?|mouthguards?|protege-dents|protection|protective)\b/.test(haystack)) return "protective";
+  if (/\b(wraps?|bandages?|bandes?|mouthguards?|protege-dents|protection|protective)\b/.test(haystack)) return "protective";
   if (/\b(glove|gloves|gants?|boxing-gloves|gant-de-boxe|gants-de-boxe)\b/.test(haystack)) return "gloves";
   if (/\b(shin|tibia|prot[eè]ge-tibias?|shin-guards?)\b/.test(haystack)) return "shin_guards";
   if (/\b(gi|kimono|bjj|jiu-jitsu)\b/.test(haystack)) return "gi";
@@ -1360,6 +1395,46 @@ function excludesSameApparelRole(
   return !(singleRoleCategories.has(productRole) && sourceRoles.has(productRole));
 }
 
+function isLikelySameAsCartProduct(
+  product: { shopifyProductId: string; title: string; tags: string[]; categoryTags: string[]; disciplineTags: string[] },
+  cartShopifyProductIds: Set<string>,
+  cartTitles: string[],
+  sourceRoles: Set<CatalogCompatibilityRole>,
+) {
+  if (cartShopifyProductIds.has(product.shopifyProductId)) {
+    return true;
+  }
+
+  const productRole = detectProductCompatibilityRole(product);
+  if (!sourceRoles.has(productRole)) {
+    return false;
+  }
+
+  const productTitle = normalizeForCompatSearch(product.title);
+  const productTokens = tokenizeCatalogTitle(product.title);
+
+  return cartTitles.some((cartTitleRaw) => {
+    const cartTitle = normalizeForCompatSearch(cartTitleRaw);
+    if (!cartTitle) {
+      return false;
+    }
+
+    if (productTitle.includes(cartTitle) || cartTitle.includes(productTitle)) {
+      return true;
+    }
+
+    const cartTokens = tokenizeCatalogTitle(cartTitleRaw);
+    let overlap = 0;
+    for (const token of cartTokens) {
+      if (productTokens.has(token)) {
+        overlap += 1;
+      }
+    }
+
+    return overlap >= Math.max(3, Math.ceil(cartTokens.size * 0.65));
+  });
+}
+
 function inferComplementSearchTerms(
   matchedLines: Array<ResolvedCartLine & { productRow: NonNullable<ResolvedCartLine["productRow"]> }>,
 ) {
@@ -1380,7 +1455,7 @@ function inferComplementSearchTerms(
     const role = detectCatalogCompatibilityRole(haystack);
 
     if (role === "gloves") {
-      ["wraps", "hand-wraps", "bandages", "bandage", "mouthguard", "mouthguards", "protege-dents", "protection", "protective"].forEach((term) => terms.add(term));
+      ["wraps", "hand-wraps", "bandages", "bandage", "bandes", "bande", "bandes-de-boxe", "mouthguard", "mouthguards", "protege-dents", "protection", "protective"].forEach((term) => terms.add(term));
     }
 
     if (role === "shin_guards") {
@@ -1421,6 +1496,7 @@ async function buildDatabaseComplementRecommendations(
 ): Promise<RecommendationItem[]> {
   const cartInternalIds = new Set(matchedLines.map((line) => line.productRow.id));
   const cartShopifyProductIds = new Set(input.cart.items.map((line) => toProductGid(line.productId)));
+  const cartTitles = input.cart.items.map((line) => line.productTitle).filter((value): value is string => Boolean(value));
   const relationshipSets = await Promise.all(
     matchedLines.map((line) => getActiveRelationshipsForProduct(input.shop, line.productRow.id).catch(() => [])),
   );
@@ -1540,7 +1616,7 @@ async function buildDatabaseComplementRecommendations(
   }
 
   return products
-    .filter((product) => !cartShopifyProductIds.has(product.shopifyProductId))
+    .filter((product) => !isLikelySameAsCartProduct(product, cartShopifyProductIds, cartTitles, sourceCompatibilityRoles))
     .filter((product) => excludesSameApparelRole(product, sourceCompatibilityRoles))
     .slice(0, 6)
     .map((product) => {
@@ -1584,7 +1660,113 @@ async function buildDatabaseComplementRecommendations(
 }
 
 function isCompatibleDiscoveryIntent(message: string) {
-  return /\b(add|ajoute|insert|include|find|cherche|trouve|recommend|recommande|suggest|suggere|propose|show|montre|help)\b/.test(message);
+  return /\b(add|ajoute|donne|insert|include|find|cherche|trouve|recommend|recommande|suggest|suggere|propose|show|affiche|montre|help|accorde|accordent|associe|associer|complete|completer|works|goes|pair)\b/.test(message);
+}
+
+function isDisplayRequestedProductIntent(message: string) {
+  return /\b(affiche|montre|show|display|voir|visualise|visualiser)\b/.test(message);
+}
+
+function stripRequestedProductTitle(value: string) {
+  return value
+    .replace(/^[\s"'“”‘’*:_-]+|[\s"'“”‘’*:_-]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenizeCatalogTitle(value: string) {
+  const tokens = new Set<string>();
+
+  for (const token of normalizeForCompatSearch(value).split(/[^a-z0-9]+/)) {
+    if (token.length < 3) continue;
+    tokens.add(token);
+    if (token.endsWith("s") && token.length > 4) {
+      tokens.add(token.slice(0, -1));
+    }
+  }
+
+  return tokens;
+}
+
+function titleMatchScore(requestedTitle: string, candidateTitle: string) {
+  const requested = normalizeForCompatSearch(requestedTitle);
+  const candidate = normalizeForCompatSearch(candidateTitle);
+
+  if (!requested || !candidate) {
+    return 0;
+  }
+
+  if (candidate.includes(requested) || requested.includes(candidate)) {
+    return 100;
+  }
+
+  const requestedTokens = tokenizeCatalogTitle(requestedTitle);
+  const candidateTokens = tokenizeCatalogTitle(candidateTitle);
+  let overlap = 0;
+
+  for (const token of requestedTokens) {
+    if (candidateTokens.has(token)) {
+      overlap += 1;
+    }
+  }
+
+  return overlap;
+}
+
+function getRememberedCatalogActionCandidates(input: StorefrontChatRequest, titles: string[]) {
+  const candidates = catalogActionCandidateStore.get(catalogActionCandidateStoreKey(input.shop, input.sessionKey)) ?? [];
+  if (titles.length === 0 || candidates.length === 0) {
+    return [];
+  }
+
+  return titles
+    .flatMap((title) => candidates.map((candidate) => ({
+      candidate,
+      score: titleMatchScore(title, candidate.title),
+      requestedTokenCount: tokenizeCatalogTitle(title).size,
+    })))
+    .filter((entry) => entry.score >= Math.max(2, Math.ceil(entry.requestedTokenCount * 0.45)))
+    .sort((left, right) => right.score - left.score)
+    .map((entry) => entry.candidate)
+    .filter((candidate, index, all) => all.findIndex((item) => item.shopifyProductId === candidate.shopifyProductId) === index)
+    .slice(0, 6);
+}
+
+function extractPreviouslyRecommendedProductTitles(input: StorefrontChatRequest) {
+  const latest = input.messages[input.messages.length - 1]?.content ?? "";
+  if (!isDisplayRequestedProductIntent(normalizeForCompatSearch(latest))) {
+    return [];
+  }
+
+  const assistantMessages = input.messages
+    .filter((message) => message.role === "assistant")
+    .map((message) => message.content)
+    .reverse();
+  const titles: string[] = [];
+
+  for (const content of assistantMessages) {
+    const patterns = [
+      /je\s+vous\s+recommande\s+(?:d['’]ajouter\s+)?(?:les?|la|des?)?\s*([^\n.?!]+)/gi,
+      /i\s+recommend\s+(?:adding\s+)?(?:the\s+)?([^\n.?!]+)/gi,
+      /rechercher\s+["“]([^"”]+)["”]/gi,
+      /search\s+(?:for\s+)?["“]([^"”]+)["”]/gi,
+    ];
+
+    for (const pattern of patterns) {
+      for (const match of content.matchAll(pattern)) {
+        const title = stripRequestedProductTitle(match[1] ?? "");
+        if (title.length >= 4) {
+          titles.push(title);
+        }
+      }
+    }
+
+    if (titles.length > 0) {
+      break;
+    }
+  }
+
+  return Array.from(new Set(titles)).slice(0, 3);
 }
 
 function extractCompatibleTargetTokens(text: string) {
@@ -1630,6 +1812,25 @@ function extractCompatibleTargetTokens(text: string) {
     "accessory",
     "accessoire",
     "compatible",
+    "correspond",
+    "correspondre",
+    "accorde",
+    "accordent",
+    "associe",
+    "associer",
+    "bien",
+    "deja",
+    "present",
+    "presents",
+    "panier",
+    "votre",
+    "qui",
+    "quoi",
+    "est",
+    "works",
+    "well",
+    "goes",
+    "pair",
   ]);
 
   return text
@@ -1677,6 +1878,58 @@ function buildCompatibleAddToCartAction(input: StorefrontChatRequest, productTit
   return action;
 }
 
+async function resolvePreviouslyRecommendedDisplayActions(input: StorefrontChatRequest): Promise<CartToolAction[]> {
+  const titles = extractPreviouslyRecommendedProductTitles(input);
+  if (titles.length === 0) {
+    return [];
+  }
+
+  const rememberedCandidates = getRememberedCatalogActionCandidates(input, titles);
+  if (rememberedCandidates.length > 0) {
+    return rememberedCandidates.map((candidate) => buildCompatibleAddToCartAction(
+      input,
+      candidate.title,
+      candidate.variantId,
+      candidate.variantTitle,
+      candidate.imageUrl,
+      candidate.productHandle,
+    ));
+  }
+
+  const products = await db.product.findMany({
+    where: {
+      shop: input.shop,
+      status: "ACTIVE",
+      OR: titles.map((title) => ({ title: { contains: title, mode: "insensitive" as const } })),
+    },
+    orderBy: { title: "asc" },
+    take: 6,
+    select: {
+      title: true,
+      handle: true,
+      variants: {
+        orderBy: { inventoryQuantity: "desc" },
+        take: 3,
+        select: {
+          shopifyVariantId: true,
+          title: true,
+          inventoryQuantity: true,
+          imageUrl: true,
+        },
+      },
+    },
+  }).catch(() => []);
+
+  return products
+    .map((product) => {
+      const variant = product.variants.find(hasPositiveInventory);
+      return variant
+        ? buildCompatibleAddToCartAction(input, product.title, variant.shopifyVariantId, variant.title, variant.imageUrl ?? undefined, product.handle)
+        : null;
+    })
+    .filter((action): action is CartToolAction => action !== null);
+}
+
 /**
  * When a shopper says "add boxing gloves compatible with this short" or
  * "find an article compatible with these gloves", look up
@@ -1689,6 +1942,11 @@ export async function resolveCompatibleAddActionProposals(
 ): Promise<CartToolAction[]> {
   const latest = input.messages[input.messages.length - 1]?.content ?? "";
   const normalized = normalizeForCompatSearch(latest);
+
+  const displayActions = await resolvePreviouslyRecommendedDisplayActions(input);
+  if (displayActions.length > 0) {
+    return displayActions;
+  }
 
   // Must be an add/discovery intent with a reference-relation phrase
   if (!isCompatibleDiscoveryIntent(normalized)) return [];

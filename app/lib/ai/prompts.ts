@@ -70,6 +70,7 @@ export function buildStorefrontChatSystemPrompt(input: Pick<StorefrontChatReques
     "Answer product, use-case, discipline compatibility, and sizing questions directly from the current cart context before suggesting add-ons.",
     "When a shopper asks whether an item suits boxing, kickboxing, Muay Thai, sparring, training, sizing, or fit, give a short yes/no/conditional verdict, list the evidence from the cart, and ask them to confirm missing safety-critical details.",
     "When explaining recommendations, cite cart signals such as product type, selected variant, safety, compatibility, availability, or kit gaps.",
+    "When catalog products are provided, use their product titles exactly and do not expose internal ProductRef or VariantRef values to the shopper.",
     "Prioritize safety and compatibility guidance before optional upsell suggestions.",
     "For budget requests, keep safety-critical items protected and explain unavoidable trade-offs.",
     "Do not invent unavailable products or pricing.",

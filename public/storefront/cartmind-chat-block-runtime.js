@@ -876,7 +876,7 @@
         border: none;
         border-radius: 999px;
         padding: 7px 12px;
-        font-size: 12px;
+        font-size: 11px;
         font-weight: 700;
         cursor: pointer;
       }
@@ -1325,8 +1325,8 @@
         ${renderActionStatus(action, state)}
         ${isResolved ? "" : `
           <div class="cm-action-buttons">
-            <button class="cm-action-button cm-action-button--approve" type="button" data-action="approve-cart-action" data-action-id="${escapeHtml(action.actionId)}" ${isPending ? "disabled" : ""}>${isPending ? "Applying..." : "Approve"}</button>
-            <button class="cm-action-button cm-action-button--decline" type="button" data-action="decline-cart-action" data-action-id="${escapeHtml(action.actionId)}" ${isPending ? "disabled" : ""}>Decline</button>
+            <button class="cm-action-button cm-action-button--approve" type="button" data-action="approve-cart-action" data-action-id="${escapeHtml(action.actionId)}" ${isPending ? "disabled" : ""}>${isPending ? "Ajout..." : action.payload.actionType === "add" ? "Ajouter au panier" : "Appliquer"}</button>
+            <button class="cm-action-button cm-action-button--decline" type="button" data-action="decline-cart-action" data-action-id="${escapeHtml(action.actionId)}" ${isPending ? "disabled" : ""}>Ignorer</button>
           </div>
         `}
       </div>

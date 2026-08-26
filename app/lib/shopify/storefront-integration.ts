@@ -27,7 +27,7 @@ export const DEFAULT_STOREFRONT_WIDGET_FEATURES = {
 export const DEFAULT_STOREFRONT_WIDGET_LABELS = {
   launcherLabel: "Ask CartMind",
   panelTitle: "CartMind chat",
-  assistantGreeting: "Ask about fit, comparisons, or what works well with the items in your cart.",
+  assistantGreeting: "Ask about comparisons, or what works well with the items in your cart.",
   fallbackMessage: "CartMind guidance is temporarily unavailable. Your cart still works normally.",
 } as const;
 

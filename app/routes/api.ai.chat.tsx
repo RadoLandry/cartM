@@ -7,6 +7,7 @@ import {
   buildProductComparisonDataError,
   buildStorefrontChatReply,
   createBudgetOptimizationContext,
+  rememberCatalogActionCandidates,
   resolveStorefrontChatBehavior,
   resolveCompatibleAddActionProposals,
   createProductComparisonContext,
@@ -71,12 +72,58 @@ function buildCompatibleActionIntro(latestMessage: string, count: number) {
 }
 
 function formatCatalogContextProduct(product: Awaited<ReturnType<typeof findSimilarProducts>>[number]) {
-  const parts: string[] = [product.title];
+  const parts: string[] = [product.title, `ProductRef: ${product.shopifyProductId}`];
   if (product.productType) parts.push(`Type: ${product.productType}`);
   if (product.disciplineTags.length > 0) parts.push(`Discipline: ${product.disciplineTags.join(", ")}`);
   if (product.categoryTags.length > 0) parts.push(`Category: ${product.categoryTags.join(", ")}`);
+  if (product.shopifyVariantId) parts.push(`VariantRef: ${product.shopifyVariantId}`);
   if (product.description) parts.push(product.description.slice(0, 200));
   return parts.join(" | ");
+}
+
+function normalizeCatalogText(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
+
+function catalogTitleTokens(value: string) {
+  return new Set(normalizeCatalogText(value).split(/[^a-z0-9]+/).filter((token) => token.length >= 4));
+}
+
+function isLikelyAlreadyInCart(
+  product: Awaited<ReturnType<typeof findSimilarProducts>>[number],
+  cartItems: StorefrontChatRequest["cart"]["items"],
+) {
+  const productTitle = normalizeCatalogText(product.title);
+  const productTokens = catalogTitleTokens(product.title);
+
+  return cartItems.some((item) => {
+    if (product.shopifyProductId === item.productId) {
+      return true;
+    }
+
+    const cartTitle = normalizeCatalogText(item.productTitle ?? "");
+    if (!cartTitle) {
+      return false;
+    }
+
+    if (productTitle.includes(cartTitle) || cartTitle.includes(productTitle)) {
+      return true;
+    }
+
+    const cartTokens = catalogTitleTokens(cartTitle);
+    let overlap = 0;
+    for (const token of cartTokens) {
+      if (productTokens.has(token)) {
+        overlap += 1;
+      }
+    }
+
+    return overlap >= Math.max(3, Math.ceil(cartTokens.size * 0.65));
+  });
 }
 
 async function retrieveCatalogContextForChat(input: StorefrontChatRequest) {
@@ -92,7 +139,23 @@ async function retrieveCatalogContextForChat(input: StorefrontChatRequest) {
 
   try {
     const queryEmbedding = await generateEmbedding(`${latestMessage}\nCart: ${cartContextText}`);
-    const similarProducts = await findSimilarProducts(input.shop, queryEmbedding, 5, cartProductIds);
+    const similarProducts = (await findSimilarProducts(input.shop, queryEmbedding, 8, cartProductIds))
+      .filter((product) => !isLikelyAlreadyInCart(product, input.cart.items))
+      .slice(0, 5);
+    rememberCatalogActionCandidates({
+      shop: input.shop,
+      sessionKey: input.sessionKey,
+      candidates: similarProducts
+        .filter((product) => product.shopifyVariantId)
+        .map((product) => ({
+          shopifyProductId: product.shopifyProductId,
+          title: product.title,
+          variantId: product.shopifyVariantId!,
+          ...(product.variantTitle ? { variantTitle: product.variantTitle } : {}),
+          ...(product.variantImageUrl ? { imageUrl: product.variantImageUrl } : {}),
+          ...(product.handle ? { productHandle: product.handle } : {}),
+        })),
+    });
     return similarProducts.length > 0
       ? similarProducts.map(formatCatalogContextProduct)
       : undefined;
@@ -404,9 +467,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const hasCompatibleActionProposals = compatibleActionProposals.length > 0;
   const replyText = hasCompatibleActionProposals ? buildCompatibleActionIntro(latestMessage, compatibleActionProposals.length) : guidanceReply.text;
   const guidanceBlocks = hasCompatibleActionProposals ? [] : guidanceReply.guidanceBlocks;
-  const isCompatibilityDiscoveryMessage = /\b(compatible|compatibles|compatibility|compl[eé]mentaire|compl[eé]mentaires|goes?\s+with|va\s+avec)\b/.test(latestMessage);
-  const shouldBypassLLM = /\b(budget|optimi[sz]|compare|add|remove|swap|quantit|quantity|size|fit|sparring|combat|taille|pratique|adapt[eé]|muay\s*thai|tha[iï]|kick\s*boxing|kickboxing|boxe|boxing|mma)\b/.test(latestMessage);
-  const shouldUseLLM = aiEnabled && (!shouldBypassLLM || isCompatibilityDiscoveryMessage);
+  const shouldBypassLLM = /\b(budget|optimi[sz]|compare|add|remove|swap|quantit|quantity|size|fit|sparring|combat|taille|pratique|adapt[eé]|muay\s*thai|tha[iï]|kick\s*boxing|kickboxing|boxe|boxing|mma|recommend|recommand|suggest|sugg[eè]re|conseil|propose|s['’]?accorde|accorde|va\s+bien|works?\s+well|goes?\s+well)\b/.test(latestMessage);
+  const shouldUseLLM = aiEnabled && !hasCompatibleActionProposals && !shouldBypassLLM;
   const catalogContext = shouldUseLLM
     ? await retrieveCatalogContextForChat(parsed.data)
     : undefined;

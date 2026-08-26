@@ -515,9 +515,13 @@ export interface SimilarProduct {
   shopifyProductId: string;
   title: string;
   description: string | null;
+  handle: string;
   disciplineTags: string[];
   categoryTags: string[];
   productType: string | null;
+  shopifyVariantId: string | null;
+  variantTitle: string | null;
+  variantImageUrl: string | null;
 }
 
 // Returns the top-k products nearest to the query vector using cosine distance (<=>).
@@ -534,13 +538,41 @@ export async function findSimilarProducts(
     : Prisma.empty;
 
   return db.$queryRaw<SimilarProduct[]>`
-    SELECT "shopifyProductId", title, description, "disciplineTags", "categoryTags", "productType"
-    FROM "Product"
-    WHERE shop = ${shop}
-      AND embedding IS NOT NULL
-      AND status = 'ACTIVE'
+    SELECT
+      p."shopifyProductId",
+      p.title,
+      p.description,
+      p.handle,
+      p."disciplineTags",
+      p."categoryTags",
+      p."productType",
+      (
+        SELECT v."shopifyVariantId"
+        FROM "ProductVariant" v
+        WHERE v."productId" = p.id AND COALESCE(v."inventoryQuantity", 0) > 0
+        ORDER BY v."inventoryQuantity" DESC NULLS LAST
+        LIMIT 1
+      ) AS "shopifyVariantId",
+      (
+        SELECT v.title
+        FROM "ProductVariant" v
+        WHERE v."productId" = p.id AND COALESCE(v."inventoryQuantity", 0) > 0
+        ORDER BY v."inventoryQuantity" DESC NULLS LAST
+        LIMIT 1
+      ) AS "variantTitle",
+      (
+        SELECT v."imageUrl"
+        FROM "ProductVariant" v
+        WHERE v."productId" = p.id AND COALESCE(v."inventoryQuantity", 0) > 0
+        ORDER BY v."inventoryQuantity" DESC NULLS LAST
+        LIMIT 1
+      ) AS "variantImageUrl"
+    FROM "Product" p
+    WHERE p.shop = ${shop}
+      AND p.embedding IS NOT NULL
+      AND p.status = 'ACTIVE'
       ${excludeClause}
-    ORDER BY embedding <=> ${literal}::vector
+    ORDER BY p.embedding <=> ${literal}::vector
     LIMIT ${limit}
   `;
 }

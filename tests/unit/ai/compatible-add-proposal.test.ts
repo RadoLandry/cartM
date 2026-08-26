@@ -26,7 +26,7 @@ vi.mock("../../../app/lib/db/queries", async (importOriginal) => {
 
 // ── Imports after mocks ────────────────────────────────────────────────────
 
-import { buildStorefrontChatReply, resolveCompatibleAddActionProposal, resolveCompatibleAddActionProposals } from "../../../app/lib/ai/storefront-chat";
+import { buildStorefrontChatReply, rememberCatalogActionCandidates, resolveCompatibleAddActionProposal, resolveCompatibleAddActionProposals } from "../../../app/lib/ai/storefront-chat";
 import db from "../../../app/db.server";
 import { getActiveRelationshipsForProduct } from "../../../app/lib/db/queries";
 
@@ -82,12 +82,49 @@ const HAND_WRAPS_PRODUCT = {
   ],
 };
 
+const KHAKI_HAND_WRAPS_PRODUCT = {
+  id: "internal-khaki-wraps-id",
+  shopifyProductId: "gid://shopify/Product/188",
+  title: "Bandes de Boxe Venum Kontact Evo Classic - Khaki",
+  handle: "bandes-de-boxe-venum-kontact-evo-classic-khaki",
+  tags: ["boxe", "bandes", "protection", "gants"],
+  disciplineTags: ["boxing"],
+  categoryTags: ["bandes", "protection"],
+  variants: [
+    {
+      id: "internal-variant-khaki-wraps",
+      shopifyVariantId: "gid://shopify/ProductVariant/1881",
+      title: "4 m / Khaki",
+      inventoryQuantity: 8,
+      price: 12.99 as unknown as import("@prisma/client").Prisma.Decimal,
+      imageUrl: "https://cdn.example.com/wraps-khaki.jpg",
+    },
+  ],
+};
+
 const OUT_OF_STOCK_HAND_WRAPS_PRODUCT = {
   ...HAND_WRAPS_PRODUCT,
   variants: HAND_WRAPS_PRODUCT.variants.map((variant) => ({
     ...variant,
     inventoryQuantity: 0,
   })),
+};
+
+const DUPLICATE_GLOVES_PRODUCT = {
+  ...BOXING_GLOVES_PRODUCT,
+  id: "internal-duplicate-gloves-id",
+  shopifyProductId: "gid://shopify/Product/199",
+  title: "Gants de Boxe Venum Impact Evo Scales - Vert Armee",
+  handle: "gants-de-boxe-venum-impact-evo-scales-vert-armee-duplicate",
+  variants: [
+    {
+      id: "internal-variant-duplicate-gloves",
+      shopifyVariantId: "gid://shopify/ProductVariant/1991",
+      title: "8 oz / Vert Armee",
+      inventoryQuantity: 5,
+      imageUrl: "https://cdn.example.com/duplicate-gloves.jpg",
+    },
+  ],
 };
 
 const DRY_TECH_TSHIRT_PRODUCT = {
@@ -416,6 +453,97 @@ describe("resolveCompatibleAddActionProposal", () => {
     expect(proposal?.preview?.productHandle).toBe("bandages-de-boxe-venum-kontact");
   });
 
+  it("proposes a product card for French works-well cart questions", async () => {
+    vi.mocked(getActiveRelationshipsForProduct).mockResolvedValue([]);
+    vi.mocked(db.product.findMany)
+      .mockReset()
+      .mockResolvedValueOnce([
+        {
+          ...BOXING_GLOVES_PRODUCT,
+          status: "ACTIVE",
+          variants: BOXING_GLOVES_PRODUCT.variants.map((variant) => ({
+            ...variant,
+            sizeValue: "8 oz",
+            sizeCategory: "gloves",
+            price: null,
+          })),
+        },
+      ] as never)
+      .mockResolvedValueOnce([KHAKI_HAND_WRAPS_PRODUCT] as never);
+
+    const request = makeStorefrontChatRequest({
+      cart: {
+        cartId: "gid://shopify/Cart/123",
+        currencyCode: "EUR",
+        items: [
+          {
+            lineId: "line-gloves",
+            productId: "gid://shopify/Product/99",
+            productTitle: "Gants de Boxe Venum Impact Evo Scales - Vert Armee",
+            variantId: "gid://shopify/ProductVariant/991",
+            variantTitle: "8 oz / Vert Armee",
+            quantity: 1,
+          },
+        ],
+      },
+      messages: [{ role: "user", content: "Qu'est-ce qui s'accorde bien avec les articles déjà présents dans votre panier ?" }],
+    });
+
+    const proposal = await resolveCompatibleAddActionProposal(request);
+
+    expect(proposal).not.toBeNull();
+    expect(proposal?.toolName).toBe("addToCart");
+    if (proposal?.payload.actionType === "add") {
+      expect(proposal.payload.merchandiseId).toBe("gid://shopify/ProductVariant/1881");
+    }
+    expect(proposal?.preview?.after).toContain("Bandes de Boxe Venum Kontact Evo Classic - Khaki");
+    expect(proposal?.preview?.imageUrl).toBe("https://cdn.example.com/wraps-khaki.jpg");
+    expect(proposal?.preview?.productHandle).toBe("bandes-de-boxe-venum-kontact-evo-classic-khaki");
+  });
+
+  it("does not recommend the same cart product when catalog search returns a duplicate title", async () => {
+    vi.mocked(getActiveRelationshipsForProduct).mockResolvedValue([]);
+    vi.mocked(db.product.findMany)
+      .mockReset()
+      .mockResolvedValueOnce([
+        {
+          ...BOXING_GLOVES_PRODUCT,
+          status: "ACTIVE",
+          variants: BOXING_GLOVES_PRODUCT.variants.map((variant) => ({
+            ...variant,
+            sizeValue: "8 oz",
+            sizeCategory: "gloves",
+            price: null,
+          })),
+        },
+      ] as never)
+      .mockResolvedValueOnce([DUPLICATE_GLOVES_PRODUCT, KHAKI_HAND_WRAPS_PRODUCT] as never);
+
+    const request = makeStorefrontChatRequest({
+      cart: {
+        cartId: "gid://shopify/Cart/123",
+        currencyCode: "EUR",
+        items: [
+          {
+            lineId: "line-gloves",
+            productId: "gid://shopify/Product/99",
+            productTitle: "Gants de Boxe Venum Impact Evo Scales - Vert Armee",
+            variantId: "gid://shopify/ProductVariant/991",
+            variantTitle: "8 oz / Vert Armee",
+            quantity: 1,
+          },
+        ],
+      },
+      messages: [{ role: "user", content: "Qu'est-ce qui s'accorde bien avec les articles déjà présents dans le panier ?" }],
+    });
+
+    const proposals = await resolveCompatibleAddActionProposals(request);
+
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]?.preview?.after).toContain("Bandes de Boxe Venum Kontact Evo Classic - Khaki");
+    expect(proposals[0]?.preview?.after).not.toContain("Gants de Boxe Venum Impact Evo Scales");
+  });
+
   it("uses all cart products for generic compatible discovery when the text reference does not match", async () => {
     vi.mocked(getActiveRelationshipsForProduct).mockResolvedValue([]);
     vi.mocked(db.product.findMany)
@@ -450,6 +578,96 @@ describe("resolveCompatibleAddActionProposal", () => {
     }
     expect(proposal?.preview?.after).toContain("Short de Combat Venum Tempest");
     expect(proposal?.preview?.imageUrl).toBe("https://cdn.example.com/fight-shorts.jpg");
+  });
+
+  it("shows the product recommended in the previous assistant turn", async () => {
+    vi.mocked(getActiveRelationshipsForProduct).mockResolvedValue([]);
+    vi.mocked(db.product.findMany)
+      .mockReset()
+      .mockResolvedValueOnce([FIGHT_SHORTS_PRODUCT] as never);
+
+    const request = makeStorefrontChatRequest({
+      cart: {
+        cartId: "gid://shopify/Cart/123",
+        currencyCode: "EUR",
+        items: [
+          {
+            lineId: "line-gloves",
+            productId: "gid://shopify/Product/99",
+            productTitle: "Gants de Boxe Venum Impact Evo Scales - Vert Armee",
+            variantId: "gid://shopify/ProductVariant/991",
+            variantTitle: "12 oz / Vert Armee",
+            quantity: 1,
+          },
+        ],
+      },
+      messages: [
+        { role: "user", content: "donne moi des shorts qui correspond à ce gants" },
+        { role: "assistant", content: "Pour accompagner vos gants, je vous recommande les Short de Combat Venum Tempest - Noir/Gris." },
+        { role: "user", content: "affiche le moi" },
+      ],
+    });
+
+    const proposal = await resolveCompatibleAddActionProposal(request);
+
+    expect(proposal).not.toBeNull();
+    expect(proposal?.toolName).toBe("addToCart");
+    if (proposal?.payload.actionType === "add") {
+      expect(proposal.payload.merchandiseId).toBe("gid://shopify/ProductVariant/661");
+    }
+    expect(proposal?.preview?.after).toContain("Short de Combat Venum Tempest");
+    expect(proposal?.preview?.imageUrl).toBe("https://cdn.example.com/fight-shorts.jpg");
+    expect(proposal?.preview?.productHandle).toBe("short-de-combat-venum-tempest-noir-gris");
+  });
+
+  it("resolves previous LLM recommendations through remembered catalog product refs before title fallback", async () => {
+    vi.mocked(getActiveRelationshipsForProduct).mockResolvedValue([]);
+    vi.mocked(db.product.findMany).mockReset();
+
+    const request = makeStorefrontChatRequest({
+      cart: {
+        cartId: "gid://shopify/Cart/123",
+        currencyCode: "EUR",
+        items: [
+          {
+            lineId: "line-gloves",
+            productId: "gid://shopify/Product/99",
+            productTitle: "Gants de Boxe Venum Impact Evo Scales - Vert Armee",
+            variantId: "gid://shopify/ProductVariant/991",
+            variantTitle: "12 oz / Vert Armee",
+            quantity: 1,
+          },
+        ],
+      },
+      messages: [
+        { role: "user", content: "donne moi des shorts qui correspond à ce gants" },
+        { role: "assistant", content: "Pour accompagner vos gants, je vous recommande les Shorts de Boxe Venum Impact - Vert Armée." },
+        { role: "user", content: "affiche le moi" },
+      ],
+    });
+
+    rememberCatalogActionCandidates({
+      shop: request.shop,
+      sessionKey: request.sessionKey,
+      candidates: [{
+        shopifyProductId: "gid://shopify/Product/166",
+        title: "Short de Boxe Venum Impact - Vert Armee",
+        variantId: "gid://shopify/ProductVariant/1661",
+        variantTitle: "M / Vert Armee",
+        imageUrl: "https://cdn.example.com/impact-shorts-green.jpg",
+        productHandle: "short-de-boxe-venum-impact-vert-armee",
+      }],
+    });
+
+    const proposal = await resolveCompatibleAddActionProposal(request);
+
+    expect(proposal).not.toBeNull();
+    if (proposal?.payload.actionType === "add") {
+      expect(proposal.payload.merchandiseId).toBe("gid://shopify/ProductVariant/1661");
+    }
+    expect(proposal?.preview?.after).toContain("Short de Boxe Venum Impact - Vert Armee");
+    expect(proposal?.preview?.imageUrl).toBe("https://cdn.example.com/impact-shorts-green.jpg");
+    expect(vi.mocked(db.product.findMany)).not.toHaveBeenCalled();
   });
 
   it("builds catalog recommendations for non-protection cart products", async () => {
