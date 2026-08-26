@@ -25,7 +25,14 @@ import {
   resetSizeChartOverride,
   createCrossSizeMapping,
   deleteCrossSizeMapping,
+  getRelationshipCandidatesForAdmin,
+  getMerchantActiveRelationships,
+  approveRelationship,
+  rejectRelationship,
+  disableRelationship,
+  upsertMerchantRelationship,
   type SizeBreakpointRow,
+  type RelationshipAdminRow,
 } from "../lib/db/queries";
 import { CONFIDENCE_THRESHOLD } from "../lib/knowledge-graph/llm-classifier";
 import { DISCIPLINES, CATEGORIES } from "../lib/knowledge-graph/taxonomy";
@@ -36,8 +43,12 @@ import {
   type ColorCompatibilityRuleRow,
   type VisualAdminRow,
 } from "../lib/knowledge-graph/colorways";
+import {
+  canonicalizePair,
+  getDirectionality,
+} from "../lib/knowledge-graph/relationships";
 import { z } from "zod";
-import { ColorCompatibility } from "@prisma/client";
+import { ColorCompatibility, RelationshipType } from "@prisma/client";
 
 import {
   Page,
@@ -106,6 +117,8 @@ type LoaderData = {
   sizeCharts: SizeChartRow[];
   crossSizeMappings: CrossSizeMappingRow[];
   categoryTags: string[];
+  relationshipCandidates: RelationshipAdminRow[];
+  activeRelationships: RelationshipAdminRow[];
 };
 
 // ---------------------------------------------------------------------------
@@ -115,7 +128,7 @@ type LoaderData = {
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
 
-  const [lowConfidenceProducts, allProducts, rawVisualProfiles, rawCompatibilityRules, rawSizeCharts, rawCrossMappings, categoryTags] = await Promise.all([
+  const [lowConfidenceProducts, allProducts, rawVisualProfiles, rawCompatibilityRules, rawSizeCharts, rawCrossMappings, categoryTags, relationshipCandidates, activeRelationships] = await Promise.all([
     getLowConfidenceProducts(session.shop, CONFIDENCE_THRESHOLD, 50),
     getProductsWithTaxonomy(session.shop, 50),
     listVisualProfilesForReview(session.shop, 50),
@@ -123,6 +136,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     getSizeChartsForShop(session.shop),
     getCrossSizeMappingsForShop(session.shop),
     getDistinctSizeCategoryTagsForShop(session.shop),
+    getRelationshipCandidatesForAdmin(session.shop),
+    getMerchantActiveRelationships(session.shop),
   ]);
 
   const visualProfiles: VisualAdminRow[] = rawVisualProfiles.map((profile) => {
@@ -197,6 +212,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     sizeCharts,
     crossSizeMappings,
     categoryTags,
+    relationshipCandidates,
+    activeRelationships,
   } satisfies LoaderData;
 };
 
@@ -442,6 +459,65 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return { ok: true };
   }
 
+  // T017 — approve-relationship
+  if (intent === "approve-relationship") {
+    const relationshipId = formData.get("relationshipId");
+    if (typeof relationshipId !== "string" || !relationshipId) {
+      return { ok: false, error: "Missing relationshipId" };
+    }
+    await approveRelationship(session.shop, relationshipId);
+    return { ok: true };
+  }
+
+  // T017 — reject-relationship
+  if (intent === "reject-relationship") {
+    const relationshipId = formData.get("relationshipId");
+    if (typeof relationshipId !== "string" || !relationshipId) {
+      return { ok: false, error: "Missing relationshipId" };
+    }
+    await rejectRelationship(session.shop, relationshipId);
+    return { ok: true };
+  }
+
+  // T017 — disable-relationship
+  if (intent === "disable-relationship") {
+    const relationshipId = formData.get("relationshipId");
+    if (typeof relationshipId !== "string" || !relationshipId) {
+      return { ok: false, error: "Missing relationshipId" };
+    }
+    await disableRelationship(session.shop, relationshipId);
+    return { ok: true };
+  }
+
+  // T017 — create-relationship (merchant-authored)
+  if (intent === "create-relationship") {
+    const sourceProductId = formData.get("sourceProductId");
+    const targetProductId = formData.get("targetProductId");
+    const relationshipType = formData.get("relationshipType");
+    if (
+      typeof sourceProductId !== "string" || !sourceProductId ||
+      typeof targetProductId !== "string" || !targetProductId ||
+      typeof relationshipType !== "string" || !relationshipType
+    ) {
+      return { ok: false, error: "Missing required fields" };
+    }
+    const type = relationshipType as RelationshipType;
+    const { sourceProductId: canonSource, targetProductId: canonTarget } = canonicalizePair(
+      sourceProductId,
+      targetProductId,
+      type,
+    );
+    await upsertMerchantRelationship({
+      shop: session.shop,
+      sourceProductId: canonSource,
+      targetProductId: canonTarget,
+      relationshipType: type,
+      directionality: getDirectionality(type),
+      strength: 1.0,
+    });
+    return { ok: true };
+  }
+
   return { ok: false, error: "Unknown intent" };
 };
 
@@ -644,6 +720,129 @@ function SizeChartsTab({
           </BlockStack>
         </Modal.Section>
       </Modal>
+    </BlockStack>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Relationships Tab component (T016)
+// ---------------------------------------------------------------------------
+
+function RelationshipsTab({
+  candidates,
+  activeRelationships,
+}: {
+  candidates: RelationshipAdminRow[];
+  activeRelationships: RelationshipAdminRow[];
+}) {
+  const fetcher = useFetcher();
+  const [toast, setToast] = useState<{ message: string; error?: boolean } | null>(null);
+
+  const submitAction = useCallback(
+    (data: Record<string, string>) => {
+      fetcher.submit(data, { method: "post" });
+    },
+    [fetcher],
+  );
+
+  const candidateRows = candidates.map((r) => [
+    r.sourceProductTitle,
+    r.targetProductTitle,
+    <Badge key={`type-${r.id}`} tone="info">{r.relationshipType}</Badge>,
+    <Badge key={`dir-${r.id}`}>{r.directionality}</Badge>,
+    `${Math.round(r.strength * 100)}%`,
+    <InlineStack key={`act-${r.id}`} gap="200">
+      <Button
+        size="slim"
+        variant="primary"
+        onClick={() => {
+          submitAction({ intent: "approve-relationship", relationshipId: r.id });
+          setToast({ message: "Relationship approved" });
+        }}
+      >
+        Approve
+      </Button>
+      <Button
+        size="slim"
+        tone="critical"
+        onClick={() => {
+          submitAction({ intent: "reject-relationship", relationshipId: r.id });
+          setToast({ message: "Relationship rejected" });
+        }}
+      >
+        Reject
+      </Button>
+    </InlineStack>,
+  ]);
+
+  const activeRows = activeRelationships.map((r) => [
+    r.sourceProductTitle,
+    r.targetProductTitle,
+    <Badge key={`type-${r.id}`} tone="info">{r.relationshipType}</Badge>,
+    <Badge key={`orig-${r.id}`} tone={r.origin === "MERCHANT" ? "success" : "info"}>{r.origin}</Badge>,
+    `${Math.round(r.strength * 100)}%`,
+    <Button
+      key={`dis-${r.id}`}
+      size="slim"
+      tone="critical"
+      onClick={() => {
+        submitAction({ intent: "disable-relationship", relationshipId: r.id });
+        setToast({ message: "Relationship disabled" });
+      }}
+    >
+      Disable
+    </Button>,
+  ]);
+
+  return (
+    <BlockStack gap="400">
+      {toast && (
+        <Toast
+          content={toast.message}
+          error={toast.error}
+          onDismiss={() => setToast(null)}
+        />
+      )}
+
+      <Card>
+        <BlockStack gap="300">
+          <Text variant="headingMd" as="h2">Candidate relationships ({candidates.length})</Text>
+          {candidates.length === 0 ? (
+            <EmptyState
+              heading="No relationship candidates yet"
+              image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
+            >
+              <p>Run a catalog sync to generate relationship candidates.</p>
+            </EmptyState>
+          ) : (
+            <DataTable
+              columnContentTypes={["text", "text", "text", "text", "numeric", "text"]}
+              headings={["Source product", "Target product", "Type", "Directionality", "Strength", "Actions"]}
+              rows={candidateRows}
+            />
+          )}
+        </BlockStack>
+      </Card>
+
+      <Card>
+        <BlockStack gap="300">
+          <Text variant="headingMd" as="h2">Active relationships ({activeRelationships.length})</Text>
+          {activeRelationships.length === 0 ? (
+            <EmptyState
+              heading="No active relationships"
+              image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
+            >
+              <p>Approve candidates above or run a catalog sync to generate relationships.</p>
+            </EmptyState>
+          ) : (
+            <DataTable
+              columnContentTypes={["text", "text", "text", "text", "numeric", "text"]}
+              headings={["Source product", "Target product", "Type", "Origin", "Strength", "Actions"]}
+              rows={activeRows}
+            />
+          )}
+        </BlockStack>
+      </Card>
     </BlockStack>
   );
 }
@@ -962,6 +1161,8 @@ export default function KnowledgeGraphPage() {
     sizeCharts,
     crossSizeMappings,
     categoryTags,
+    relationshipCandidates,
+    activeRelationships,
   } =
     useLoaderData<LoaderData>();
 
@@ -993,6 +1194,10 @@ export default function KnowledgeGraphPage() {
     {
       id: "size-charts",
       content: `Size Charts (${sizeCharts.length})`,
+    },
+    {
+      id: "relationships",
+      content: `Relationships (${relationshipCandidates.length + activeRelationships.length})`,
     },
   ];
 
@@ -1095,6 +1300,11 @@ export default function KnowledgeGraphPage() {
                   sizeCharts={sizeCharts}
                   crossSizeMappings={crossSizeMappings}
                   categoryTags={categoryTags}
+                />
+              ) : selectedTab === 4 ? (
+                <RelationshipsTab
+                  candidates={relationshipCandidates}
+                  activeRelationships={activeRelationships}
                 />
               ) : activeProducts.length === 0 ? (
                 <EmptyState

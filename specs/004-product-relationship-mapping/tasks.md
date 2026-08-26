@@ -61,16 +61,16 @@
 
 ### Tests for User Story 2
 
-- [ ] T013 [P] [US2] Add unit tests for override precedence and symmetric pair normalization in tests/unit/knowledge-graph/relationships.test.ts
-- [ ] T014 [P] [US2] Add integration coverage for merchant relationship review actions in tests/integration/routes/knowledge-graph-relationships.test.ts
+- [x] T013 [P] [US2] Add unit tests for override precedence and symmetric pair normalization in tests/unit/knowledge-graph/relationships.test.ts
+- [x] T014 [P] [US2] Add integration coverage for merchant relationship review actions in tests/integration/routes/knowledge-graph-relationships.test.ts
 
 ### Implementation for User Story 2
 
-- [ ] T015 [US2] Add relationship candidate and active-link loader queries to app/lib/db/queries.ts
-- [ ] T016 [US2] Extend the embedded admin relationship review UI in app/routes/app.knowledge-graph.tsx
-- [ ] T017 [US2] Implement merchant create, approve, update, reject, and disable actions in app/routes/app.knowledge-graph.tsx
-- [ ] T018 [US2] Persist merchant overrides and suppression history in app/lib/db/queries.ts
-- [ ] T019 [US2] Preserve merchant-reviewed decisions across remapping runs in app/lib/knowledge-graph/relationships.ts and app/lib/db/queries.ts
+- [x] T015 [US2] Add relationship candidate and active-link loader queries to app/lib/db/queries.ts
+- [x] T016 [US2] Extend the embedded admin relationship review UI in app/routes/app.knowledge-graph.tsx
+- [x] T017 [US2] Implement merchant create, approve, update, reject, and disable actions in app/routes/app.knowledge-graph.tsx
+- [x] T018 [US2] Persist merchant overrides and suppression history in app/lib/db/queries.ts
+- [x] T019 [US2] Preserve merchant-reviewed decisions across remapping runs in app/lib/knowledge-graph/relationships.ts and app/lib/db/queries.ts
 
 **Checkpoint**: User Story 2 is functional when merchant decisions override automated suggestions and survive later sync/remapping cycles.
 

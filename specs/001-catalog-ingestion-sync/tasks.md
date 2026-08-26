@@ -115,16 +115,16 @@
 
 ### Tests for User Story 4
 
-- [ ] T035 [P] [US4] Add loader tests for sync summary and failure data in tests/integration/routes/app-index-sync-status.test.ts
-- [ ] T036 [P] [US4] Add component tests for sync-status and failure-state rendering in tests/unit/components/admin/sync-status.test.tsx
+- [x] T035 [P] [US4] Add loader tests for sync summary and failure data in tests/integration/routes/app-index-sync-status.test.ts
+- [x] T036 [P] [US4] Add component tests for sync-status and failure-state rendering in tests/unit/components/admin/sync-status.test.tsx
 
 ### Implementation for User Story 4
 
-- [ ] T037 [P] [US4] Add sync-status and failed-product loaders to app/routes/app._index.tsx
-- [ ] T038 [P] [US4] Implement a Polaris sync-status summary card in app/components/admin/SyncStatusCard.tsx
-- [ ] T039 [P] [US4] Implement a Polaris failed-product table with retry-state details in app/components/admin/SyncFailureTable.tsx
-- [ ] T040 [US4] Wire dashboard actions for manual re-sync requests with the single-active-job guard in app/routes/app._index.tsx and app/lib/knowledge-graph/ingestion.ts
-- [ ] T041 [US4] Surface SyncJob progress and permanent-failure details from app/lib/db/queries.ts into app/routes/app._index.tsx
+- [x] T037 [P] [US4] Add sync-status and failed-product loaders to app/routes/app._index.tsx
+- [x] T038 [P] [US4] Implement a Polaris sync-status summary card in app/components/admin/SyncStatusCard.tsx
+- [x] T039 [P] [US4] Implement a Polaris failed-product table with retry-state details in app/components/admin/SyncFailureTable.tsx
+- [x] T040 [US4] Wire dashboard actions for manual re-sync requests with the single-active-job guard in app/routes/app._index.tsx and app/lib/knowledge-graph/ingestion.ts
+- [x] T041 [US4] Surface SyncJob progress and permanent-failure details from app/lib/db/queries.ts into app/routes/app._index.tsx
 
 **Checkpoint**: Merchants can trust the ingestion pipeline because they can inspect status and errors directly in the admin UI.
 
@@ -134,10 +134,10 @@
 
 **Purpose**: Final cleanup and delivery hardening across all stories.
 
-- [ ] T042 [P] Document catalog-sync setup, required environment variables, and operational behavior in README.md
-- [ ] T043 Harden logging and error messages across app/lib/knowledge-graph/ingestion.ts, app/lib/shopify/webhooks.ts, and app/routes/webhooks.products.create.tsx
-- [ ] T044 [P] Reconcile admin dashboard copy and empty states for sync status in app/routes/app._index.tsx and app/components/admin/SyncStatusCard.tsx
-- [ ] T045 Validate the final catalog-sync slice against prisma/schema.prisma, app/lib/**, app/routes/**, and tests/** using `npm run lint` and `npm run typecheck`
+- [x] T042 [P] Document catalog-sync setup, required environment variables, and operational behavior in README.md
+- [x] T043 Harden logging and error messages across app/lib/knowledge-graph/ingestion.ts, app/lib/shopify/webhooks.ts, and app/routes/webhooks.products.create.tsx
+- [x] T044 [P] Reconcile admin dashboard copy and empty states for sync status in app/routes/app._index.tsx and app/components/admin/SyncStatusCard.tsx
+- [x] T045 Validate the final catalog-sync slice against prisma/schema.prisma, app/lib/**, app/routes/**, and tests/** using `npm run lint` and `npm run typecheck`
 
 ---
 

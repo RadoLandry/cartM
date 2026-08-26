@@ -235,3 +235,44 @@ Shopify:
 Internationalization:
 
 - [Internationalizing your app](https://shopify.dev/docs/apps/best-practices/internationalization/getting-started)
+
+---
+
+## CartMind — Catalog Sync
+
+### Required environment variables
+
+| Variable | Description |
+| --- | --- |
+| `DATABASE_URL` | PostgreSQL connection string |
+| `OPENAI_API_KEY` | OpenAI key for embedding generation (optional — falls back to local heuristic) |
+
+### How catalog sync works
+
+1. **Initial full sync**: triggered automatically after app installation. Paginates through all active/published Shopify products, normalises them, generates embeddings, and writes them to the `Product` + `ProductVariant` tables.
+2. **Real-time webhook sync**: `PRODUCTS_CREATE`, `PRODUCTS_UPDATE`, and `PRODUCTS_DELETE` webhooks keep the local catalog up to date after the initial sync.
+3. **Enrichment**: dominant colorway extraction and vector embedding run as part of each upsert. Embedding generation retries up to 3 times before falling back to a deterministic local embedding.
+4. **Relationship generation**: after each full sync, product relationships (complements, alternatives, same-collection, etc.) are generated from catalog evidence and stored as `ProductRelationship` candidates.
+
+### Admin dashboard (Catalog Sync page)
+
+Open the **Dashboard** in the Shopify admin embed to:
+- See the total number of products and variants synced.
+- Inspect the latest sync job status, progress, and failure count.
+- Trigger a manual re-sync (blocked if a sync is already running).
+- Review products that were never successfully synced.
+
+### Knowledge Graph editor
+
+The **Knowledge Graph** page exposes tabs for:
+- **Needs Review / All Products**: taxonomy classification review and manual override.
+- **Colorways**: visual profile review and compatibility rule management.
+- **Size Charts**: breakpoint overrides and cross-size mapping management.
+- **Relationships**: review generated relationship candidates, approve or reject them, disable active relationships, and create merchant-authored links.
+
+### Operational notes
+
+- Only one sync job can run per shop at a time. A concurrent sync attempt is rejected with an error message.
+- Webhook events are deduplicated using the Shopify `X-Shopify-Webhook-Id` header.
+- Partial product failures during a full sync do not abort the whole run; the failure count is tracked on the `SyncJob` record.
+- Merchant-reviewed relationship decisions (approve/reject) are preserved across subsequent catalog sync and remapping runs.

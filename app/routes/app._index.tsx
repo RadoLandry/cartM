@@ -6,18 +6,23 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import {
   countProductsForShop,
   countProductVariantsForShop,
+  getActiveSyncJob,
   getLatestSyncJob,
+  getProductsNotYetSynced,
 } from "../lib/db/queries";
 import { runCatalogSync } from "../lib/knowledge-graph/ingestion";
 import { authenticate } from "../shopify.server";
+import { SyncStatusCard } from "../components/admin/SyncStatusCard";
+import { SyncFailureTable } from "../components/admin/SyncFailureTable";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
 
-  const [latestJob, productCount, variantCount] = await Promise.all([
+  const [latestJob, productCount, variantCount, unsyncedProducts] = await Promise.all([
     getLatestSyncJob(session.shop),
     countProductsForShop(session.shop),
     countProductVariantsForShop(session.shop),
+    getProductsNotYetSynced(session.shop),
   ]);
 
   return {
@@ -30,10 +35,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           status: latestJob.status,
           syncedCount: latestJob.syncedCount,
           failedCount: latestJob.failedCount,
+          totalCount: latestJob.totalCount,
           startedAt: latestJob.startedAt.toISOString(),
           completedAt: latestJob.completedAt?.toISOString() ?? null,
         }
       : null,
+    unsyncedProducts: unsyncedProducts.map((p) => ({
+      productId: p.shopifyProductId,
+      productTitle: p.title,
+      failureReason: "Never synced",
+    })),
   };
 };
 
@@ -44,6 +55,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   if (intent !== "sync-catalog") {
     return { ok: false, error: "Unknown action" };
+  }
+
+  // Single-active-job guard: do not start a new sync while one is running.
+  const activeJob = await getActiveSyncJob(session.shop);
+  if (activeJob) {
+    return { ok: false, error: "A catalog sync is already in progress." };
   }
 
   try {
@@ -61,7 +78,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function Index() {
-  const { shop, productCount, variantCount, latestJob } = useLoaderData<typeof loader>();
+  const { shop, productCount, variantCount, latestJob, unsyncedProducts } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const shopify = useAppBridge();
@@ -75,14 +92,6 @@ export default function Index() {
     fetcher.formMethod === "POST";
   const isBackgroundSyncing = latestJob?.status === "IN_PROGRESS" || latestJob?.status === "PENDING";
   const isSyncing = isSubmittingSync || isBackgroundSyncing || syncRequested;
-  const processedCount = (latestJob?.syncedCount ?? 0) + (latestJob?.failedCount ?? 0);
-  const progressValue = latestJob?.status === "COMPLETED"
-    ? 100
-    : latestJob?.status === "FAILED"
-      ? 100
-      : isBackgroundSyncing
-        ? null
-        : 0;
 
   useEffect(() => {
     if (fetcher.data?.ok && fetcher.data.started && !hasShownStartedToast.current) {
@@ -164,45 +173,27 @@ export default function Index() {
       </s-section>
 
       <s-section heading="Latest sync job">
-        {latestJob ? (
-          <s-stack direction="block" gap="base">
-            <s-stack direction="block" gap="base">
-              <s-paragraph>
-                Progress: {latestJob.status === "COMPLETED"
-                  ? "Completed"
-                  : latestJob.status === "FAILED"
-                    ? "Failed"
-                    : "In progress"}
-              </s-paragraph>
-              <progress
-                aria-label="Catalog sync progress"
-                max={100}
-                {...(progressValue === null ? {} : { value: progressValue })}
-                style={{ width: "100%", height: "0.875rem" }}
-              />
-              <s-paragraph>
-                {latestJob.status === "COMPLETED"
-                  ? `Processed ${processedCount} products.`
-                  : latestJob.status === "FAILED"
-                    ? `Stopped after ${processedCount} processed products.`
-                    : `Processing products... ${processedCount} done so far.`}
-              </s-paragraph>
-            </s-stack>
-            <s-paragraph>Status: {latestJob.status}</s-paragraph>
-            <s-paragraph>Products processed: {latestJob.syncedCount}</s-paragraph>
-            <s-paragraph>Failures: {latestJob.failedCount}</s-paragraph>
-            <s-paragraph>Started: {new Date(latestJob.startedAt).toLocaleString()}</s-paragraph>
-            <s-paragraph>
-              Completed:{" "}
-              {latestJob.completedAt
-                ? new Date(latestJob.completedAt).toLocaleString()
-                : "In progress"}
-            </s-paragraph>
-          </s-stack>
-        ) : (
-          <s-paragraph>No sync job has run yet.</s-paragraph>
-        )}
+        <SyncStatusCard
+          job={latestJob ? {
+            id: latestJob.id,
+            status: latestJob.status as "PENDING" | "IN_PROGRESS" | "COMPLETED" | "FAILED",
+            syncedCount: latestJob.syncedCount,
+            failedCount: latestJob.failedCount,
+            totalCount: latestJob.totalCount,
+            startedAt: latestJob.startedAt,
+            completedAt: latestJob.completedAt,
+          } : null}
+        />
       </s-section>
+
+      {(latestJob?.failedCount ?? 0) > 0 && (
+        <s-section heading="Sync failures">
+          <SyncFailureTable
+            rows={unsyncedProducts}
+            failedCount={latestJob?.failedCount ?? 0}
+          />
+        </s-section>
+      )}
 
       <s-section slot="aside" heading="Recovery">
         <s-paragraph>

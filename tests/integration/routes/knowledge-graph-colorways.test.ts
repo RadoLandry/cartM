@@ -27,6 +27,12 @@ vi.mock("../../../app/lib/db/queries", () => ({
   createCrossSizeMapping: vi.fn(),
   deleteCrossSizeMapping: vi.fn(),
   applyMerchantTaxonomyOverride: vi.fn(),
+  getRelationshipCandidatesForAdmin: vi.fn(),
+  getMerchantActiveRelationships: vi.fn(),
+  approveRelationship: vi.fn(),
+  rejectRelationship: vi.fn(),
+  disableRelationship: vi.fn(),
+  upsertMerchantRelationship: vi.fn(),
 }));
 
 describe("knowledge graph colorways route", () => {
@@ -38,6 +44,8 @@ describe("knowledge graph colorways route", () => {
     vi.mocked(dbQueries.getSizeChartsForShop).mockResolvedValue([] as never);
     vi.mocked(dbQueries.getCrossSizeMappingsForShop).mockResolvedValue([] as never);
     vi.mocked(dbQueries.getDistinctSizeCategoryTagsForShop).mockResolvedValue([] as never);
+    vi.mocked(dbQueries.getRelationshipCandidatesForAdmin).mockResolvedValue([] as never);
+    vi.mocked(dbQueries.getMerchantActiveRelationships).mockResolvedValue([] as never);
   });
 
   it("loads visual profile review rows and compatibility rules", async () => {

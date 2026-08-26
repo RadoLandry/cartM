@@ -24,6 +24,7 @@ import {
   RelationshipStatus,
   RelationshipOrigin,
   EvidenceType,
+  OverrideAction,
   RequirementMatchMode,
   SizeChartSource,
   SizeConflictSeverity,
@@ -4318,4 +4319,222 @@ export async function getActiveAIBehaviorConfigWithFallback(shop: string): Promi
       conversationStarters: [...AIBehaviorDefaultConfig.conversationStarters],
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Sync-status dashboard helpers (Feature 001 — US4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Return products that have never been marked as synced (syncedAt = null).
+ * Used by the admin dashboard to surface un-synced or permanently-failed products.
+ */
+export async function getProductsNotYetSynced(shop: string, take = 50) {
+  return await db.product.findMany({
+    where: { shop, syncedAt: null },
+    select: { id: true, shopifyProductId: true, title: true },
+    orderBy: { createdAt: "desc" },
+    take,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Product Relationship Mapping — admin review helpers (Feature 004 — US2)
+// ---------------------------------------------------------------------------
+
+export interface RelationshipAdminRow {
+  id: string;
+  sourceProductId: string;
+  targetProductId: string;
+  sourceProductTitle: string;
+  targetProductTitle: string;
+  relationshipType: RelationshipType;
+  directionality: RelationshipDirectionality;
+  strength: number;
+  status: RelationshipStatus;
+  origin: RelationshipOrigin;
+  createdAt: Date;
+  reviewedAt: Date | null;
+}
+
+/**
+ * Return candidate relationships for admin review, joined with product titles.
+ * Used by the Relationships tab in the Knowledge Graph editor.
+ */
+export async function getRelationshipCandidatesForAdmin(
+  shop: string,
+  take = 50,
+): Promise<RelationshipAdminRow[]> {
+  const rows = await db.productRelationship.findMany({
+    where: { shop, status: RelationshipStatus.CANDIDATE },
+    orderBy: [{ strength: "desc" }, { createdAt: "desc" }],
+    select: {
+      id: true,
+      sourceProductId: true,
+      targetProductId: true,
+      relationshipType: true,
+      directionality: true,
+      strength: true,
+      status: true,
+      origin: true,
+      createdAt: true,
+      reviewedAt: true,
+    },
+    take,
+  });
+
+  const productIds = [...new Set(rows.flatMap(r => [r.sourceProductId, r.targetProductId]))];
+  const products = await db.product.findMany({
+    where: { id: { in: productIds } },
+    select: { id: true, title: true },
+  });
+  const titleMap = new Map(products.map(p => [p.id, p.title]));
+
+  return rows.map(r => ({
+    ...r,
+    sourceProductTitle: titleMap.get(r.sourceProductId) ?? r.sourceProductId,
+    targetProductTitle: titleMap.get(r.targetProductId) ?? r.targetProductId,
+  }));
+}
+
+/**
+ * Return merchant-authored and auto-approved ACTIVE relationships for admin review.
+ */
+export async function getMerchantActiveRelationships(
+  shop: string,
+  take = 50,
+): Promise<RelationshipAdminRow[]> {
+  const rows = await db.productRelationship.findMany({
+    where: { shop, status: RelationshipStatus.ACTIVE },
+    orderBy: [{ reviewedAt: "desc" }, { createdAt: "desc" }],
+    select: {
+      id: true,
+      sourceProductId: true,
+      targetProductId: true,
+      relationshipType: true,
+      directionality: true,
+      strength: true,
+      status: true,
+      origin: true,
+      createdAt: true,
+      reviewedAt: true,
+    },
+    take,
+  });
+
+  const productIds = [...new Set(rows.flatMap(r => [r.sourceProductId, r.targetProductId]))];
+  const products = await db.product.findMany({
+    where: { id: { in: productIds } },
+    select: { id: true, title: true },
+  });
+  const titleMap = new Map(products.map(p => [p.id, p.title]));
+
+  return rows.map(r => ({
+    ...r,
+    sourceProductTitle: titleMap.get(r.sourceProductId) ?? r.sourceProductId,
+    targetProductTitle: titleMap.get(r.targetProductId) ?? r.targetProductId,
+  }));
+}
+
+/**
+ * Approve a candidate relationship and log the merchant override.
+ * Sets status to ACTIVE, origin to MERCHANT, and records a CREATE/REACTIVATE override.
+ */
+export async function approveRelationship(
+  shop: string,
+  relationshipId: string,
+  createdBy?: string,
+) {
+  return await db.$transaction(async (tx: Prisma.TransactionClient) => {
+    const rel = await tx.productRelationship.update({
+      where: { id: relationshipId, shop },
+      data: {
+        status: RelationshipStatus.ACTIVE,
+        origin: RelationshipOrigin.MERCHANT,
+        reviewedAt: new Date(),
+        updatedAt: new Date(),
+      },
+    });
+
+    await tx.relationshipOverride.create({
+      data: {
+        shop,
+        normalizedPairKey: `${rel.sourceProductId}:${rel.targetProductId}:${rel.relationshipType}`,
+        relationshipType: rel.relationshipType,
+        action: OverrideAction.REACTIVATE,
+        appliedState: { status: RelationshipStatus.ACTIVE },
+        createdBy: createdBy ?? null,
+      },
+    });
+
+    return rel;
+  });
+}
+
+/**
+ * Reject a candidate relationship and log the merchant override.
+ * Sets status to REJECTED, origin to MERCHANT.
+ */
+export async function rejectRelationship(
+  shop: string,
+  relationshipId: string,
+  createdBy?: string,
+) {
+  return await db.$transaction(async (tx: Prisma.TransactionClient) => {
+    const rel = await tx.productRelationship.update({
+      where: { id: relationshipId, shop },
+      data: {
+        status: RelationshipStatus.REJECTED,
+        origin: RelationshipOrigin.MERCHANT,
+        reviewedAt: new Date(),
+        updatedAt: new Date(),
+      },
+    });
+
+    await tx.relationshipOverride.create({
+      data: {
+        shop,
+        normalizedPairKey: `${rel.sourceProductId}:${rel.targetProductId}:${rel.relationshipType}`,
+        relationshipType: rel.relationshipType,
+        action: OverrideAction.REJECT,
+        appliedState: { status: RelationshipStatus.REJECTED },
+        createdBy: createdBy ?? null,
+      },
+    });
+
+    return rel;
+  });
+}
+
+/**
+ * Disable an active relationship and log the merchant override.
+ */
+export async function disableRelationship(
+  shop: string,
+  relationshipId: string,
+  createdBy?: string,
+) {
+  return await db.$transaction(async (tx: Prisma.TransactionClient) => {
+    const rel = await tx.productRelationship.update({
+      where: { id: relationshipId, shop },
+      data: {
+        status: RelationshipStatus.INACTIVE,
+        invalidatedAt: new Date(),
+        updatedAt: new Date(),
+      },
+    });
+
+    await tx.relationshipOverride.create({
+      data: {
+        shop,
+        normalizedPairKey: `${rel.sourceProductId}:${rel.targetProductId}:${rel.relationshipType}`,
+        relationshipType: rel.relationshipType,
+        action: OverrideAction.DISABLE,
+        appliedState: { status: RelationshipStatus.INACTIVE },
+        createdBy: createdBy ?? null,
+      },
+    });
+
+    return rel;
+  });
 }

@@ -5,6 +5,8 @@ import {
   countProductsForShop,
   countProductVariantsForShop,
   getLatestSyncJob,
+  getActiveSyncJob,
+  getProductsNotYetSynced,
 } from "../../../app/lib/db/queries";
 import { runCatalogSync } from "../../../app/lib/knowledge-graph/ingestion";
 
@@ -18,6 +20,8 @@ vi.mock("../../../app/lib/db/queries", () => ({
   countProductsForShop: vi.fn(),
   countProductVariantsForShop: vi.fn(),
   getLatestSyncJob: vi.fn(),
+  getActiveSyncJob: vi.fn(),
+  getProductsNotYetSynced: vi.fn(),
 }));
 
 vi.mock("../../../app/lib/knowledge-graph/ingestion", () => ({
@@ -36,12 +40,15 @@ describe("app._index catalog sync route", () => {
     vi.mocked(countProductsForShop).mockResolvedValueOnce(12);
     vi.mocked(countProductVariantsForShop).mockResolvedValueOnce(18);
     vi.mocked(getLatestSyncJob).mockResolvedValueOnce({
+      id: "job_1",
       status: "FAILED",
       syncedCount: 0,
       failedCount: 0,
+      totalCount: 0,
       startedAt: new Date("2026-05-19T07:46:11.000Z"),
       completedAt: new Date("2026-05-19T07:47:16.000Z"),
     } as any);
+    vi.mocked(getProductsNotYetSynced).mockResolvedValueOnce([]);
 
     const result = await loader({
       request: new Request("http://localhost/app"),
@@ -57,12 +64,15 @@ describe("app._index catalog sync route", () => {
       productCount: 12,
       variantCount: 18,
       latestJob: {
+        id: "job_1",
         status: "FAILED",
         syncedCount: 0,
         failedCount: 0,
+        totalCount: 0,
         startedAt: "2026-05-19T07:46:11.000Z",
         completedAt: "2026-05-19T07:47:16.000Z",
       },
+      unsyncedProducts: [],
     });
   });
 
@@ -72,6 +82,7 @@ describe("app._index catalog sync route", () => {
       admin,
       session: { shop: "test.myshopify.com" },
     } as any);
+    vi.mocked(getActiveSyncJob).mockResolvedValueOnce(null);
     vi.mocked(runCatalogSync).mockResolvedValueOnce(undefined);
 
     const request = new Request("http://localhost/app", {

@@ -28,16 +28,16 @@
 ## Sprint 2 - Admin sync and product relationships
 
 ### Scope execution
-- [ ] Complete feature 001 tasks T035 to T041
-- [ ] Complete feature 004 tasks T013 to T019
-- [ ] Complete feature 001 tasks T042 to T045
+- [x] Complete feature 001 tasks T035 to T041
+- [x] Complete feature 004 tasks T013 to T019
+- [x] Complete feature 001 tasks T042 to T045
 
 ### Quality gate
-- [ ] Run lint
-- [ ] Run typecheck
-- [ ] Run tests integration routes app-index-sync-status
-- [ ] Run tests integration routes knowledge-graph-relationships
-- [ ] Confirm sync dashboard load, error, retry behavior in admin
+- [x] Run lint
+- [x] Run typecheck
+- [x] Run tests integration routes app-index-sync-status
+- [x] Run tests integration routes knowledge-graph-relationships
+- [x] Confirm sync dashboard load, error, retry behavior in admin
 
 ---
 

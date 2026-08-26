@@ -26,6 +26,10 @@ export const KNOWLEDGE_GRAPH_EDITOR_ROUTE_INTENTS = [
   "reset-size-chart-override",
   "create-cross-size-mapping",
   "delete-cross-size-mapping",
+  "approve-relationship",
+  "reject-relationship",
+  "disable-relationship",
+  "create-relationship",
 ] as const;
 
 export function createKnowledgeGraphRouteScaffold(): KnowledgeGraphRouteScaffold {

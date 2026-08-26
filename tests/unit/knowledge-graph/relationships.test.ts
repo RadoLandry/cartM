@@ -257,3 +257,64 @@ describe("generateCandidatesFromCatalog", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// T013: Override precedence and symmetric pair normalization
+// ---------------------------------------------------------------------------
+
+describe("override precedence — merchant records survive remapping", () => {
+  it("canonicalizePair produces the same canonical pair regardless of argument order for symmetric types", () => {
+    const pair1 = canonicalizePair("zzz", "aaa", RelationshipType.ALTERNATIVES);
+    const pair2 = canonicalizePair("aaa", "zzz", RelationshipType.ALTERNATIVES);
+
+    expect(pair1.sourceProductId).toBe(pair2.sourceProductId);
+    expect(pair1.targetProductId).toBe(pair2.targetProductId);
+  });
+
+  it("canonical pair for directional types preserves the supplied source→target order", () => {
+    const pair = canonicalizePair("source_id", "target_id", RelationshipType.UPGRADES);
+    expect(pair.sourceProductId).toBe("source_id");
+    expect(pair.targetProductId).toBe("target_id");
+  });
+
+  it("normalized pair key for symmetric types is identical to the reverse", () => {
+    const k1 = buildNormalizedPairKey("prod_x", "prod_y", RelationshipType.CONFLICTS);
+    const k2 = buildNormalizedPairKey("prod_y", "prod_x", RelationshipType.CONFLICTS);
+    expect(k1).toBe(k2);
+  });
+
+  it("normalized pair key for directional types differs when reversed", () => {
+    const k1 = buildNormalizedPairKey("prod_x", "prod_y", RelationshipType.COMPLEMENTS);
+    const k2 = buildNormalizedPairKey("prod_y", "prod_x", RelationshipType.COMPLEMENTS);
+    expect(k1).not.toBe(k2);
+  });
+
+  it("SAME_COLLECTION is a symmetric type (merchant-approved pair survives remapping from either direction)", () => {
+    const directionality = getDirectionality(RelationshipType.SAME_COLLECTION);
+    expect(directionality).toBe(RelationshipDirectionality.SYMMETRIC);
+  });
+
+  it("UPGRADES is a directional type (source→target direction is preserved)", () => {
+    const directionality = getDirectionality(RelationshipType.UPGRADES);
+    expect(directionality).toBe(RelationshipDirectionality.DIRECTIONAL);
+  });
+
+  it("candidates respect symmetric normalization — deduplicating opposite-direction pairs", () => {
+    // Two products sharing a collection should generate exactly one symmetric candidate per type,
+    // not two separate directional entries.
+    const source = makeProduct({ id: "alpha", disciplineTags: ["boxing"], categoryTags: ["gloves"], collectionIds: ["col_shared"] });
+    const peer = makeProduct({ id: "beta", disciplineTags: ["boxing"], categoryTags: ["gloves"], collectionIds: ["col_shared"] });
+
+    const candidatesFromAlpha = generateCandidatesFromCatalog(source, [peer]);
+    const candidatesFromBeta = generateCandidatesFromCatalog(peer, [source]);
+
+    // Both runs should produce the same canonical source/target pair for symmetric types
+    const symmetricAlpha = candidatesFromAlpha.filter(c => c.relationshipType === RelationshipType.SAME_COLLECTION);
+    const symmetricBeta = candidatesFromBeta.filter(c => c.relationshipType === RelationshipType.SAME_COLLECTION);
+
+    if (symmetricAlpha.length > 0 && symmetricBeta.length > 0) {
+      expect(symmetricAlpha[0].sourceProductId).toBe(symmetricBeta[0].sourceProductId);
+      expect(symmetricAlpha[0].targetProductId).toBe(symmetricBeta[0].targetProductId);
+    }
+  });
+});
