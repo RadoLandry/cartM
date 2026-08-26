@@ -105,11 +105,11 @@
 
 **Purpose**: Final contract alignment, docs update, and end-to-end validation.
 
-- [ ] T032 [P] Align comparison stream contract examples with implemented payload fields in specs/017-product-comparison/contracts/storefront-product-comparison-stream.md
-- [ ] T033 [P] Align follow-up action contract status/error cases with final behavior in specs/017-product-comparison/contracts/storefront-product-comparison-followup-action.md
-- [ ] T034 [P] Align data-source contract with final queried attributes in specs/017-product-comparison/contracts/storefront-product-comparison-data-source.md
-- [ ] T035 Update manual verification and acceptance mapping with implementation notes in specs/017-product-comparison/quickstart.md
-- [ ] T036 Run quickstart validation scenarios and record completion notes in specs/017-product-comparison/quickstart.md
+- [X] T032 [P] Align comparison stream contract examples with implemented payload fields in specs/017-product-comparison/contracts/storefront-product-comparison-stream.md
+- [X] T033 [P] Align follow-up action contract status/error cases with final behavior in specs/017-product-comparison/contracts/storefront-product-comparison-followup-action.md
+- [X] T034 [P] Align data-source contract with final queried attributes in specs/017-product-comparison/contracts/storefront-product-comparison-data-source.md
+- [X] T035 Update manual verification and acceptance mapping with implementation notes in specs/017-product-comparison/quickstart.md
+- [X] T036 Run quickstart validation scenarios and record completion notes in specs/017-product-comparison/quickstart.md
 
 ---
 

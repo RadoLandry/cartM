@@ -145,12 +145,12 @@
 
 **Purpose**: Feature-wide validation, performance checks, documentation alignment, and final cleanup.
 
-- [ ] T053 [P] Add storefront bundle budget and p95 cart-load verification helper for public/storefront/cartmind-chat-app.js in scripts/check-storefront-performance-budget.ts
-- [ ] T054 Update package scripts for storefront bundle budget and p95 cart-load validation in package.json
-- [ ] T055 [P] Document manual storefront, checkout, and bundle validation results in specs/025-shopify-storefront-integration/quickstart.md
-- [ ] T056 Run focused automated validation commands from specs/025-shopify-storefront-integration/quickstart.md
-- [ ] T057 Run Shopify config validation for extension changes using shopify.app.toml, extensions/cart-drawer-block/shopify.extension.toml, extensions/checkout-ui/shopify.extension.toml, extensions/discount-function/shopify.extension.toml, and extensions/cart-transform/shopify.extension.toml
-- [ ] T058 Run final TypeScript and lint validation for changed files using package.json scripts
+- [X] T053 [P] Add storefront bundle budget and p95 cart-load verification helper for public/storefront/cartmind-chat-app.js in scripts/check-storefront-performance-budget.ts
+- [X] T054 Update package scripts for storefront bundle budget and p95 cart-load validation in package.json
+- [X] T055 [P] Document manual storefront, checkout, and bundle validation results in specs/025-shopify-storefront-integration/quickstart.md
+- [X] T056 Run focused automated validation commands from specs/025-shopify-storefront-integration/quickstart.md
+- [X] T057 Run Shopify config validation for extension changes using shopify.app.toml, extensions/cart-drawer-block/shopify.extension.toml, extensions/checkout-ui/shopify.extension.toml, extensions/discount-function/shopify.extension.toml, and extensions/cart-transform/shopify.extension.toml
+- [X] T058 Run final TypeScript and lint validation for changed files using package.json scripts
 
 ---
 

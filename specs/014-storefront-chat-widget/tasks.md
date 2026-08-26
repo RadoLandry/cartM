@@ -78,7 +78,7 @@
 ### Implementation for User Story 2
 
 - [X] T020 [US2] Implement typed guidance block schemas and prompt contracts in app/lib/ai/schemas.ts and app/lib/ai/prompts.ts
-- [ ] T021 [US2] Implement cart-aware chat orchestration and guidance block shaping in app/lib/ai/storefront-chat.ts and app/lib/cart-intelligence/recommendations.ts
+- [X] T021 [US2] Implement cart-aware chat orchestration and guidance block shaping in app/lib/ai/storefront-chat.ts and app/lib/cart-intelligence/recommendations.ts
 - [X] T022 [US2] Implement authenticated streaming chat responses in app/routes/api.ai.chat.tsx
 - [X] T023 [P] [US2] Create structured guidance renderers in storefront-widget/src/components/guidance/RecommendationList.tsx, storefront-widget/src/components/guidance/ComparisonTable.tsx, storefront-widget/src/components/guidance/SizeSummary.tsx, and storefront-widget/src/components/guidance/FallbackNotice.tsx
 - [X] T024 [US2] Wire streamed assistant parts and structured guidance blocks into the thread UI in storefront-widget/src/hooks/useStorefrontChat.ts and storefront-widget/src/components/ChatMessageList.tsx

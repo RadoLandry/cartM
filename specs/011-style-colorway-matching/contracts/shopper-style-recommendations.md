@@ -71,3 +71,105 @@ The payload must return `summary.status = "hidden"` and an empty `opportunities`
 
 - This contract is intentionally shopper-facing and does not expose admin-only fields such as raw extraction summaries.
 - Storefront consumers should render suggestions subtly and should not treat them as blocking errors.
+
+## Example Payloads
+
+### Cohesive cart — no suggestions rendered
+
+```json
+{
+  "summary": {
+    "status": "hidden",
+    "coherenceScore": "0.88",
+    "dominantTheme": {
+      "type": "collection",
+      "key": "mma-fight-kit",
+      "label": "MMA Fight Kit",
+      "confidence": 0.9
+    }
+  },
+  "opportunities": []
+}
+```
+
+### Mixed cart — collection completion opportunity
+
+```json
+{
+  "summary": {
+    "status": "mixed",
+    "coherenceScore": "0.54",
+    "dominantTheme": {
+      "type": "collection",
+      "key": "boxing-sparring-set",
+      "label": "Boxing Sparring Set",
+      "confidence": 0.78
+    },
+    "reason": "Most cart items belong to the Boxing Sparring Set collection. Adding matching headgear would improve visual coherence."
+  },
+  "opportunities": [
+    {
+      "type": "collection_completion",
+      "productId": "gid://shopify/Product/42",
+      "variantId": "gid://shopify/ProductVariant/421",
+      "title": "Boxing Headgear Pro",
+      "confidence": 0.81,
+      "rank": 1,
+      "reasonLabel": "Completes the Boxing Sparring Set look",
+      "projectedCoherenceScore": "0.82",
+      "reasons": [
+        {
+          "reasonType": "same_collection",
+          "confidence": 0.9,
+          "source": "SYSTEM",
+          "message": "Items belong to the same coordinated collection."
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Clashing cart — swap opportunity with merchant override
+
+```json
+{
+  "summary": {
+    "status": "clashing",
+    "coherenceScore": "0.28",
+    "reason": "Cart items span incompatible colorways. Swapping the highlighted item would align your cart."
+  },
+  "opportunities": [
+    {
+      "type": "swap",
+      "productId": "gid://shopify/Product/17",
+      "variantId": "gid://shopify/ProductVariant/171",
+      "title": "Combat Shorts — Black",
+      "confidence": 0.93,
+      "rank": 1,
+      "reasonLabel": "Better colorway match for your kit",
+      "projectedCoherenceScore": "0.71",
+      "reasons": [
+        {
+          "reasonType": "compatible_colorway",
+          "confidence": 0.93,
+          "source": "MERCHANT",
+          "message": "Colorway compatibility rule supports this pairing."
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Ambiguous cart — suppressed (hidden)
+
+```json
+{
+  "summary": {
+    "status": "hidden",
+    "coherenceScore": "0.42"
+  },
+  "opportunities": []
+}
+```

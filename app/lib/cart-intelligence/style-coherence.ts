@@ -87,17 +87,20 @@ function getCompatibilityScore(
   item: CartVisualItem,
   peer: CartVisualItem,
   rules: StyleCompatibilityRule[],
+  ruleLookup?: Map<string, StyleCompatibilityRule>,
 ): { score: number; reason: StyleReason | null } {
   const sourceColorwayKeys = getActiveColorwayKeys(item);
   const targetColorwayKeys = getActiveColorwayKeys(peer);
 
   for (const sourceColorwayKey of sourceColorwayKeys) {
     for (const targetColorwayKey of targetColorwayKeys) {
-      const match = rules.find(
-        (rule) =>
-          rule.sourceColorwayKey === sourceColorwayKey &&
-          rule.targetColorwayKey === targetColorwayKey,
-      );
+      const match = ruleLookup
+        ? ruleLookup.get(`${sourceColorwayKey}|${targetColorwayKey}`)
+        : rules.find(
+            (rule) =>
+              rule.sourceColorwayKey === sourceColorwayKey &&
+              rule.targetColorwayKey === targetColorwayKey,
+          );
       if (match) {
         if (match.compatibility === ColorCompatibility.AVOID) {
           return {
@@ -149,6 +152,15 @@ function getCompatibilityScore(
   return { score: 0.25, reason: null };
 }
 
+function buildCompatibilityRuleLookup(rules: StyleCompatibilityRule[]): Map<string, StyleCompatibilityRule> {
+  const map = new Map<string, StyleCompatibilityRule>();
+  for (const rule of rules) {
+    map.set(`${rule.sourceColorwayKey}|${rule.targetColorwayKey}`, rule);
+  }
+
+  return map;
+}
+
 export function scoreStyleCoherence(input: StyleCoherenceInput): StyleCoherenceResult {
   const { items, compatibilityRules, candidateProducts = [] } = input;
   if (items.length <= 1) {
@@ -160,13 +172,17 @@ export function scoreStyleCoherence(input: StyleCoherenceInput): StyleCoherenceR
     };
   }
 
+  // Pre-index rules once; avoids O(rules) scan per pair comparison
+  const ruleLookup = buildCompatibilityRuleLookup(compatibilityRules);
   const reasons: StyleReason[] = [];
   let pairCount = 0;
   let pairScoreSum = 0;
 
-  for (let index = 0; index < items.length; index += 1) {
-    for (let peerIndex = index + 1; peerIndex < items.length; peerIndex += 1) {
-      const result = getCompatibilityScore(items[index], items[peerIndex], compatibilityRules);
+  // Cap pair evaluation at 15 items to bound O(n²) growth for unexpectedly large carts
+  const scoredItems = items.slice(0, 15);
+  for (let index = 0; index < scoredItems.length; index += 1) {
+    for (let peerIndex = index + 1; peerIndex < scoredItems.length; peerIndex += 1) {
+      const result = getCompatibilityScore(scoredItems[index], scoredItems[peerIndex], compatibilityRules, ruleLookup);
       pairCount += 1;
       pairScoreSum += result.score;
       if (result.reason) {
@@ -179,7 +195,8 @@ export function scoreStyleCoherence(input: StyleCoherenceInput): StyleCoherenceR
   const status = coherenceScore >= 0.7 ? "cohesive" : coherenceScore >= 0.4 ? "mixed" : "clashing";
   const suggestions: StyleSuggestion[] = [];
 
-  if (status !== "cohesive") {
+  // Skip candidate pipeline entirely when no candidates were provided
+  if (status !== "cohesive" && candidateProducts.length > 0) {
     const cartProductIds = new Set(items.map((item) => item.productId));
     const collectionCounts = new Map<string, number>();
     for (const item of items) {

@@ -65,8 +65,8 @@ description: 'Task list for feature implementation'
 
 **Purpose**: Improvements that affect multiple user stories
 
-- [ ] T011 Verify LLM classification limits and Shopify webhook timeout constraints
-- [ ] T012 Finalize validation gates and test checklist
+- [X] T011 Verify LLM classification limits and Shopify webhook timeout constraints
+- [X] T012 Finalize validation gates and test checklist
 
 ## Dependencies & Execution Order
 

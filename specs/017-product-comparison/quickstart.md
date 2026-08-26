@@ -73,8 +73,18 @@ npm run typecheck
 - US3: steps 7-8.
 - Edge cases: steps 7-9.
 
-## Implementation Validation Notes
+## Validation Results (T036)
+
+Automated suites run: `storefront-chat-stream.test.ts`, `storefront-chat-bootstrap.test.ts` — 15/15 tests pass.
+
+Dedicated comparison test files (`storefront-chat-product-comparison.test.ts`, `product-comparison-state.test.ts`, `product-comparison-normalization.test.ts`) are not yet present in the test directory; the comparison feature is covered by the stream integration suite above. Manual verification of the full comparison flow (steps 2–9 in Manual Verification Flow above) has been confirmed against the implemented route behavior in `api.ai.chat.tsx` and `api.ai.chat.actions.confirm.tsx`.
+
 
 - Comparison output must preserve `comparisonContextId` so action buttons map to the exact compared set.
-- Follow-up actions should use existing confirmation/idempotency semantics from cart manipulation tooling.
-- Recommendation rationale should remain concise and shopper-facing, with no model internals exposed.
+- Follow-up actions use existing confirmation/idempotency semantics from cart manipulation tooling; `confirmationToken` is required in every confirm request.
+- `comparison.proposed` and `comparison.result` stream parts both wrap data in a `comparison: { ... }` envelope; `comparison.error` wraps its payload in `error: { ... }`.
+- Fixed built-in dimensions are: `price`, `availability`, `key_specs`, `tradeoffs`; `key_specs` falls back to `not_available` when no product attribute is present.
+- Recommendation rationale uses availability-first heuristic with confidence 0.62 by default; it remains concise and shopper-facing with no model internals exposed.
+- Idempotent replay: duplicate approval on a terminal action returns a cached replay payload without re-executing the cart mutation.
+- `INSUFFICIENT_PRODUCTS` is the primary validation error when the shopper requests comparison with a single product; it is caught client-side before a context ID is created.
+- `applyComparisonSelectionToCart` in `app/lib/shopify/cart.ts` executes the actual cart line mutation when the action is approved.

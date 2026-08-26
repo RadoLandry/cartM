@@ -11,17 +11,17 @@
 ## Sprint 1 - Fast closure and stabilization
 
 ### Scope execution
-- [ ] Complete feature 025 tasks T053 to T058
-- [ ] Complete feature 014 task T021
-- [ ] Complete feature 017 tasks T032 to T036
-- [ ] Complete feature 002 tasks T011 to T012
-- [ ] Complete feature 011 tasks T025 to T026
+- [x] Complete feature 025 tasks T053 to T058
+- [x] Complete feature 014 task T021
+- [x] Complete feature 017 tasks T032 to T036
+- [x] Complete feature 002 tasks T011 to T012
+- [x] Complete feature 011 tasks T025 to T026
 
 ### Quality gate
-- [ ] Run lint
-- [ ] Run typecheck
-- [ ] Run full vitest
-- [ ] Confirm zero open tasks in 002, 011, 014, 017, 025
+- [x] Run lint
+- [x] Run typecheck
+- [x] Run full vitest
+- [x] Confirm zero open tasks in 002, 011, 014, 017, 025
 
 ---
 

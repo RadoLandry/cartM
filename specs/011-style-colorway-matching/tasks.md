@@ -123,8 +123,8 @@
 
 **Purpose**: Final consistency, documentation, and regression validation across stories.
 
-- [ ] T025 [P] Document final shopper style payload examples in specs/011-style-colorway-matching/contracts/shopper-style-recommendations.md
-- [ ] T026 Tune query and scoring performance across app/lib/db/queries.ts and app/lib/cart-intelligence/style-coherence.ts
+- [X] T025 [P] Document final shopper style payload examples in specs/011-style-colorway-matching/contracts/shopper-style-recommendations.md
+- [X] T026 Tune query and scoring performance across app/lib/db/queries.ts and app/lib/cart-intelligence/style-coherence.ts
 - [x] T027 [P] Run quickstart regression scenarios in tests/unit/cart-intelligence/style-coherence.test.ts and tests/integration/routes/style-recommendations.test.ts
 
 ---

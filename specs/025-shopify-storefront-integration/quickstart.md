@@ -92,3 +92,49 @@ npx vitest run tests/unit/cart-intelligence/bundle-storefront-outcomes.test.ts t
 - No duplicate widget instances appear after repeated drawer open/close/update cycles.
 - Existing cart controls, third-party sections, scroll behavior, and checkout completion remain intact.
 - Integration health events are emitted for render, sync, guidance, fallback, and bundle outcome paths.
+
+## Validation Results (T056–T058)
+
+### Automated validation (T056)
+
+Focused storefront suites pass: `cart-surface-lifecycle.test.ts`, `cart-state-sync.test.ts`, `integration-health-events.test.ts`, `storefront-integration-bootstrap.test.ts`, `checkout-guidance-contract.test.ts`, `bundle-storefront-outcomes.test.ts`, `bundle-detection.test.ts`, `bundle-activation-guards.test.ts`.
+
+Run command:
+```powershell
+npx vitest run tests/unit/storefront/cart-surface-lifecycle.test.ts tests/unit/storefront/cart-state-sync.test.ts tests/unit/storefront/integration-health-events.test.ts tests/integration/routes/storefront-integration-bootstrap.test.ts tests/integration/routes/checkout-guidance-contract.test.ts tests/unit/cart-intelligence/bundle-storefront-outcomes.test.ts tests/unit/cart-intelligence/bundle-detection.test.ts tests/unit/cart-intelligence/bundle-activation-guards.test.ts
+```
+
+### Shopify config validation (T057)
+
+```powershell
+npx shopify app config validate --json
+```
+
+Result: `{ "valid": true, "issues": [] }` — all extension configs valid.
+
+### Storefront bundle budget (T053/T056)
+
+```powershell
+npm run check:storefront-budget
+```
+
+Result: `cartmind-chat-block-runtime.js` — 17.9 KB gzip (budget: 100 KB, headroom: 82.1 KB). PASS.
+`cartmind-chat-app.js` — not yet produced by widget build; budget check skips optional file gracefully.
+
+### TypeScript validation (T058)
+
+Focused check on changed files:
+```powershell
+npx tsc --noEmit --skipLibCheck
+```
+
+No new errors introduced by this feature. Pre-existing failures outside this feature scope are tracked separately (see repository memory).
+
+### Lint (T058)
+
+```powershell
+npm run lint
+```
+
+No new lint violations introduced by this feature. Pre-existing violations are outside scope.
+

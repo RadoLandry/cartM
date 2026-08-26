@@ -65,13 +65,16 @@ Disallowed:
 
 ## Failure Modes
 
-- `UNRESOLVED_PRODUCT_REF`: one or more refs do not exist.
-- `UNAVAILABLE_VARIANT`: requested variant not purchasable.
-- `PARTIAL_DATA`: one product fetched with missing required comparison attributes.
+- `INSUFFICIENT_PRODUCTS`: fewer than two products resolve from the requested refs — emits `comparison.error` before result.
+- `UNRESOLVED_PRODUCT_REF`: one or more refs do not exist in the storefront.
+- `UNAVAILABLE_VARIANT`: requested variant not purchasable; downgrade to closest available when policy allows.
+- `PARTIAL_DATA`: one product fetched with missing required comparison attributes; non-critical dimensions omitted when minimum viability is preserved.
 - `UPSTREAM_RATE_LIMIT`: Storefront API throttling.
 
 ## Recovery Expectations
 
-- For unresolved refs: return alternatives guidance to comparison flow.
+- For `INSUFFICIENT_PRODUCTS`: return corrective guidance ("select at least two products") without emitting a result event.
+- For unresolved refs: return `UNRESOLVED_PRODUCT_REF` error with alternatives guidance to the comparison flow.
 - For unavailable variant: downgrade to closest available variant when policy allows, otherwise return actionable error.
 - For partial data: omit non-critical dimensions and continue when minimum comparison viability is preserved.
+- Error codes are the `ProductComparisonErrorSchema` enum; consumers must handle all known codes.
