@@ -24,11 +24,28 @@ Validate that relationship persistence, generation, merchant review, and downstr
 2. Confirm that products with obvious complements or same-collection peers receive relationship candidates.
 3. Open the admin knowledge-graph page and review low-confidence or candidate relationship rows.
 4. Approve one candidate, reject one candidate, and create one merchant-authored relationship.
-5. Request the approved relationship view for the affected product and confirm that only active approved relationships are returned.
+5. Call `getTrustedRelationshipsForProduct` (or `getApprovedRelationshipsForProduct` in queries.ts) for the affected product and confirm that:
+   - Only status=ACTIVE, non-invalidated relationships are returned.
+   - Results are ordered by relationship type priority (COMPLEMENTS → UPGRADES → ALTERNATIVES → CONFLICTS → SAME_COLLECTION) then by strength descending.
+   - The `reviewedAt` field is populated for merchant-approved relationships.
 6. Delete or archive one related product and confirm the approved view no longer exposes invalidated relationships after the next sync cycle.
 
 ## Test Targets
 
-1. Add unit tests for candidate generation, normalization of symmetric vs directional types, and override precedence.
-2. Add integration tests for admin review actions and downstream approved-read filtering.
-3. Add ingestion-path tests confirming relationship invalidation after product deletion or status change.
+1. Unit tests in `tests/unit/knowledge-graph/relationships.test.ts`:
+   - candidate generation, normalization, override precedence, and approved-row structural contract.
+2. Integration tests in `tests/integration/routes/knowledge-graph-relationships.test.ts`:
+   - admin review actions (approve, reject, disable, create).
+   - `getApprovedRelationshipsForProduct` priority ordering, strength filtering, and reviewedAt contract.
+3. Ingestion-path tests in `tests/unit/knowledge-graph/ingestion-webhooks.test.ts`:
+   - `invalidateRelationshipsForProduct` is called on product delete events.
+   - update events do not trigger relationship invalidation.
+4. Route lifecycle tests in `tests/integration/routes/product-webhooks.test.ts`:
+   - duplicate delete events are suppressed.
+   - valid delete events delegate to `handleProductWebhook` which owns the invalidation call.
+
+## Implementation Notes (Sprint 3 — 2026-08-31)
+
+- `getApprovedRelationshipsForProduct` in `app/lib/db/queries.ts` is the approved read-model query with priority ordering and min-strength threshold support.
+- `getTrustedRelationshipsForProduct` and `getTrustedRelationshipsOfType` in `app/lib/knowledge-graph/relationships.ts` are the canonical accessors for cart-intelligence consumers.
+- `generateRelationshipsForShop` was optimized in T027 to collect and deduplicate all candidates in a single pass before persisting, reducing DB round-trips for large shops.

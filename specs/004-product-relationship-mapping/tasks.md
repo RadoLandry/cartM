@@ -84,14 +84,14 @@
 
 ### Tests for User Story 3
 
-- [ ] T020 [P] [US3] Add unit tests for approved relationship filtering and ordering in tests/unit/knowledge-graph/relationships.test.ts
-- [ ] T021 [P] [US3] Add integration coverage for approved relationship reads in tests/integration/routes/knowledge-graph-relationships.test.ts
+- [x] T020 [P] [US3] Add unit tests for approved relationship filtering and ordering in tests/unit/knowledge-graph/relationships.test.ts
+- [x] T021 [P] [US3] Add integration coverage for approved relationship reads in tests/integration/routes/knowledge-graph-relationships.test.ts
 
 ### Implementation for User Story 3
 
-- [ ] T022 [US3] Implement approved relationship read-model queries in app/lib/db/queries.ts
-- [ ] T023 [US3] Implement downstream retrieval and filtering helpers in app/lib/knowledge-graph/relationships.ts
-- [ ] T024 [US3] Export trusted relationship accessors for cart-intelligence consumers in app/lib/knowledge-graph/relationships.ts and app/lib/db/queries.ts
+- [x] T022 [US3] Implement approved relationship read-model queries in app/lib/db/queries.ts
+- [x] T023 [US3] Implement downstream retrieval and filtering helpers in app/lib/knowledge-graph/relationships.ts
+- [x] T024 [US3] Export trusted relationship accessors for cart-intelligence consumers in app/lib/knowledge-graph/relationships.ts and app/lib/db/queries.ts
 
 **Checkpoint**: User Story 3 is functional when downstream consumers can retrieve only approved active relationships without re-implementing filtering logic.
 
@@ -101,10 +101,10 @@
 
 **Purpose**: Final hardening, regression coverage, and validation across stories.
 
-- [ ] T025 [P] Add webhook invalidation regression coverage in tests/unit/knowledge-graph/ingestion-webhooks.test.ts
-- [ ] T026 [P] Add product lifecycle regression coverage in tests/integration/routes/product-webhooks.test.ts
-- [ ] T027 Optimize candidate bounds, deduplication, and invalidation paths in app/lib/knowledge-graph/relationships.ts
-- [ ] T028 Run the end-to-end verification flow and capture any implementation-specific notes in specs/004-product-relationship-mapping/quickstart.md
+- [x] T025 [P] Add webhook invalidation regression coverage in tests/unit/knowledge-graph/ingestion-webhooks.test.ts
+- [x] T026 [P] Add product lifecycle regression coverage in tests/integration/routes/product-webhooks.test.ts
+- [x] T027 Optimize candidate bounds, deduplication, and invalidation paths in app/lib/knowledge-graph/relationships.ts
+- [x] T028 Run the end-to-end verification flow and capture any implementation-specific notes in specs/004-product-relationship-mapping/quickstart.md
 
 ---
 

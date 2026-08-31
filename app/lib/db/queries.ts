@@ -908,6 +908,87 @@ export async function getActiveRelationshipsForProduct(
   return Array.from(byType.values()).flat();
 }
 
+/**
+ * Relationship type priority order for downstream cart-intelligence consumers.
+ * Lower index = higher priority.
+ */
+const RELATIONSHIP_TYPE_PRIORITY: Record<RelationshipType, number> = {
+  [RelationshipType.COMPLEMENTS]: 0,
+  [RelationshipType.UPGRADES]: 1,
+  [RelationshipType.ALTERNATIVES]: 2,
+  [RelationshipType.CONFLICTS]: 3,
+  [RelationshipType.SAME_COLLECTION]: 4,
+};
+
+export interface ApprovedRelationshipRow {
+  id: string;
+  sourceProductId: string;
+  targetProductId: string;
+  relationshipType: RelationshipType;
+  directionality: RelationshipDirectionality;
+  strength: number;
+  origin: RelationshipOrigin;
+  reviewedAt: Date | null;
+}
+
+/**
+ * Read-model query for downstream cart-intelligence consumers.
+ * Returns only ACTIVE, non-invalidated relationships above a minimum strength threshold,
+ * ordered by relationship type priority then strength descending.
+ */
+export async function getApprovedRelationshipsForProduct(
+  shop: string,
+  internalProductId: string,
+  options?: {
+    types?: RelationshipType[];
+    minStrength?: number;
+    limitPerType?: number;
+  },
+): Promise<ApprovedRelationshipRow[]> {
+  const { types, minStrength = 0.3, limitPerType = 10 } = options ?? {};
+
+  const where: Prisma.ProductRelationshipWhereInput = {
+    shop,
+    status: RelationshipStatus.ACTIVE,
+    invalidatedAt: null,
+    strength: { gte: minStrength },
+    OR: [
+      { sourceProductId: internalProductId },
+      { targetProductId: internalProductId },
+    ],
+    ...(types && types.length > 0 ? { relationshipType: { in: types } } : {}),
+  };
+
+  const rows = await db.productRelationship.findMany({
+    where,
+    orderBy: [{ strength: "desc" }],
+    select: {
+      id: true,
+      sourceProductId: true,
+      targetProductId: true,
+      relationshipType: true,
+      directionality: true,
+      strength: true,
+      origin: true,
+      reviewedAt: true,
+    },
+  });
+
+  // Cap per type while preserving priority ordering
+  const byType = new Map<RelationshipType, ApprovedRelationshipRow[]>();
+  for (const row of rows) {
+    const group = byType.get(row.relationshipType) ?? [];
+    if (group.length < limitPerType) {
+      group.push(row);
+      byType.set(row.relationshipType, group);
+    }
+  }
+
+  return Array.from(byType.entries())
+    .sort(([a], [b]) => (RELATIONSHIP_TYPE_PRIORITY[a] ?? 99) - (RELATIONSHIP_TYPE_PRIORITY[b] ?? 99))
+    .flatMap(([, rows]) => rows);
+}
+
 // ---------------------------------------------------------------------------
 // Colorway & Collection Tracking — query helpers
 // ---------------------------------------------------------------------------

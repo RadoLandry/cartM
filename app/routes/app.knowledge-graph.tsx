@@ -76,6 +76,8 @@ import {
   createKnowledgeGraphEditorSnapshot,
   createKnowledgeGraphRouteScaffold,
   KNOWLEDGE_GRAPH_EDITOR_ROUTE_INTENTS,
+  markProductAsReviewed,
+  reflagProductForReview,
 } from "../lib/knowledge-graph/editor";
 
 type TaxonomyProduct = {
@@ -515,6 +517,34 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       directionality: getDirectionality(type),
       strength: 1.0,
     });
+    return { ok: true };
+  }
+
+  // T017 — mark-reviewed: confirm current taxonomy without editing values
+  if (intent === "mark-reviewed") {
+    const shopifyProductId = formData.get("shopifyProductId");
+    const disciplineTagsRaw = formData.get("disciplineTags");
+    const categoryTagsRaw = formData.get("categoryTags");
+    if (
+      typeof shopifyProductId !== "string" || !shopifyProductId ||
+      typeof disciplineTagsRaw !== "string" ||
+      typeof categoryTagsRaw !== "string"
+    ) {
+      return { ok: false, error: "Missing required fields" };
+    }
+    const disciplineTags = JSON.parse(disciplineTagsRaw) as string[];
+    const categoryTags = JSON.parse(categoryTagsRaw) as string[];
+    await markProductAsReviewed(shopifyProductId, disciplineTags, categoryTags);
+    return { ok: true };
+  }
+
+  // T017 — reflag-for-review: put a product back in the review queue
+  if (intent === "reflag-for-review") {
+    const shopifyProductId = formData.get("shopifyProductId");
+    if (typeof shopifyProductId !== "string" || !shopifyProductId) {
+      return { ok: false, error: "Missing shopifyProductId" };
+    }
+    await reflagProductForReview(shopifyProductId);
     return { ok: true };
   }
 
@@ -1280,6 +1310,9 @@ export default function KnowledgeGraphPage() {
           <KnowledgeGraphEditorShell
             scaffold={editorScaffold}
             snapshot={editorSnapshot}
+            reviewItems={lowConfidenceProducts}
+            availableDisciplines={[...new Set(allProducts.flatMap(p => p.disciplineTags))].sort()}
+            availableCategories={categoryTags}
           />
         </Layout.Section>
 

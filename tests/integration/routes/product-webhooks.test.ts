@@ -21,12 +21,12 @@ vi.mock("../../../app/lib/db/queries", () => ({
   markWebhookProcessed: vi.fn().mockResolvedValue(undefined), // kept in mock for route internals
 }));
 
+const getMockRequest = () => new Request("http://localhost/webhooks", { method: "POST" });
+
 describe("Product Webhooks Routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
-
-  const getMockRequest = () => new Request("http://localhost/webhooks", { method: "POST" });
 
   it("should block unauthenticated webhooks (no admin returned)", async () => {
     vi.mocked(authenticate.webhook).mockResolvedValueOnce({
@@ -72,5 +72,53 @@ describe("Product Webhooks Routes", () => {
     
     expect(response.status).toBe(200);
     expect(handleProductWebhook).toHaveBeenCalledWith("test.myshopify.com", { id: "gid://shopify/Product/1" }, "products/delete", admin);
+  });
+});
+
+// T026 — Product lifecycle regression: relationship invalidation contract
+describe("Product lifecycle — relationship invalidation contract", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+  it("handleProductWebhook is invoked for delete events (relationship invalidation delegation)", async () => {
+    const admin = { graphql: vi.fn() };
+
+    vi.mocked(authenticate.webhook).mockResolvedValueOnce({
+      admin,
+      topic: "products/delete",
+      shop: "test.myshopify.com",
+      webhookId: "wh_del_001",
+      payload: { id: "gid://shopify/Product/999" },
+    } as any);
+
+    vi.mocked(createWebhookEvent).mockResolvedValueOnce({ processingStatus: "PENDING" } as any);
+
+    const response = await deleteAction({ request: getMockRequest(), params: {}, context: {} } as unknown as Parameters<typeof deleteAction>[0]);
+
+    expect(response.status).toBe(200);
+    // handleProductWebhook is responsible for calling invalidateRelationshipsForProduct internally
+    expect(handleProductWebhook).toHaveBeenCalledWith(
+      "test.myshopify.com",
+      { id: "gid://shopify/Product/999" },
+      "products/delete",
+      admin,
+    );
+  });
+
+  it("handleProductWebhook is not called for duplicate delete events", async () => {
+    vi.mocked(authenticate.webhook).mockResolvedValueOnce({
+      admin: {} as any,
+      topic: "products/delete",
+      shop: "test.myshopify.com",
+      webhookId: "wh_dup_del",
+      payload: { id: "gid://shopify/Product/999" },
+    } as any);
+
+    vi.mocked(createWebhookEvent).mockResolvedValueOnce({ processingStatus: "DUPLICATE" } as any);
+
+    const response = await deleteAction({ request: getMockRequest(), params: {}, context: {} } as unknown as Parameters<typeof deleteAction>[0]);
+
+    expect(response.status).toBe(200);
+    expect(handleProductWebhook).not.toHaveBeenCalled();
   });
 });

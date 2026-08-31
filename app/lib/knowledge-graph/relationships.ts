@@ -22,9 +22,11 @@ import {
   deactivateRelationshipRule,
   invalidateRelationshipsForProduct,
   getActiveRelationshipsForProduct,
+  getApprovedRelationshipsForProduct,
   getProductSnapshotsForShop,
   type RelationshipCandidate,
   type EvidenceInput,
+  type ApprovedRelationshipRow,
 } from "../db/queries";
 
 // ---------------------------------------------------------------------------
@@ -502,9 +504,55 @@ export async function invalidateRelationshipsForDeletedProduct(
 }
 
 // ---------------------------------------------------------------------------
-// Downstream read helpers (US3 scaffolding — full impl in T023/T024)
+// Downstream read helpers for cart-intelligence consumers (US3 — T023/T024)
 // ---------------------------------------------------------------------------
 
+export type { ApprovedRelationshipRow };
+
+export interface TrustedRelationshipsOptions {
+  /** Relationship types to include. Omit to include all types. */
+  types?: RelationshipType[];
+  /** Minimum strength threshold. Defaults to 0.3. */
+  minStrength?: number;
+  /** Maximum results per relationship type. Defaults to 10. */
+  limitPerType?: number;
+}
+
+/**
+ * Return approved, non-invalidated relationships for `productId` in
+ * priority order (COMPLEMENTS > UPGRADES > ALTERNATIVES > CONFLICTS > SAME_COLLECTION).
+ *
+ * This is the canonical accessor for cart-intelligence consumers. Callers
+ * receive only relationships that passed merchant review or were
+ * auto-generated with ACTIVE status — no filtering logic required downstream.
+ */
+export async function getTrustedRelationshipsForProduct(
+  shop: string,
+  internalProductId: string,
+  options?: TrustedRelationshipsOptions,
+): Promise<ApprovedRelationshipRow[]> {
+  return getApprovedRelationshipsForProduct(shop, internalProductId, options);
+}
+
+/**
+ * Return trusted relationships of a specific type for `productId`.
+ * Convenience wrapper for single-type lookups common in cart intelligence.
+ */
+export async function getTrustedRelationshipsOfType(
+  shop: string,
+  internalProductId: string,
+  type: RelationshipType,
+  minStrength = 0.3,
+  limit = 10,
+): Promise<ApprovedRelationshipRow[]> {
+  return getApprovedRelationshipsForProduct(shop, internalProductId, {
+    types: [type],
+    minStrength,
+    limitPerType: limit,
+  });
+}
+
+/** Re-export the raw active-relationship query for callers that need unfiltered access. */
 export { getActiveRelationshipsForProduct };
 
 // ---------------------------------------------------------------------------
@@ -523,12 +571,25 @@ export async function generateRelationshipsForShop(shop: string): Promise<void> 
     return;
   }
 
+  // Collect all candidates in a single pass to reduce round-trips
+  const allCandidates: RankedCandidate[] = [];
   for (const source of products) {
     const peers = products.filter(p => p.id !== source.id);
-    const candidates = generateCandidatesFromCatalog(source, peers);
-    if (candidates.length > 0) {
-      await persistCandidates(shop, candidates);
+    allCandidates.push(...generateCandidatesFromCatalog(source, peers));
+  }
+
+  // Deduplicate across the full batch before persisting
+  const deduplicated = new Map<string, RankedCandidate>();
+  for (const c of allCandidates) {
+    const key = buildNormalizedPairKey(c.sourceProductId, c.targetProductId, c.relationshipType);
+    const existing = deduplicated.get(key);
+    if (!existing || c.strength > existing.strength) {
+      deduplicated.set(key, c);
     }
+  }
+
+  if (deduplicated.size > 0) {
+    await persistCandidates(shop, Array.from(deduplicated.values()));
   }
 }
 

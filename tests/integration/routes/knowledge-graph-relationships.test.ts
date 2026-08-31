@@ -25,6 +25,7 @@ vi.mock("../../../app/lib/db/queries", () => ({
   upsertCandidateRelationship: vi.fn(),
   invalidateRelationshipsForProduct: vi.fn(),
   getActiveRelationshipsForProduct: vi.fn(),
+  getApprovedRelationshipsForProduct: vi.fn(),
   getCandidateRelationships: vi.fn(),
   approveRelationship: vi.fn(),
   rejectRelationship: vi.fn(),
@@ -331,5 +332,150 @@ describe("merchant decisions survive remapping — override precedence (US2)", (
 
     const result = await dbQueries.upsertCandidateRelationship(candidate, []);
     expect(result).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T021 [US3]: Approved relationship read model — filtering and ordering
+// ---------------------------------------------------------------------------
+
+describe("getApprovedRelationshipsForProduct — basic read (US3)", () => {
+  it("returns ACTIVE relationships for the requested product", async () => {
+    const mockRows = [
+      {
+        id: "rel_c1",
+        sourceProductId: "prod_a",
+        targetProductId: "prod_b",
+        relationshipType: RelationshipType.COMPLEMENTS,
+        directionality: RelationshipDirectionality.DIRECTIONAL,
+        strength: 0.9,
+        origin: RelationshipOrigin.AUTO,
+        reviewedAt: null,
+      },
+    ];
+
+    vi.mocked(dbQueries.getApprovedRelationshipsForProduct).mockResolvedValueOnce(mockRows);
+
+    const rows = await dbQueries.getApprovedRelationshipsForProduct("venum.myshopify.com", "prod_a");
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].relationshipType).toBe(RelationshipType.COMPLEMENTS);
+    expect(rows[0].strength).toBe(0.9);
+  });
+
+  it("returns empty array when no approved relationships exist", async () => {
+    vi.mocked(dbQueries.getApprovedRelationshipsForProduct).mockResolvedValueOnce([]);
+
+    const rows = await dbQueries.getApprovedRelationshipsForProduct("venum.myshopify.com", "prod_unknown");
+
+    expect(rows).toHaveLength(0);
+  });
+});
+
+describe("getApprovedRelationshipsForProduct — type filtering (US3)", () => {
+  it("accepts a types filter and passes it through", async () => {
+    vi.mocked(dbQueries.getApprovedRelationshipsForProduct).mockResolvedValueOnce([]);
+
+    await dbQueries.getApprovedRelationshipsForProduct("venum.myshopify.com", "prod_a", {
+      types: [RelationshipType.COMPLEMENTS],
+    });
+
+    expect(dbQueries.getApprovedRelationshipsForProduct).toHaveBeenCalledWith(
+      "venum.myshopify.com",
+      "prod_a",
+      { types: [RelationshipType.COMPLEMENTS] },
+    );
+  });
+
+  it("accepts a minStrength option and passes it through", async () => {
+    vi.mocked(dbQueries.getApprovedRelationshipsForProduct).mockResolvedValueOnce([]);
+
+    await dbQueries.getApprovedRelationshipsForProduct("venum.myshopify.com", "prod_a", {
+      minStrength: 0.6,
+    });
+
+    expect(dbQueries.getApprovedRelationshipsForProduct).toHaveBeenCalledWith(
+      "venum.myshopify.com",
+      "prod_a",
+      { minStrength: 0.6 },
+    );
+  });
+});
+
+describe("getApprovedRelationshipsForProduct — priority ordering contract (US3)", () => {
+  it("returns COMPLEMENTS before UPGRADES when both are present", async () => {
+    const mockRows = [
+      {
+        id: "rel_u1",
+        sourceProductId: "prod_a",
+        targetProductId: "prod_c",
+        relationshipType: RelationshipType.UPGRADES,
+        directionality: RelationshipDirectionality.DIRECTIONAL,
+        strength: 0.95,
+        origin: RelationshipOrigin.AUTO,
+        reviewedAt: null,
+      },
+      {
+        id: "rel_c1",
+        sourceProductId: "prod_a",
+        targetProductId: "prod_b",
+        relationshipType: RelationshipType.COMPLEMENTS,
+        directionality: RelationshipDirectionality.DIRECTIONAL,
+        strength: 0.7,
+        origin: RelationshipOrigin.MERCHANT,
+        reviewedAt: new Date(),
+      },
+    ];
+    // Simulate the query returning in priority order (COMPLEMENTS first)
+    const orderedRows = [mockRows[1], mockRows[0]];
+    vi.mocked(dbQueries.getApprovedRelationshipsForProduct).mockResolvedValueOnce(orderedRows);
+
+    const rows = await dbQueries.getApprovedRelationshipsForProduct("venum.myshopify.com", "prod_a");
+
+    expect(rows[0].relationshipType).toBe(RelationshipType.COMPLEMENTS);
+    expect(rows[1].relationshipType).toBe(RelationshipType.UPGRADES);
+  });
+});
+
+describe("getApprovedRelationshipsForProduct — reviewedAt field (US3)", () => {
+  it("includes reviewedAt for merchant-approved rows", async () => {
+    const reviewedAt = new Date("2026-06-01T12:00:00Z");
+    vi.mocked(dbQueries.getApprovedRelationshipsForProduct).mockResolvedValueOnce([
+      {
+        id: "rel_m1",
+        sourceProductId: "prod_a",
+        targetProductId: "prod_b",
+        relationshipType: RelationshipType.COMPLEMENTS,
+        directionality: RelationshipDirectionality.DIRECTIONAL,
+        strength: 0.8,
+        origin: RelationshipOrigin.MERCHANT,
+        reviewedAt,
+      },
+    ]);
+
+    const rows = await dbQueries.getApprovedRelationshipsForProduct("venum.myshopify.com", "prod_a");
+
+    expect(rows[0].reviewedAt).toEqual(reviewedAt);
+    expect(rows[0].origin).toBe(RelationshipOrigin.MERCHANT);
+  });
+
+  it("reviewedAt is null for auto-generated rows", async () => {
+    vi.mocked(dbQueries.getApprovedRelationshipsForProduct).mockResolvedValueOnce([
+      {
+        id: "rel_a1",
+        sourceProductId: "prod_a",
+        targetProductId: "prod_b",
+        relationshipType: RelationshipType.SAME_COLLECTION,
+        directionality: RelationshipDirectionality.SYMMETRIC,
+        strength: 0.55,
+        origin: RelationshipOrigin.AUTO,
+        reviewedAt: null,
+      },
+    ]);
+
+    const rows = await dbQueries.getApprovedRelationshipsForProduct("venum.myshopify.com", "prod_a");
+
+    expect(rows[0].reviewedAt).toBeNull();
+    expect(rows[0].origin).toBe(RelationshipOrigin.AUTO);
   });
 });

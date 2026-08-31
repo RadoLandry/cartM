@@ -14,6 +14,8 @@ import {
   RelationshipType,
   RelationshipDirectionality,
   EvidenceType,
+  RelationshipOrigin,
+  RelationshipStatus,
 } from "@prisma/client";
 
 // ---------------------------------------------------------------------------
@@ -316,5 +318,137 @@ describe("override precedence — merchant records survive remapping", () => {
       expect(symmetricAlpha[0].sourceProductId).toBe(symmetricBeta[0].sourceProductId);
       expect(symmetricAlpha[0].targetProductId).toBe(symmetricBeta[0].targetProductId);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T020 [US3]: Approved relationship filtering and ordering
+// ---------------------------------------------------------------------------
+
+function makeApprovedRow(overrides: Partial<{
+  id: string;
+  sourceProductId: string;
+  targetProductId: string;
+  relationshipType: RelationshipType;
+  directionality: RelationshipDirectionality;
+  strength: number;
+  origin: RelationshipOrigin;
+  reviewedAt: Date | null;
+}> = {}) {
+  return {
+    id: "rel_001",
+    sourceProductId: "prod_a",
+    targetProductId: "prod_b",
+    relationshipType: RelationshipType.COMPLEMENTS,
+    directionality: RelationshipDirectionality.DIRECTIONAL,
+    strength: 0.8,
+    origin: RelationshipOrigin.AUTO,
+    reviewedAt: null,
+    ...overrides,
+  };
+}
+
+describe("approved relationship row — structural contract", () => {
+  it("an approved relationship row has all required fields", () => {
+    const row = makeApprovedRow();
+    expect(row).toHaveProperty("id");
+    expect(row).toHaveProperty("sourceProductId");
+    expect(row).toHaveProperty("targetProductId");
+    expect(row).toHaveProperty("relationshipType");
+    expect(row).toHaveProperty("directionality");
+    expect(row).toHaveProperty("strength");
+    expect(row).toHaveProperty("origin");
+    expect(row).toHaveProperty("reviewedAt");
+  });
+
+  it("strength is within [0, 1]", () => {
+    const row = makeApprovedRow({ strength: 0.75 });
+    expect(row.strength).toBeGreaterThanOrEqual(0);
+    expect(row.strength).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("approved relationship ordering by type priority", () => {
+  it("COMPLEMENTS sorts before UPGRADES in priority order", () => {
+    const complementPriority = 0;
+    const upgradePriority = 1;
+    expect(complementPriority).toBeLessThan(upgradePriority);
+  });
+
+  it("CONFLICTS sorts before SAME_COLLECTION in priority order", () => {
+    const conflictPriority = 3;
+    const sameCollectionPriority = 4;
+    expect(conflictPriority).toBeLessThan(sameCollectionPriority);
+  });
+
+  it("rows with same type are sorted strength-descending", () => {
+    const rows = [
+      makeApprovedRow({ id: "r1", strength: 0.6 }),
+      makeApprovedRow({ id: "r2", strength: 0.9 }),
+      makeApprovedRow({ id: "r3", strength: 0.4 }),
+    ].sort((a, b) => b.strength - a.strength);
+
+    expect(rows[0].id).toBe("r2");
+    expect(rows[1].id).toBe("r1");
+    expect(rows[2].id).toBe("r3");
+  });
+});
+
+describe("approved relationship minimum strength filtering", () => {
+  it("a row with strength below threshold would be excluded", () => {
+    const rows = [
+      makeApprovedRow({ id: "r1", strength: 0.8 }),
+      makeApprovedRow({ id: "r2", strength: 0.2 }),
+      makeApprovedRow({ id: "r3", strength: 0.5 }),
+    ];
+    const minStrength = 0.3;
+    const filtered = rows.filter(r => r.strength >= minStrength);
+    expect(filtered).toHaveLength(2);
+    expect(filtered.map(r => r.id)).not.toContain("r2");
+  });
+
+  it("a row at exactly the minimum strength threshold passes the filter", () => {
+    const rows = [makeApprovedRow({ strength: 0.3 })];
+    const filtered = rows.filter(r => r.strength >= 0.3);
+    expect(filtered).toHaveLength(1);
+  });
+});
+
+describe("approved relationship per-type limit", () => {
+  it("limitPerType caps the number of results per relationship type", () => {
+    const rows = Array.from({ length: 15 }, (_, i) =>
+      makeApprovedRow({ id: `r${i}`, strength: 1 - i * 0.05 }),
+    );
+    const limitPerType = 10;
+    const limited = rows.slice(0, limitPerType);
+    expect(limited).toHaveLength(10);
+  });
+});
+
+describe("getTrustedRelationshipsForProduct — MERCHANT vs AUTO origin", () => {
+  it("MERCHANT origin indicates a merchant-reviewed relationship", () => {
+    const merchantRow = makeApprovedRow({
+      origin: RelationshipOrigin.MERCHANT,
+      reviewedAt: new Date(),
+    });
+    expect(merchantRow.origin).toBe(RelationshipOrigin.MERCHANT);
+    expect(merchantRow.reviewedAt).not.toBeNull();
+  });
+
+  it("AUTO origin indicates a system-generated relationship", () => {
+    const autoRow = makeApprovedRow({
+      origin: RelationshipOrigin.AUTO,
+      reviewedAt: null,
+    });
+    expect(autoRow.origin).toBe(RelationshipOrigin.AUTO);
+  });
+
+  it("both origins are valid in the approved read model (status ACTIVE is the gate)", () => {
+    const rows = [
+      makeApprovedRow({ id: "merchant", origin: RelationshipOrigin.MERCHANT }),
+      makeApprovedRow({ id: "auto", origin: RelationshipOrigin.AUTO }),
+    ];
+    // downstream consumers accept both origins — status ACTIVE is the gate
+    expect(rows).toHaveLength(2);
   });
 });

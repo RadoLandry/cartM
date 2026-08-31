@@ -54,13 +54,13 @@
 - [x] T013 [P] [US1] Implement confidence-prioritized review queue query in app/lib/knowledge-graph/editor.ts
 - [x] T014 [P] [US1] Implement classification override upsert flow with precedence metadata in app/lib/knowledge-graph/taxonomy.ts
 - [x] T015 [P] [US1] Implement relationship rule upsert/remove flow with revision control in app/lib/knowledge-graph/relationships.ts
-- [ ] T016 [US1] Implement review-status transition handler (pending to reviewed/reflagged) in app/lib/knowledge-graph/editor.ts
-- [ ] T017 [US1] Implement admin action handlers for queue, override, and relationship mutations in app/routes/app.knowledge-graph.tsx
-- [ ] T018 [US1] Implement Polaris review queue list and filters in app/components/admin/KnowledgeGraphReviewQueue.tsx
-- [ ] T019 [US1] Implement Polaris override/relationship editor panels in app/components/admin/KnowledgeGraphReviewEditor.tsx
-- [ ] T020 [US1] Integrate editor shell with review queue and mutation actions in app/components/admin/KnowledgeGraphEditorShell.tsx
-- [ ] T021 [P] [US1] Add unit tests for queue ordering and override precedence in tests/unit/knowledge-graph-editor/review-queue.test.ts
-- [ ] T022 [P] [US1] Add integration tests for classification/relationship mutation flows in tests/integration/knowledge-graph-editor/review-mutations.test.ts
+- [x] T016 [US1] Implement review-status transition handler (pending to reviewed/reflagged) in app/lib/knowledge-graph/editor.ts
+- [x] T017 [US1] Implement admin action handlers for queue, override, and relationship mutations in app/routes/app.knowledge-graph.tsx
+- [x] T018 [US1] Implement Polaris review queue list and filters in app/components/admin/KnowledgeGraphReviewQueue.tsx
+- [x] T019 [US1] Implement Polaris override/relationship editor panels in app/components/admin/KnowledgeGraphReviewEditor.tsx
+- [x] T020 [US1] Integrate editor shell with review queue and mutation actions in app/components/admin/KnowledgeGraphEditorShell.tsx
+- [x] T021 [P] [US1] Add unit tests for queue ordering and override precedence in tests/unit/knowledge-graph-editor/review-queue.test.ts
+- [x] T022 [P] [US1] Add integration tests for classification/relationship mutation flows in tests/integration/knowledge-graph-editor/review-mutations.test.ts
 
 **Checkpoint**: US1 delivers a fully usable and testable review-and-correct workflow.
 

@@ -38,7 +38,7 @@ vi.mock("../../../app/lib/knowledge-graph/llm-classifier", () => ({
   }),
 }));
 
-import { deleteProduct, upsertProduct, updateProductEmbedding } from "../../../app/lib/db/queries";
+import { deleteProduct, upsertProduct, updateProductEmbedding, invalidateRelationshipsForProduct, findProductByShopifyId } from "../../../app/lib/db/queries";
 import { handleProductWebhook } from "../../../app/lib/knowledge-graph/ingestion";
 
 describe("handleProductWebhook", () => {
@@ -119,5 +119,78 @@ describe("handleProductWebhook", () => {
     );
 
     expect(deleteProduct).toHaveBeenCalledWith("gid://shopify/Product/123");
+  });
+
+  // T025 — relationship invalidation regression
+  it("invalidates relationships when a product is deleted and has an internal record", async () => {
+    // When the internal product exists, invalidation should be called
+    vi.mocked(findProductByShopifyId).mockResolvedValueOnce({ id: "internal_123" } as never);
+    vi.mocked(deleteProduct).mockResolvedValueOnce({ id: "internal_123" } as never);
+
+    await handleProductWebhook(
+      "test.myshopify.com",
+      { id: 123 },
+      "products/delete",
+      admin,
+    );
+
+    expect(invalidateRelationshipsForProduct).toHaveBeenCalledWith(
+      "test.myshopify.com",
+      "internal_123",
+    );
+  });
+
+  it("skips relationship invalidation when the internal product record does not exist", async () => {
+    vi.mocked(findProductByShopifyId).mockResolvedValueOnce(null);
+
+    await handleProductWebhook(
+      "test.myshopify.com",
+      { id: 999 },
+      "products/delete",
+      admin,
+    );
+
+    expect(invalidateRelationshipsForProduct).not.toHaveBeenCalled();
+  });
+
+  it("does not invalidate relationships when a product is created or updated", async () => {
+    admin.graphql.mockResolvedValueOnce({
+      json: async () => ({
+        data: {
+          product: {
+            id: "gid://shopify/Product/456",
+            title: "Test Product",
+            description: "",
+            handle: "test-product",
+            vendor: "Test",
+            productType: "gloves",
+            status: "ACTIVE",
+            tags: [],
+            images: { nodes: [] },
+            collections: { nodes: [] },
+            metafields: { nodes: [] },
+            variants: {
+              nodes: [
+                {
+                  id: "gid://shopify/ProductVariant/789",
+                  title: "Default Title",
+                  price: "50.00",
+                  selectedOptions: [],
+                },
+              ],
+            },
+          },
+        },
+      }),
+    });
+
+    await handleProductWebhook(
+      "test.myshopify.com",
+      { id: 456, admin_graphql_api_id: "gid://shopify/Product/456" },
+      "products/update",
+      admin,
+    );
+
+    expect(invalidateRelationshipsForProduct).not.toHaveBeenCalled();
   });
 });

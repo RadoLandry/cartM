@@ -3,7 +3,7 @@ import type {
   KnowledgeGraphReviewQueueFilters,
   KnowledgeGraphRouteScaffold,
 } from "./editor.types";
-import { getLowConfidenceProducts } from "../db/queries";
+import { getLowConfidenceProducts, applyMerchantTaxonomyOverride } from "../db/queries";
 
 type LowConfidenceProduct = {
   id: string;
@@ -30,6 +30,8 @@ export const KNOWLEDGE_GRAPH_EDITOR_ROUTE_INTENTS = [
   "reject-relationship",
   "disable-relationship",
   "create-relationship",
+  "mark-reviewed",
+  "reflag-for-review",
 ] as const;
 
 export function createKnowledgeGraphRouteScaffold(): KnowledgeGraphRouteScaffold {
@@ -118,4 +120,40 @@ export async function getKnowledgeGraphReviewQueue(
   return filtered.sort(
     (a, b) => (a.classificationConfidence ?? 0) - (b.classificationConfidence ?? 0),
   );
+}
+
+// ---------------------------------------------------------------------------
+// T016 — Review-status transition handlers
+// ---------------------------------------------------------------------------
+
+/**
+ * Mark a product as reviewed by confirming its current taxonomy assignments.
+ * Sets isManuallyClassified = true so the item leaves the low-confidence queue.
+ * The existing discipline/category tags are preserved; call applyMerchantTaxonomyOverride
+ * directly if you also want to change the classification values.
+ */
+export async function markProductAsReviewed(
+  shopifyProductId: string,
+  currentDisciplineTags: string[],
+  currentCategoryTags: string[],
+): Promise<void> {
+  await applyMerchantTaxonomyOverride(shopifyProductId, currentDisciplineTags, currentCategoryTags);
+}
+
+/**
+ * Reflag a product for re-review by resetting its isManuallyClassified flag
+ * and lowering its confidence score so it re-enters the low-confidence queue.
+ *
+ * This does NOT change the discipline/category tags — it only resets the review state.
+ */
+export async function reflagProductForReview(shopifyProductId: string): Promise<void> {
+  const db = (await import("../../db.server")).default;
+  await db.product.updateMany({
+    where: { shopifyProductId },
+    data: {
+      isManuallyClassified: false,
+      classificationConfidence: 0.0,
+      updatedAt: new Date(),
+    },
+  });
 }

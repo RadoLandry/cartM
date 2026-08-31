@@ -44,15 +44,15 @@
 ## Sprint 3 - Downstream relationships and KG editor part 1
 
 ### Scope execution
-- [ ] Complete feature 004 tasks T020 to T028
-- [ ] Complete feature 021 tasks T016 to T022
+- [x] Complete feature 004 tasks T020 to T028
+- [x] Complete feature 021 tasks T016 to T022
 
 ### Quality gate
-- [ ] Run lint
-- [ ] Run typecheck
-- [ ] Run tests integration routes knowledge-graph-relationships
-- [ ] Run tests integration knowledge-graph-editor review-mutations
-- [ ] Confirm approved relationships are available for downstream consumers
+- [x] Run lint
+- [x] Run typecheck
+- [x] Run tests integration routes knowledge-graph-relationships
+- [x] Run tests integration knowledge-graph-editor review-mutations
+- [x] Confirm approved relationships are available for downstream consumers
 
 ---
 
