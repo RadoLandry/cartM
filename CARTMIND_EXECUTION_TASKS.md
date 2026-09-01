@@ -59,16 +59,16 @@
 ## Sprint 4 - KG editor part 2
 
 ### Scope execution
-- [ ] Complete feature 021 tasks T023 to T029
-- [ ] Complete feature 021 tasks T030 to T037
-- [ ] Complete feature 021 tasks T038 to T044
+- [x] Complete feature 021 tasks T023 to T029
+- [x] Complete feature 021 tasks T030 to T037
+- [x] Complete feature 021 tasks T038 to T044
 
 ### Quality gate
-- [ ] Run lint
-- [ ] Run typecheck
-- [ ] Run tests integration knowledge-graph-editor bulk-actions
-- [ ] Run tests integration knowledge-graph-editor propagation-contract
-- [ ] Confirm size mapping CRUD, bulk actions, audit history, propagation checks
+- [x] Run lint
+- [x] Run typecheck
+- [x] Run tests integration knowledge-graph-editor bulk-actions
+- [x] Run tests integration knowledge-graph-editor propagation-contract
+- [x] Confirm size mapping CRUD, bulk actions, audit history, propagation checks
 
 ---
 

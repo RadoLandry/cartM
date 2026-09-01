@@ -74,13 +74,13 @@
 
 ### Implementation for User Story 2
 
-- [ ] T023 [P] [US2] Implement size mapping validation rules and contradiction detection in app/lib/knowledge-graph/sizing.ts
-- [ ] T024 [P] [US2] Implement size mapping upsert/deactivate flows with revision checks in app/lib/knowledge-graph/sizing.ts
-- [ ] T025 [US2] Implement route actions for size mapping CRUD and conflict responses in app/routes/app.knowledge-graph.tsx
-- [ ] T026 [US2] Implement Polaris size mapping management table and editor form in app/components/admin/KnowledgeGraphSizeMappings.tsx
-- [ ] T027 [US2] Integrate size mapping panel state and mutation feedback in app/components/admin/KnowledgeGraphEditorShell.tsx
-- [ ] T028 [P] [US2] Add unit tests for mapping validation and contradiction rejection in tests/unit/knowledge-graph-editor/size-mapping-validation.test.ts
-- [ ] T029 [P] [US2] Add integration tests for size mapping CRUD and rejection semantics in tests/integration/knowledge-graph-editor/size-mapping-actions.test.ts
+- [x] T023 [P] [US2] Implement size mapping validation rules and contradiction detection in app/lib/knowledge-graph/sizing.ts
+- [x] T024 [P] [US2] Implement size mapping upsert/deactivate flows with revision checks in app/lib/knowledge-graph/sizing.ts
+- [x] T025 [US2] Implement route actions for size mapping CRUD and conflict responses in app/routes/app.knowledge-graph.tsx
+- [x] T026 [US2] Implement Polaris size mapping management table and editor form in app/components/admin/KnowledgeGraphSizeMappings.tsx
+- [x] T027 [US2] Integrate size mapping panel state and mutation feedback in app/components/admin/KnowledgeGraphEditorShell.tsx
+- [x] T028 [P] [US2] Add unit tests for mapping validation and contradiction rejection in tests/unit/knowledge-graph-editor/size-mapping-validation.test.ts
+- [x] T029 [P] [US2] Add integration tests for size mapping CRUD and rejection semantics in tests/integration/knowledge-graph-editor/size-mapping-actions.test.ts
 
 **Checkpoint**: US2 adds safe and independently testable size governance without regressing US1.
 
@@ -94,14 +94,14 @@
 
 ### Implementation for User Story 3
 
-- [ ] T030 [P] [US3] Implement bulk target selection resolver with deterministic filter snapshots in app/lib/knowledge-graph/editor.bulk.ts
-- [ ] T031 [P] [US3] Implement preview-hash generation and confirmation guard logic in app/lib/knowledge-graph/editor.bulk.ts
-- [ ] T032 [US3] Implement bulk execution orchestrator with per-record result aggregation in app/lib/knowledge-graph/editor.bulk.ts
-- [ ] T033 [US3] Implement bulk operation route actions for preview, confirm, cancel, and status reads in app/routes/app.knowledge-graph.tsx
-- [ ] T034 [US3] Implement Polaris bulk preview/confirm/cancel UI with result summaries in app/components/admin/KnowledgeGraphBulkOperations.tsx
-- [ ] T035 [US3] Integrate bulk operations panel into editor shell and navigation state in app/components/admin/KnowledgeGraphEditorShell.tsx
-- [ ] T036 [P] [US3] Add unit tests for preview-hash and aggregate status transitions in tests/unit/knowledge-graph-editor/bulk-operations.test.ts
-- [ ] T037 [P] [US3] Add integration tests for confirm/cancel/no-op guarantees in tests/integration/knowledge-graph-editor/bulk-actions.test.ts
+- [x] T030 [P] [US3] Implement bulk target selection resolver with deterministic filter snapshots in app/lib/knowledge-graph/editor.bulk.ts
+- [x] T031 [P] [US3] Implement preview-hash generation and confirmation guard logic in app/lib/knowledge-graph/editor.bulk.ts
+- [x] T032 [US3] Implement bulk execution orchestrator with per-record result aggregation in app/lib/knowledge-graph/editor.bulk.ts
+- [x] T033 [US3] Implement bulk operation route actions for preview, confirm, cancel, and status reads in app/routes/app.knowledge-graph.tsx
+- [x] T034 [US3] Implement Polaris bulk preview/confirm/cancel UI with result summaries in app/components/admin/KnowledgeGraphBulkOperations.tsx
+- [x] T035 [US3] Integrate bulk operations panel into editor shell and navigation state in app/components/admin/KnowledgeGraphEditorShell.tsx
+- [x] T036 [P] [US3] Add unit tests for preview-hash and aggregate status transitions in tests/unit/knowledge-graph-editor/bulk-operations.test.ts
+- [x] T037 [P] [US3] Add integration tests for confirm/cancel/no-op guarantees in tests/integration/knowledge-graph-editor/bulk-actions.test.ts
 
 **Checkpoint**: US3 provides independently testable bulk governance with explicit safety controls.
 
@@ -111,13 +111,13 @@
 
 **Purpose**: Final hardening, observability, propagation checks, and documentation alignment across stories.
 
-- [ ] T038 [P] Implement change-history viewer query and pagination wiring in app/lib/knowledge-graph/editor.ts
-- [ ] T039 Implement Polaris audit trail panel in app/components/admin/KnowledgeGraphAuditTrail.tsx
-- [ ] T040 Implement propagation status metrics and retry-flag logging in app/lib/knowledge-graph/editor.propagation.ts
-- [ ] T041 [P] Add integration test for propagation token and <1 minute visibility contract in tests/integration/knowledge-graph-editor/propagation-contract.test.ts
-- [ ] T042 [P] Add integration test for stale-write conflict handling in tests/integration/knowledge-graph-editor/concurrency-conflict.test.ts
-- [ ] T043 Run quickstart scenario validation and record outcomes in specs/021-knowledge-graph-editor/quickstart.md
-- [ ] T044 Validate contract/design consistency notes in specs/021-knowledge-graph-editor/contracts/knowledge-graph-editor-api-contract.md
+- [x] T038 [P] Implement change-history viewer query and pagination wiring in app/lib/knowledge-graph/editor.ts
+- [x] T039 Implement Polaris audit trail panel in app/components/admin/KnowledgeGraphAuditTrail.tsx
+- [x] T040 Implement propagation status metrics and retry-flag logging in app/lib/knowledge-graph/editor.propagation.ts
+- [x] T041 [P] Add integration test for propagation token and <1 minute visibility contract in tests/integration/knowledge-graph-editor/propagation-contract.test.ts
+- [x] T042 [P] Add integration test for stale-write conflict handling in tests/integration/knowledge-graph-editor/concurrency-conflict.test.ts
+- [x] T043 Run quickstart scenario validation and record outcomes in specs/021-knowledge-graph-editor/quickstart.md
+- [x] T044 Validate contract/design consistency notes in specs/021-knowledge-graph-editor/contracts/knowledge-graph-editor-api-contract.md
 
 ---
 

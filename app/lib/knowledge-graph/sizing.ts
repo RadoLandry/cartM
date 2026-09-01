@@ -3,7 +3,14 @@ import {
   getUnprocessedReturnsByCategoryForShop,
   markReturnRecordsProcessed,
   upsertSizeChart,
+  getCrossSizeMappingById,
+  getCrossSizeMappingsForShop,
+  upsertGovernedCrossSizeMapping,
+  deleteCrossSizeMapping,
+  createKnowledgeGraphChangeLog,
 } from "../db/queries";
+import { KnowledgeGraphChangeAction, KnowledgeGraphEntityType, SizeConflictSeverity } from "@prisma/client";
+import { assertRevisionMatches, type StaleWriteConflict } from "./editor.concurrency";
 
 // Re-export conflict detection so cart intelligence consumers can import
 // from a single knowledge-graph module entry point.
@@ -388,3 +395,185 @@ export async function adjustSizeChartFromReturns(
     processedRecordIds: records.map((r) => r.id),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Governed size mapping CRUD — Knowledge Graph Editor US2 (T023-T024)
+// ---------------------------------------------------------------------------
+
+export interface SizeMappingCandidate {
+  sourceCategoryTag: string;
+  sourceSize: string;
+  targetCategoryTag: string;
+  targetSize: string;
+}
+
+export interface SizeMappingContradiction {
+  field: string;
+  code: string;
+  message: string;
+}
+
+/**
+ * Detect contradictory or ambiguous size-mapping rules before persisting.
+ * - Self-mapping (source category === target category) is always invalid.
+ * - A reciprocal mapping that maps the target size back to a different
+ *   source size than the one being defined creates an ambiguous round-trip
+ *   and is rejected.
+ */
+export function detectSizeMappingContradictions(
+  candidate: SizeMappingCandidate,
+  existingMappings: SizeMappingCandidate[],
+): SizeMappingContradiction[] {
+  const contradictions: SizeMappingContradiction[] = [];
+
+  if (candidate.sourceCategoryTag === candidate.targetCategoryTag) {
+    contradictions.push({
+      field: "targetCategoryTag",
+      code: "SAME_CATEGORY",
+      message: "Source and target category must differ.",
+    });
+  }
+
+  const reciprocalConflict = existingMappings.find(
+    (m) =>
+      m.sourceCategoryTag === candidate.targetCategoryTag &&
+      m.sourceSize === candidate.targetSize &&
+      m.targetCategoryTag === candidate.sourceCategoryTag &&
+      m.targetSize !== candidate.sourceSize,
+  );
+  if (reciprocalConflict) {
+    contradictions.push({
+      field: "targetSize",
+      code: "RECIPROCAL_MISMATCH",
+      message: `Existing mapping ${reciprocalConflict.sourceCategoryTag} ${reciprocalConflict.sourceSize} -> ${reciprocalConflict.targetCategoryTag} ${reciprocalConflict.targetSize} contradicts this rule.`,
+    });
+  }
+
+  return contradictions;
+}
+
+export type GovernedSizeMappingResult =
+  | { ok: true; mapping: Awaited<ReturnType<typeof upsertGovernedCrossSizeMapping>> }
+  | { ok: false; code: "VALIDATION"; contradictions: SizeMappingContradiction[] }
+  | { ok: false; code: "STALE_WRITE"; conflict: StaleWriteConflict };
+
+export interface UpsertGovernedSizeMappingInput {
+  shop: string;
+  actorId?: string;
+  sourceCategoryTag: string;
+  sourceSize: string;
+  targetCategoryTag: string;
+  targetSize: string;
+  severityOnMismatch?: SizeConflictSeverity;
+  /** Revision of the record being edited (server's updatedAt.getTime()); omit for new mappings. */
+  expectedRevision?: number;
+}
+
+/**
+ * Create or update a cross-size mapping rule with contradiction detection,
+ * optimistic-concurrency protection, and audit logging.
+ */
+export async function upsertGovernedSizeMapping(
+  input: UpsertGovernedSizeMappingInput,
+): Promise<GovernedSizeMappingResult> {
+  const candidate: SizeMappingCandidate = {
+    sourceCategoryTag: input.sourceCategoryTag,
+    sourceSize: input.sourceSize,
+    targetCategoryTag: input.targetCategoryTag,
+    targetSize: input.targetSize,
+  };
+
+  const existingMappings = await getCrossSizeMappingsForShop(input.shop);
+  const contradictions = detectSizeMappingContradictions(candidate, existingMappings);
+  if (contradictions.length > 0) {
+    return { ok: false, code: "VALIDATION", contradictions };
+  }
+
+  const existing = existingMappings.find(
+    (m) =>
+      m.sourceCategoryTag === candidate.sourceCategoryTag &&
+      m.sourceSize === candidate.sourceSize &&
+      m.targetCategoryTag === candidate.targetCategoryTag,
+  );
+
+  if (existing && input.expectedRevision !== undefined) {
+    const conflict = assertRevisionMatches(
+      { revision: existing.updatedAt.getTime(), updatedAt: existing.updatedAt },
+      input.expectedRevision,
+    );
+    if (conflict) {
+      return { ok: false, code: "STALE_WRITE", conflict };
+    }
+  }
+
+  const mapping = await upsertGovernedCrossSizeMapping({
+    shop: input.shop,
+    sourceCategoryTag: input.sourceCategoryTag,
+    sourceSize: input.sourceSize,
+    targetCategoryTag: input.targetCategoryTag,
+    targetSize: input.targetSize,
+    severityOnMismatch: input.severityOnMismatch,
+  });
+
+  await createKnowledgeGraphChangeLog({
+    shop: input.shop,
+    actorId: input.actorId,
+    entityType: KnowledgeGraphEntityType.SIZE_MAPPING_RULE,
+    entityId: mapping.id,
+    action: existing ? KnowledgeGraphChangeAction.UPDATE : KnowledgeGraphChangeAction.CREATE,
+    beforeSnapshot: existing ? { ...existing } : null,
+    afterSnapshot: { ...mapping },
+  });
+
+  return { ok: true, mapping };
+}
+
+export interface DeactivateGovernedSizeMappingInput {
+  shop: string;
+  actorId?: string;
+  mappingId: string;
+  expectedRevision?: number;
+}
+
+export type DeactivateGovernedSizeMappingResult =
+  | { ok: true }
+  | { ok: false; code: "NOT_FOUND" }
+  | { ok: false; code: "STALE_WRITE"; conflict: StaleWriteConflict };
+
+/**
+ * Remove a cross-size mapping rule. The schema has no soft-delete flag for
+ * this entity, so deactivation is a hard delete guarded by a revision check
+ * and recorded as a DEACTIVATE change-log entry for auditability.
+ */
+export async function deactivateGovernedSizeMapping(
+  input: DeactivateGovernedSizeMappingInput,
+): Promise<DeactivateGovernedSizeMappingResult> {
+  const existing = await getCrossSizeMappingById(input.mappingId);
+  if (!existing || existing.shop !== input.shop) {
+    return { ok: false, code: "NOT_FOUND" };
+  }
+
+  if (input.expectedRevision !== undefined) {
+    const conflict = assertRevisionMatches(
+      { revision: existing.updatedAt.getTime(), updatedAt: existing.updatedAt },
+      input.expectedRevision,
+    );
+    if (conflict) {
+      return { ok: false, code: "STALE_WRITE", conflict };
+    }
+  }
+
+  await deleteCrossSizeMapping(input.mappingId);
+
+  await createKnowledgeGraphChangeLog({
+    shop: input.shop,
+    actorId: input.actorId,
+    entityType: KnowledgeGraphEntityType.SIZE_MAPPING_RULE,
+    entityId: input.mappingId,
+    action: KnowledgeGraphChangeAction.DEACTIVATE,
+    beforeSnapshot: { ...existing },
+  });
+
+  return { ok: true };
+}
+

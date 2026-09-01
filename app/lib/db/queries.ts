@@ -1812,6 +1812,46 @@ export async function getCrossSizeMappingsForShop(shop: string) {
   });
 }
 
+export async function getCrossSizeMappingById(id: string) {
+  return await db.crossSizeMapping.findUnique({ where: { id } });
+}
+
+/**
+ * Upsert a cross-size mapping keyed on its (shop, sourceCategoryTag, sourceSize,
+ * targetCategoryTag) unique constraint. Used by the governed editor flow which
+ * layers contradiction detection and optimistic-concurrency checks on top of
+ * this primitive (see app/lib/knowledge-graph/sizing.ts).
+ */
+export async function upsertGovernedCrossSizeMapping(data: CreateCrossSizeMappingInput) {
+  const {
+    shop,
+    sourceCategoryTag,
+    sourceSize,
+    targetCategoryTag,
+    targetSize,
+    severityOnMismatch = SizeConflictSeverity.WARNING,
+    source = SizeChartSource.MERCHANT,
+  } = data;
+
+  return await db.crossSizeMapping.upsert({
+    where: {
+      shop_sourceCategoryTag_sourceSize_targetCategoryTag: {
+        shop,
+        sourceCategoryTag,
+        sourceSize,
+        targetCategoryTag,
+      },
+    },
+    update: {
+      targetSize,
+      severityOnMismatch,
+      source,
+      updatedAt: new Date(),
+    },
+    create: { shop, sourceCategoryTag, sourceSize, targetCategoryTag, targetSize, severityOnMismatch, source },
+  });
+}
+
 export async function getDistinctSizeCategoryTagsForShop(shop: string): Promise<string[]> {
   const rows = await db.productVariant.findMany({
     where: { product: { shop }, sizeCategory: { not: null } },
@@ -1931,6 +1971,14 @@ export async function updateKnowledgeGraphBulkOperationStatus(input: {
   });
 }
 
+export async function listKnowledgeGraphBulkOperationsForShop(shop: string, take = 20) {
+  return await db.knowledgeGraphBulkOperation.findMany({
+    where: { shop },
+    orderBy: { createdAt: "desc" },
+    take,
+  });
+}
+
 export async function createKnowledgeGraphChangeLog(input: {
   shop: string;
   actorId?: string | null;
@@ -1971,6 +2019,45 @@ export async function listKnowledgeGraphChangeLogForEntity(input: {
     },
     orderBy: { createdAt: "desc" },
     take: input.take ?? 50,
+  });
+}
+
+export async function listKnowledgeGraphChangeLogPage(input: {
+  shop: string;
+  entityType?: KnowledgeGraphEntityType;
+  take?: number;
+  cursor?: string;
+}) {
+  return await db.knowledgeGraphChangeLog.findMany({
+    where: {
+      shop: input.shop,
+      ...(input.entityType ? { entityType: input.entityType } : {}),
+    },
+    orderBy: { createdAt: "desc" },
+    take: input.take ?? 25,
+    ...(input.cursor ? { skip: 1, cursor: { id: input.cursor } } : {}),
+  });
+}
+
+export async function getKnowledgeGraphBulkOperationById(id: string, shop: string) {
+  return await db.knowledgeGraphBulkOperation.findFirst({ where: { id, shop } });
+}
+
+/**
+ * Minimal product lookup by internal id, used by bulk governance execution
+ * to read current taxonomy tags before computing add/remove diffs.
+ */
+export async function getProductById(id: string) {
+  return await db.product.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      shop: true,
+      shopifyProductId: true,
+      title: true,
+      disciplineTags: true,
+      categoryTags: true,
+    },
   });
 }
 

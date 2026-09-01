@@ -5,6 +5,9 @@ import type {
   KnowledgeGraphRouteScaffold,
 } from "../../lib/knowledge-graph/editor.types";
 import { KnowledgeGraphReviewQueue } from "./KnowledgeGraphReviewQueue";
+import { KnowledgeGraphSizeMappings, type SizeMappingRow } from "./KnowledgeGraphSizeMappings";
+import { KnowledgeGraphBulkOperations } from "./KnowledgeGraphBulkOperations";
+import { KnowledgeGraphAuditTrail, type ChangeHistoryRow } from "./KnowledgeGraphAuditTrail";
 
 type ReviewQueueItem = {
   id: string;
@@ -23,6 +26,8 @@ type KnowledgeGraphEditorShellProps = {
   reviewItems?: ReviewQueueItem[];
   availableDisciplines?: string[];
   availableCategories?: string[];
+  governedSizeMappings?: SizeMappingRow[];
+  changeHistory?: ChangeHistoryRow[];
 };
 
 export function KnowledgeGraphEditorShell({
@@ -31,6 +36,8 @@ export function KnowledgeGraphEditorShell({
   reviewItems = [],
   availableDisciplines = [],
   availableCategories = [],
+  governedSizeMappings = [],
+  changeHistory = [],
 }: KnowledgeGraphEditorShellProps) {
   return (
     <BlockStack gap="400">
@@ -60,6 +67,13 @@ export function KnowledgeGraphEditorShell({
           availableCategories={availableCategories}
         />
       )}
+
+      <KnowledgeGraphSizeMappings mappings={governedSizeMappings} categoryTags={availableCategories} />
+
+      <KnowledgeGraphBulkOperations categoryTags={availableCategories} disciplineTags={availableDisciplines} />
+
+      <KnowledgeGraphAuditTrail entries={changeHistory} />
     </BlockStack>
   );
 }
+

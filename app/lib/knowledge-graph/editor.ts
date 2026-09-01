@@ -3,7 +3,8 @@ import type {
   KnowledgeGraphReviewQueueFilters,
   KnowledgeGraphRouteScaffold,
 } from "./editor.types";
-import { getLowConfidenceProducts, applyMerchantTaxonomyOverride } from "../db/queries";
+import { getLowConfidenceProducts, applyMerchantTaxonomyOverride, listKnowledgeGraphChangeLogPage } from "../db/queries";
+import type { KnowledgeGraphEntityType } from "@prisma/client";
 
 type LowConfidenceProduct = {
   id: string;
@@ -26,6 +27,11 @@ export const KNOWLEDGE_GRAPH_EDITOR_ROUTE_INTENTS = [
   "reset-size-chart-override",
   "create-cross-size-mapping",
   "delete-cross-size-mapping",
+  "upsert-size-mapping-rule",
+  "deactivate-size-mapping-rule",
+  "preview-bulk-operation",
+  "confirm-bulk-operation",
+  "cancel-bulk-operation",
   "approve-relationship",
   "reject-relationship",
   "disable-relationship",
@@ -157,3 +163,51 @@ export async function reflagProductForReview(shopifyProductId: string): Promise<
     },
   });
 }
+
+// ---------------------------------------------------------------------------
+// T038 — Change-history viewer query and pagination wiring
+// ---------------------------------------------------------------------------
+
+export type KnowledgeGraphChangeHistoryEntry = {
+  id: string;
+  actorId: string | null;
+  entityType: KnowledgeGraphEntityType;
+  entityId: string;
+  action: string;
+  beforeSnapshot: unknown;
+  afterSnapshot: unknown;
+  reason: string | null;
+  bulkOperationId: string | null;
+  createdAt: Date;
+};
+
+export type KnowledgeGraphChangeHistoryPage = {
+  entries: KnowledgeGraphChangeHistoryEntry[];
+  nextCursor: string | null;
+};
+
+/**
+ * Paginated change-history feed for the audit trail panel. Pass `entityType`
+ * to scope the feed to a single governance surface (e.g. size mappings).
+ */
+export async function getKnowledgeGraphChangeHistory(
+  shop: string,
+  options: { entityType?: KnowledgeGraphEntityType; take?: number; cursor?: string } = {},
+): Promise<KnowledgeGraphChangeHistoryPage> {
+  const take = options.take ?? 25;
+  const rows = await listKnowledgeGraphChangeLogPage({
+    shop,
+    entityType: options.entityType,
+    take: take + 1,
+    cursor: options.cursor,
+  });
+
+  const hasMore = rows.length > take;
+  const entries = (hasMore ? rows.slice(0, take) : rows) as KnowledgeGraphChangeHistoryEntry[];
+
+  return {
+    entries,
+    nextCursor: hasMore ? entries[entries.length - 1]?.id ?? null : null,
+  };
+}
+

@@ -2,7 +2,6 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import {
   useLoaderData,
   useSubmit,
-  Form,
   useFetcher,
   useRouteError,
   isRouteErrorResponse,
@@ -48,7 +47,7 @@ import {
   getDirectionality,
 } from "../lib/knowledge-graph/relationships";
 import { z } from "zod";
-import { ColorCompatibility, RelationshipType } from "@prisma/client";
+import { ColorCompatibility, RelationshipType, KnowledgeGraphBulkOperationType } from "@prisma/client";
 
 import {
   Page,
@@ -78,7 +77,25 @@ import {
   KNOWLEDGE_GRAPH_EDITOR_ROUTE_INTENTS,
   markProductAsReviewed,
   reflagProductForReview,
+  getKnowledgeGraphChangeHistory,
 } from "../lib/knowledge-graph/editor";
+import {
+  UpsertSizeMappingRuleSchema,
+  DeactivateSizeMappingRuleSchema,
+  PreviewBulkOperationSchema,
+  ConfirmBulkOperationSchema,
+  CancelBulkOperationSchema,
+} from "../lib/knowledge-graph/editor.validation";
+import {
+  upsertGovernedSizeMapping,
+  deactivateGovernedSizeMapping,
+} from "../lib/knowledge-graph/sizing";
+import {
+  previewBulkOperation,
+  confirmBulkOperation,
+  cancelBulkOperation,
+  executeBulkOperation,
+} from "../lib/knowledge-graph/editor.bulk";
 
 type TaxonomyProduct = {
   id: string;
@@ -110,6 +127,18 @@ type CrossSizeMappingRow = {
   source: string;
 };
 
+type GovernedSizeMappingRow = CrossSizeMappingRow & { revision: number };
+
+type ChangeHistoryRowData = {
+  id: string;
+  actorId: string | null;
+  entityType: string;
+  entityId: string;
+  action: string;
+  reason: string | null;
+  createdAt: string;
+};
+
 type LoaderData = {
   lowConfidenceProducts: TaxonomyProduct[];
   allProducts: TaxonomyProduct[];
@@ -118,6 +147,8 @@ type LoaderData = {
   compatibilityRules: ColorCompatibilityRuleRow[];
   sizeCharts: SizeChartRow[];
   crossSizeMappings: CrossSizeMappingRow[];
+  governedSizeMappings: GovernedSizeMappingRow[];
+  changeHistory: ChangeHistoryRowData[];
   categoryTags: string[];
   relationshipCandidates: RelationshipAdminRow[];
   activeRelationships: RelationshipAdminRow[];
@@ -130,7 +161,7 @@ type LoaderData = {
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
 
-  const [lowConfidenceProducts, allProducts, rawVisualProfiles, rawCompatibilityRules, rawSizeCharts, rawCrossMappings, categoryTags, relationshipCandidates, activeRelationships] = await Promise.all([
+  const [lowConfidenceProducts, allProducts, rawVisualProfiles, rawCompatibilityRules, rawSizeCharts, rawCrossMappings, categoryTags, relationshipCandidates, activeRelationships, changeHistoryPage] = await Promise.all([
     getLowConfidenceProducts(session.shop, CONFIDENCE_THRESHOLD, 50),
     getProductsWithTaxonomy(session.shop, 50),
     listVisualProfilesForReview(session.shop, 50),
@@ -140,6 +171,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     getDistinctSizeCategoryTagsForShop(session.shop),
     getRelationshipCandidatesForAdmin(session.shop),
     getMerchantActiveRelationships(session.shop),
+    getKnowledgeGraphChangeHistory(session.shop, { take: 25 }),
   ]);
 
   const visualProfiles: VisualAdminRow[] = rawVisualProfiles.map((profile) => {
@@ -205,6 +237,27 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     source: m.source,
   }));
 
+  const governedSizeMappings: GovernedSizeMappingRow[] = rawCrossMappings.map((m) => ({
+    id: m.id,
+    sourceCategoryTag: m.sourceCategoryTag,
+    sourceSize: m.sourceSize,
+    targetCategoryTag: m.targetCategoryTag,
+    targetSize: m.targetSize,
+    severityOnMismatch: m.severityOnMismatch,
+    source: m.source,
+    revision: m.updatedAt.getTime(),
+  }));
+
+  const changeHistory: ChangeHistoryRowData[] = changeHistoryPage.entries.map((entry) => ({
+    id: entry.id,
+    actorId: entry.actorId,
+    entityType: entry.entityType,
+    entityId: entry.entityId,
+    action: entry.action,
+    reason: entry.reason,
+    createdAt: entry.createdAt.toISOString(),
+  }));
+
   return {
     lowConfidenceProducts,
     allProducts,
@@ -213,6 +266,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     compatibilityRules,
     sizeCharts,
     crossSizeMappings,
+    governedSizeMappings,
+    changeHistory,
     categoryTags,
     relationshipCandidates,
     activeRelationships,
@@ -458,6 +513,89 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const parsed = DeleteMappingSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, error: parsed.error.message };
     await deleteCrossSizeMapping(parsed.data.mappingId);
+    return { ok: true };
+  }
+
+  // T025 — upsert-size-mapping-rule (governed: contradiction + revision checks)
+  if (intent === "upsert-size-mapping-rule") {
+    const raw = {
+      sourceCategoryTag: formData.get("sourceCategoryTag"),
+      sourceSize: formData.get("sourceSize"),
+      targetCategoryTag: formData.get("targetCategoryTag"),
+      targetSize: formData.get("targetSize"),
+      severityOnMismatch: formData.get("severityOnMismatch") ?? "WARNING",
+      expectedRevision: formData.get("expectedRevision")
+        ? Number(formData.get("expectedRevision"))
+        : undefined,
+    };
+    const parsed = UpsertSizeMappingRuleSchema.safeParse(raw);
+    if (!parsed.success) {
+      return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    }
+    const result = await upsertGovernedSizeMapping({ shop: session.shop, actorId: session.shop, ...parsed.data });
+    if (!result.ok) {
+      if (result.code === "VALIDATION") {
+        return { ok: false, error: result.contradictions[0]?.message, contradictions: result.contradictions };
+      }
+      return { ok: false, error: result.conflict.message, conflict: result.conflict };
+    }
+    return { ok: true };
+  }
+
+  // T025 — deactivate-size-mapping-rule (governed: revision-checked delete + audit log)
+  if (intent === "deactivate-size-mapping-rule") {
+    const raw = {
+      mappingId: formData.get("mappingId"),
+      expectedRevision: formData.get("expectedRevision")
+        ? Number(formData.get("expectedRevision"))
+        : undefined,
+    };
+    const parsed = DeactivateSizeMappingRuleSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    const result = await deactivateGovernedSizeMapping({ shop: session.shop, actorId: session.shop, ...parsed.data });
+    if (!result.ok) {
+      if (result.code === "NOT_FOUND") return { ok: false, error: "Mapping not found" };
+      return { ok: false, error: result.conflict.message, conflict: result.conflict };
+    }
+    return { ok: true };
+  }
+
+  // T033 — preview-bulk-operation
+  if (intent === "preview-bulk-operation") {
+    const raw = {
+      operationType: formData.get("operationType"),
+      filter: JSON.parse(String(formData.get("filter") ?? "{}")),
+      changePayload: JSON.parse(String(formData.get("changePayload") ?? "{}")),
+    };
+    const parsed = PreviewBulkOperationSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    const result = await previewBulkOperation({
+      shop: session.shop,
+      operationType: parsed.data.operationType as KnowledgeGraphBulkOperationType,
+      filter: parsed.data.filter,
+      changePayload: parsed.data.changePayload,
+      initiatedBy: session.shop,
+    });
+    return result;
+  }
+
+  // T033 — confirm-bulk-operation (confirms then executes synchronously)
+  if (intent === "confirm-bulk-operation") {
+    const raw = { operationId: formData.get("operationId"), previewHash: formData.get("previewHash") };
+    const parsed = ConfirmBulkOperationSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    const confirmResult = await confirmBulkOperation({ shop: session.shop, ...parsed.data });
+    if (!confirmResult.ok) return { ok: false, error: `Unable to confirm operation (${confirmResult.code})` };
+    return await executeBulkOperation({ shop: session.shop, operationId: confirmResult.operationId, actorId: session.shop });
+  }
+
+  // T033 — cancel-bulk-operation (guarantees no persisted product changes)
+  if (intent === "cancel-bulk-operation") {
+    const raw = { operationId: formData.get("operationId") };
+    const parsed = CancelBulkOperationSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    const result = await cancelBulkOperation({ shop: session.shop, ...parsed.data });
+    if (!result.ok) return { ok: false, error: `Unable to cancel operation (${result.code})` };
     return { ok: true };
   }
 
@@ -1190,6 +1328,8 @@ export default function KnowledgeGraphPage() {
     compatibilityRules,
     sizeCharts,
     crossSizeMappings,
+    governedSizeMappings,
+    changeHistory,
     categoryTags,
     relationshipCandidates,
     activeRelationships,
@@ -1313,6 +1453,8 @@ export default function KnowledgeGraphPage() {
             reviewItems={lowConfidenceProducts}
             availableDisciplines={[...new Set(allProducts.flatMap(p => p.disciplineTags))].sort()}
             availableCategories={categoryTags}
+            governedSizeMappings={governedSizeMappings}
+            changeHistory={changeHistory}
           />
         </Layout.Section>
 

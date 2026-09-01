@@ -64,3 +64,17 @@ Expected result:
 - All mutation boundaries enforce server-side validation.
 - Audit trail is complete and operator-readable.
 - Propagation delay remains within defined bound.
+
+## Outcomes (T043)
+
+Validated automatically via focused Vitest suites (service-layer, no live Shopify session available in this environment):
+
+- **Scenario 3 (rule rejection)** — `tests/integration/knowledge-graph-editor/size-mapping-actions.test.ts` confirms contradictory size-mapping rules (self-mapping, reciprocal mismatch) are rejected with structured `{ field, code, message }` errors and never reach persistence (`upsertGovernedCrossSizeMapping` is not called).
+- **Scenario 4 (bulk operation safety)** — `tests/integration/knowledge-graph-editor/bulk-actions.test.ts` confirms the preview → confirm → execute lifecycle (status transitions PREVIEWED → CONFIRMED → RUNNING → COMPLETED/PARTIAL, per-record outcomes returned) and that preview → cancel never applies product mutations.
+- **Scenario 5 (optimistic concurrency conflict)** — `tests/integration/knowledge-graph-editor/concurrency-conflict.test.ts` confirms a stale `expectedRevision` on size-mapping upsert/deactivate returns a `STALE_WRITE` conflict carrying the server's current revision, with no persisted mutation.
+- **Scenario 6 (downstream propagation)** — `tests/integration/knowledge-graph-editor/propagation-contract.test.ts` confirms `resolvePropagationStatus`/`evaluatePropagationMetric` honor the 1-minute (`60_000ms`) default deadline, returning `retry_required` and logging a warning past it, `propagated` once `completedAt` is set, and `pending` within the window.
+
+Not yet exercised (requires a running embedded admin session):
+- Scenario 1 and 2 UI walkthroughs (review queue triage, relationship rule editing) — covered functionally by Sprint 3 tests (`review-queue.test.ts`, `review-mutations.test.ts`); no new manual UI pass was performed for Sprint 4.
+- End-to-end propagation trace from a live admin save to a storefront/cart-intelligence read path — the propagation module is exercised at the unit/metric level only, not through an actual downstream consumer read in this pass.
+

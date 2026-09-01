@@ -33,6 +33,7 @@ vi.mock("../../../app/lib/db/queries", () => ({
   rejectRelationship: vi.fn(),
   disableRelationship: vi.fn(),
   upsertMerchantRelationship: vi.fn(),
+  listKnowledgeGraphChangeLogPage: vi.fn(),
 }));
 
 describe("knowledge graph colorways route", () => {
@@ -46,6 +47,7 @@ describe("knowledge graph colorways route", () => {
     vi.mocked(dbQueries.getDistinctSizeCategoryTagsForShop).mockResolvedValue([] as never);
     vi.mocked(dbQueries.getRelationshipCandidatesForAdmin).mockResolvedValue([] as never);
     vi.mocked(dbQueries.getMerchantActiveRelationships).mockResolvedValue([] as never);
+    vi.mocked(dbQueries.listKnowledgeGraphChangeLogPage).mockResolvedValue([] as never);
   });
 
   it("loads visual profile review rows and compatibility rules", async () => {
