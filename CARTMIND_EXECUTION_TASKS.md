@@ -75,19 +75,19 @@
 ## Sprint 5 - Size conflicts and kits
 
 ### Scope execution
-- [ ] Complete feature 008 tasks T009 to T014
-- [ ] Complete feature 007 tasks T016 to T020
-- [ ] Complete feature 008 tasks T015 to T019
-- [ ] Complete feature 007 tasks T021 to T022
-- [ ] Complete feature 008 tasks T020 to T025
+- [x] Complete feature 008 tasks T009 to T014
+- [x] Complete feature 007 tasks T016 to T020
+- [x] Complete feature 008 tasks T015 to T019
+- [x] Complete feature 007 tasks T021 to T022
+- [x] Complete feature 008 tasks T020 to T025
 
 ### Quality gate
-- [ ] Run lint
-- [ ] Run typecheck
-- [ ] Run tests unit knowledge-graph kits
-- [ ] Run tests unit knowledge-graph size-conflicts
-- [ ] Run tests integration routes knowledge-graph-size-conflicts
-- [ ] Confirm low-noise behavior on edge cases
+- [x] Run lint
+- [x] Run typecheck
+- [x] Run tests unit knowledge-graph kits
+- [x] Run tests unit knowledge-graph size-conflicts
+- [x] Run tests integration routes knowledge-graph-size-conflicts
+- [x] Confirm low-noise behavior on edge cases
 
 ---
 

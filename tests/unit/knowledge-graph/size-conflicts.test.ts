@@ -2,20 +2,44 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../../../app/lib/db/queries", () => ({
   getCrossSizeMappingsForPair: vi.fn(),
+  getSizeChartsForCategoryPair: vi.fn(),
+  findVariantByProductAndSize: vi.fn(),
 }));
 
 import { detectSizeConflicts } from "../../../app/lib/cart-intelligence/size-conflicts";
-import { getCrossSizeMappingsForPair } from "../../../app/lib/db/queries";
+import {
+  getCrossSizeMappingsForPair,
+  getSizeChartsForCategoryPair,
+  findVariantByProductAndSize,
+} from "../../../app/lib/db/queries";
 import {
   makeAmbiguousCart,
   makeChildAdultMismatchCart,
   makeConflictCartItem,
   makeCrossSizeMappingFixture,
+  makeInventoryAwareSuggestionFixtures,
   makeMappedMismatchCart,
   TEST_SHOP,
 } from "../../helpers/size-conflicts";
 
 const mockGetMappings = getCrossSizeMappingsForPair as ReturnType<typeof vi.fn>;
+const mockGetSizeChartsForCategoryPair = getSizeChartsForCategoryPair as ReturnType<typeof vi.fn>;
+const mockFindVariantByProductAndSize = findVariantByProductAndSize as ReturnType<typeof vi.fn>;
+
+function makeSizeChart(
+  categoryTag: string,
+  sizeSystem: string,
+  breakpoints: Array<{ label: string; min: number | null; max: number | null }>,
+) {
+  return {
+    id: `chart-${categoryTag}-${sizeSystem}`,
+    shop: TEST_SHOP,
+    categoryTag,
+    sizeSystem,
+    breakpoints,
+    overrideBreakpoints: null,
+  };
+}
 
 function makeItem(
   overrides: Partial<{
@@ -257,5 +281,141 @@ describe("detectSizeConflicts — low-noise skips", () => {
 
     expect(result.conflicts).toHaveLength(0);
     expect(mockGetMappings).not.toHaveBeenCalled();
+  });
+
+  it("stays silent when an unsupported size label is used on either side", async () => {
+    mockGetMappings.mockResolvedValue([]);
+    mockGetSizeChartsForCategoryPair.mockResolvedValue({
+      chartA: makeSizeChart("clothing", "letter", [
+        { label: "S", min: 0, max: 10 },
+        { label: "M", min: 10, max: 20 },
+      ]),
+      chartB: makeSizeChart("jacket", "letter", [
+        { label: "S", min: 0, max: 10 },
+        { label: "M", min: 10, max: 20 },
+      ]),
+    });
+
+    const itemA = makeItem({ categoryTag: "clothing", sizeValue: "XL" }); // unsupported label
+    const itemB = makeItem({
+      productId: "prod-jacket",
+      variantId: "var-jacket",
+      categoryTag: "jacket",
+      sizeValue: "M",
+    });
+
+    const result = await detectSizeConflicts({ shop: TEST_SHOP, cartItems: [itemA, itemB] });
+    expect(result.conflicts).toHaveLength(0);
+  });
+
+  it("stays silent for mixed sized/non-sized carts with no shared chart", async () => {
+    mockGetMappings.mockResolvedValue([]);
+    mockGetSizeChartsForCategoryPair.mockResolvedValue(null);
+
+    const sized = makeItem({ categoryTag: "clothing", sizeValue: "M" });
+    const nonSized = makeItem({
+      productId: "prod-accessory",
+      variantId: "var-accessory",
+      categoryTag: "accessories",
+      sizeValue: "one-size",
+    });
+
+    const result = await detectSizeConflicts({ shop: TEST_SHOP, cartItems: [sized, nonSized] });
+    expect(result.conflicts).toHaveLength(0);
+  });
+});
+
+describe("detectSizeConflicts — normalized SizeChart rule (measurement_rule_mismatch)", () => {
+  it("emits WARNING when normalized breakpoint ordinals differ across a shared sizeSystem", async () => {
+    mockGetMappings.mockResolvedValue([]);
+    mockGetSizeChartsForCategoryPair.mockResolvedValue({
+      chartA: makeSizeChart("clothing", "letter", [
+        { label: "S", min: 0, max: 10 },
+        { label: "M", min: 10, max: 20 },
+        { label: "L", min: 20, max: 30 },
+      ]),
+      chartB: makeSizeChart("jacket", "letter", [
+        { label: "S", min: 0, max: 10 },
+        { label: "M", min: 10, max: 20 },
+        { label: "L", min: 20, max: 30 },
+      ]),
+    });
+    mockFindVariantByProductAndSize.mockResolvedValue(null);
+
+    const itemA = makeItem({ categoryTag: "clothing", sizeValue: "L" });
+    const itemB = makeItem({
+      productId: "prod-jacket",
+      variantId: "var-jacket",
+      categoryTag: "jacket",
+      sizeValue: "M",
+    });
+
+    const result = await detectSizeConflicts({ shop: TEST_SHOP, cartItems: [itemA, itemB] });
+
+    expect(result.conflicts).toHaveLength(1);
+    expect(result.conflicts[0].severity).toBe("WARNING");
+    expect(result.conflicts[0].reasonType).toBe("measurement_rule_mismatch");
+    expect(result.conflicts[0].itemB.expectedSize).toBe("L");
+  });
+
+  it("does not emit a conflict when normalized ordinals match", async () => {
+    mockGetMappings.mockResolvedValue([]);
+    mockGetSizeChartsForCategoryPair.mockResolvedValue({
+      chartA: makeSizeChart("clothing", "letter", [
+        { label: "S", min: 0, max: 10 },
+        { label: "M", min: 10, max: 20 },
+      ]),
+      chartB: makeSizeChart("jacket", "letter", [
+        { label: "S", min: 0, max: 10 },
+        { label: "M", min: 10, max: 20 },
+      ]),
+    });
+
+    const itemA = makeItem({ categoryTag: "clothing", sizeValue: "M" });
+    const itemB = makeItem({
+      productId: "prod-jacket",
+      variantId: "var-jacket",
+      categoryTag: "jacket",
+      sizeValue: "M",
+    });
+
+    const result = await detectSizeConflicts({ shop: TEST_SHOP, cartItems: [itemA, itemB] });
+    expect(result.conflicts).toHaveLength(0);
+  });
+});
+
+describe("detectSizeConflicts — availability-aware correction suggestions", () => {
+  it("marks a suggestion available when the corrective variant is in stock", async () => {
+    const { primary: rashguard, paired: shorts, mapping } = makeMappedMismatchCart();
+    const { expectedAvailable } = makeInventoryAwareSuggestionFixtures();
+    mockGetMappings.mockResolvedValue([mapping]);
+    mockFindVariantByProductAndSize.mockResolvedValue(expectedAvailable);
+
+    const result = await detectSizeConflicts({ shop: TEST_SHOP, cartItems: [rashguard, shorts] });
+
+    expect(result.conflicts[0].suggestions[0].availability).toBe("available");
+    expect(result.conflicts[0].suggestions[0].suggestedVariantId).toBe(expectedAvailable.id);
+  });
+
+  it("marks a suggestion unavailable when the corrective variant has no inventory", async () => {
+    const { primary: rashguard, paired: shorts, mapping } = makeMappedMismatchCart();
+    const { expectedUnavailable } = makeInventoryAwareSuggestionFixtures();
+    mockGetMappings.mockResolvedValue([mapping]);
+    mockFindVariantByProductAndSize.mockResolvedValue(expectedUnavailable);
+
+    const result = await detectSizeConflicts({ shop: TEST_SHOP, cartItems: [rashguard, shorts] });
+
+    expect(result.conflicts[0].suggestions[0].availability).toBe("unavailable");
+  });
+
+  it("marks a suggestion unavailable when no corrective variant exists at all", async () => {
+    const { primary: rashguard, paired: shorts, mapping } = makeMappedMismatchCart();
+    mockGetMappings.mockResolvedValue([mapping]);
+    mockFindVariantByProductAndSize.mockResolvedValue(null);
+
+    const result = await detectSizeConflicts({ shop: TEST_SHOP, cartItems: [rashguard, shorts] });
+
+    expect(result.conflicts[0].suggestions[0].availability).toBe("unavailable");
+    expect(result.conflicts[0].suggestions[0].suggestedVariantId).toBeUndefined();
   });
 });

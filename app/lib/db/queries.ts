@@ -1737,6 +1737,30 @@ export async function getSizeChartsForCategories(shop: string, categoryTags: str
   });
 }
 
+/**
+ * Find a pair of SizeChart rows for two categories that share the same
+ * sizeSystem, enabling normalized (non-mapping) size-rule comparison.
+ * Returns null when either category has no chart or no shared sizeSystem exists.
+ */
+export async function getSizeChartsForCategoryPair(
+  shop: string,
+  catA: string,
+  catB: string,
+) {
+  const charts = await getSizeChartsForCategories(shop, [catA, catB]);
+  const chartsForA = charts.filter((chart) => chart.categoryTag === catA);
+  const chartsForB = charts.filter((chart) => chart.categoryTag === catB);
+
+  for (const chartA of chartsForA) {
+    const chartB = chartsForB.find((candidate) => candidate.sizeSystem === chartA.sizeSystem);
+    if (chartB) {
+      return { chartA, chartB };
+    }
+  }
+
+  return null;
+}
+
 export async function upsertSizeChart(data: UpsertSizeChartInput) {
   const { shop, categoryTag, sizeSystem, breakpoints, source = SizeChartSource.AUTO } = data;
   return await db.sizeChart.upsert({

@@ -1,4 +1,8 @@
-import { getCrossSizeMappingsForPair } from "../db/queries";
+import {
+  getCrossSizeMappingsForPair,
+  getSizeChartsForCategoryPair,
+  findVariantByProductAndSize,
+} from "../db/queries";
 import type {
   CartItemForConflict,
   SizeConflict,
@@ -22,7 +26,9 @@ export type {
  * 1. If isChildProduct differs → emit ERROR (adult vs child sizing mismatch).
  * 2. Look up CrossSizeMapping for (shop, catA, sizeA, catB).
  *    If the mapping's targetSize ≠ actual sizeB → emit WARNING.
- * 3. No mapping for the pair → skip silently.
+ * 3. No mapping exists, but both categories share a SizeChart sizeSystem →
+ *    compare normalized breakpoint ordinals and emit a WARNING when they differ.
+ * 4. No mapping and no supported normalization rule → skip silently.
  *
  * A cart with 0 or 1 items always returns empty conflicts.
  */
@@ -47,7 +53,9 @@ export async function detectSizeConflicts(
 
       // Rule 1: child vs adult mismatch → ERROR (regardless of size values)
       if (itemA.isChildProduct !== itemB.isChildProduct) {
-        conflicts.push(buildConflict("ERROR", "child_adult_mismatch", itemA, itemB, null, null));
+        conflicts.push(
+          await buildConflictWithAvailability("ERROR", "child_adult_mismatch", itemA, itemB, null, null),
+        );
         continue;
       }
 
@@ -58,13 +66,29 @@ export async function detectSizeConflicts(
         itemB.categoryTag,
       );
 
-      if (mappings.length === 0) continue; // unmapped pair — skip
+      if (mappings.length === 0) {
+        // Rule 3: fall back to normalized SizeChart-backed rule when no mapping exists
+        const measurementMismatch = await getMeasurementRuleMismatch(shop, itemA, itemB);
+        if (measurementMismatch) {
+          conflicts.push(
+            await buildConflictWithAvailability(
+              measurementMismatch.severity,
+              "measurement_rule_mismatch",
+              itemA,
+              itemB,
+              measurementMismatch.expectedSizeForB,
+              null,
+            ),
+          );
+        }
+        continue; // unmapped and unsupported pair — skip
+      }
 
       const abMismatch = getMappedSizeMismatch(mappings, itemA, itemB);
 
       if (abMismatch) {
         conflicts.push(
-          buildConflict(
+          await buildConflictWithAvailability(
             abMismatch.severity,
             "mapped_size_mismatch",
             itemA,
@@ -80,7 +104,7 @@ export async function detectSizeConflicts(
 
       if (baMismatch) {
         conflicts.push(
-          buildConflict(
+          await buildConflictWithAvailability(
             baMismatch.severity,
             "mapped_size_mismatch",
             itemA,
@@ -273,6 +297,102 @@ function rankSuggestions(
       availabilityRank[left.availability] - availabilityRank[right.availability] ||
       right.confidence - left.confidence,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Availability-aware correction suggestions (T012)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a conflict record, then resolve each suggestion's real availability
+ * against ProductVariant data so unavailable sizes never masquerade as safe
+ * corrections.
+ */
+async function buildConflictWithAvailability(
+  severity: "ERROR" | "WARNING",
+  reasonType: SizeConflict["reasonType"],
+  itemA: CartItemForConflict,
+  itemB: CartItemForConflict,
+  expectedSizeForB: string | null,
+  expectedSizeForA: string | null,
+): Promise<SizeConflict> {
+  const conflict = buildConflict(severity, reasonType, itemA, itemB, expectedSizeForB, expectedSizeForA);
+  const resolvedSuggestions = await Promise.all(
+    conflict.suggestions.map((suggestion) => resolveSuggestionAvailability(suggestion, itemA, itemB)),
+  );
+
+  return { ...conflict, suggestions: rankSuggestions(resolvedSuggestions) };
+}
+
+async function resolveSuggestionAvailability(
+  suggestion: SizeConflict["suggestions"][number],
+  itemA: CartItemForConflict,
+  itemB: CartItemForConflict,
+): Promise<SizeConflict["suggestions"][number]> {
+  const targetProductId = suggestion.targetItem === "itemA" ? itemA.productId : itemB.productId;
+  const variant = await findVariantByProductAndSize(targetProductId, suggestion.suggestedSize);
+
+  if (!variant) {
+    return { ...suggestion, availability: "unavailable" };
+  }
+
+  return {
+    ...suggestion,
+    availability: (variant.inventoryQuantity ?? 0) > 0 ? "available" : "unavailable",
+    suggestedVariantId: variant.id,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Normalized SizeChart-backed rule (T009)
+// ---------------------------------------------------------------------------
+
+interface SizeChartBreakpointLike {
+  label: string;
+  min: number | null;
+  max: number | null;
+}
+
+function getOrdinalBreakpoints(chart: {
+  breakpoints: unknown;
+  overrideBreakpoints: unknown;
+}): SizeChartBreakpointLike[] {
+  const raw = (chart.overrideBreakpoints ?? chart.breakpoints) as unknown;
+  if (!Array.isArray(raw)) return [];
+
+  return [...(raw as SizeChartBreakpointLike[])].sort(
+    (left, right) => (left.min ?? -Infinity) - (right.min ?? -Infinity),
+  );
+}
+
+/**
+ * When no CrossSizeMapping exists for a category pair, fall back to comparing
+ * normalized breakpoint ordinals from a SizeChart shared sizeSystem. Stays
+ * silent (returns null) whenever either category lacks a chart, the charts
+ * don't share a sizeSystem, or either selected size label is unsupported.
+ */
+async function getMeasurementRuleMismatch(
+  shop: string,
+  itemA: CartItemForConflict,
+  itemB: CartItemForConflict,
+): Promise<{ severity: "WARNING"; expectedSizeForB: string } | null> {
+  const chartPair = await getSizeChartsForCategoryPair(shop, itemA.categoryTag, itemB.categoryTag);
+  if (!chartPair) return null;
+
+  const breakpointsA = getOrdinalBreakpoints(chartPair.chartA);
+  const breakpointsB = getOrdinalBreakpoints(chartPair.chartB);
+  if (breakpointsA.length === 0 || breakpointsB.length === 0) return null;
+
+  const indexA = breakpointsA.findIndex((bp) => bp.label === itemA.sizeValue);
+  const indexB = breakpointsB.findIndex((bp) => bp.label === itemB.sizeValue);
+
+  // Unsupported size label on either side — stay quiet (low-noise).
+  if (indexA === -1 || indexB === -1 || indexA === indexB) return null;
+
+  const expectedForB = breakpointsB[indexA];
+  if (!expectedForB) return null;
+
+  return { severity: "WARNING", expectedSizeForB: expectedForB.label };
 }
 
 // ---------------------------------------------------------------------------

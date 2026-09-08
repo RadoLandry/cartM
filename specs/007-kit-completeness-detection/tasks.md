@@ -86,14 +86,14 @@
 
 ### Tests for User Story 3
 
-- [ ] T016 [P] [US3] Add loader and action integration coverage in `tests/integration/routes/knowledge-graph-kits.test.ts` for the `Kits` tab in `app/routes/app.knowledge-graph.tsx`
+- [X] T016 [P] [US3] Add loader and action integration coverage in `tests/integration/routes/knowledge-graph-kits.test.ts` for the `Kits` tab in `app/routes/app.knowledge-graph.tsx`
 
 ### Implementation for User Story 3
 
-- [ ] T017 [US3] Extend the loader in `app/routes/app.knowledge-graph.tsx` to return kit definitions, available category tags, and product options for merchant editing
-- [ ] T018 [US3] Implement Zod-validated `save-kit-definition`, `save-kit-requirement`, `delete-kit-requirement`, and `archive-kit-definition` action intents in `app/routes/app.knowledge-graph.tsx`
-- [ ] T019 [US3] Build the Polaris `Kits` tab UI in `app/routes/app.knowledge-graph.tsx` for editing kit metadata, required vs optional slots, priorities, and substitute coverage
-- [ ] T020 [US3] Preserve merchant-authored kit definitions during reseed flows in `scripts/backfill-kit-definitions.ts` and `app/lib/db/queries.ts`
+- [X] T017 [US3] Extend the loader in `app/routes/app.knowledge-graph.tsx` to return kit definitions, available category tags, and product options for merchant editing
+- [X] T018 [US3] Implement Zod-validated `save-kit-definition`, `save-kit-requirement`, `delete-kit-requirement`, and `archive-kit-definition` action intents in `app/routes/app.knowledge-graph.tsx`
+- [X] T019 [US3] Build the Polaris `Kits` tab UI in `app/routes/app.knowledge-graph.tsx` for editing kit metadata, required vs optional slots, priorities, and substitute coverage
+- [X] T020 [US3] Preserve merchant-authored kit definitions during reseed flows in `scripts/backfill-kit-definitions.ts` and `app/lib/db/queries.ts`
 
 **Checkpoint**: Merchants can create and refine kit definitions in admin, and those edits persist as the source of truth for future cart analysis.
 
@@ -103,8 +103,8 @@
 
 **Purpose**: Final validation, quickstart alignment, and quality-gate coverage across all stories.
 
-- [ ] T021 [P] Update operator steps and validation commands in `specs/007-kit-completeness-detection/quickstart.md` to match the final migration, reseed flow, and focused test suite
-- [ ] T022 Run `npx tsc --noEmit` and the focused Vitest suites for `tests/unit/knowledge-graph/kits.test.ts`, `tests/unit/cart-intelligence/kit-detection.test.ts`, and `tests/integration/routes/knowledge-graph-kits.test.ts`
+- [X] T021 [P] Update operator steps and validation commands in `specs/007-kit-completeness-detection/quickstart.md` to match the final migration, reseed flow, and focused test suite
+- [X] T022 Run `npx tsc --noEmit` and the focused Vitest suites for `tests/unit/knowledge-graph/kits.test.ts`, `tests/unit/cart-intelligence/kit-detection.test.ts`, and `tests/integration/routes/knowledge-graph-kits.test.ts`
 
 ---
 

@@ -10,10 +10,12 @@
 
 import db from "../app/db.server";
 import {
+  getSizeChartForCategory,
   upsertSizeChart,
   createCrossSizeMapping,
   type SizeBreakpointRow,
 } from "../app/lib/db/queries";
+import { SizeChartSource } from "@prisma/client";
 
 const shopArg = process.argv.find((a) => a.startsWith("--shop="))?.split("=")[1];
 if (!shopArg) {
@@ -70,33 +72,31 @@ const clothingToShortsWaistMappings: Array<{ sourceSize: string; targetSize: str
   { sourceSize: "XXL",targetSize: "38" },
 ];
 
+/**
+ * Upsert a SizeChart's AUTO breakpoints while preserving the MERCHANT source
+ * badge whenever a merchant override is already active, so a reseed never
+ * makes an overridden chart look like it reverted to AUTO provenance.
+ */
+async function seedChart(categoryTag: string, sizeSystem: string, breakpoints: SizeBreakpointRow[]) {
+  const existing = await getSizeChartForCategory(shop, categoryTag, sizeSystem);
+  const hasMerchantOverride = existing?.overrideBreakpoints != null;
+
+  await upsertSizeChart({
+    shop,
+    categoryTag,
+    sizeSystem,
+    breakpoints,
+    source: hasMerchantOverride ? SizeChartSource.MERCHANT : SizeChartSource.AUTO,
+  });
+  console.log(`  ✓ SizeChart: ${categoryTag}${hasMerchantOverride ? " (merchant override preserved)" : ""}`);
+}
+
 async function main() {
   console.log(`Seeding size charts for shop: ${shop}`);
 
-  // Upsert size charts
-  await upsertSizeChart({
-    shop,
-    categoryTag: "gloves_oz",
-    sizeSystem: "gloves_oz",
-    breakpoints: glovesOzBreakpoints,
-  });
-  console.log("  ✓ SizeChart: gloves_oz");
-
-  await upsertSizeChart({
-    shop,
-    categoryTag: "clothing",
-    sizeSystem: "clothing",
-    breakpoints: apparelChestBreakpoints,
-  });
-  console.log("  ✓ SizeChart: clothing");
-
-  await upsertSizeChart({
-    shop,
-    categoryTag: "shorts_waist",
-    sizeSystem: "shorts_waist",
-    breakpoints: shortsWaistBreakpoints,
-  });
-  console.log("  ✓ SizeChart: shorts_waist");
+  await seedChart("gloves_oz", "gloves_oz", glovesOzBreakpoints);
+  await seedChart("clothing", "clothing", apparelChestBreakpoints);
+  await seedChart("shorts_waist", "shorts_waist", shortsWaistBreakpoints);
 
   // Upsert cross-size mappings (clothing → shorts_waist)
   let mappingCount = 0;

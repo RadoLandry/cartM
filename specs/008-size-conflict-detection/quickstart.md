@@ -3,9 +3,10 @@
 ## What This Feature Adds
 
 - Richer deterministic cart-level size conflict detection on top of the existing `CrossSizeMapping` model
-- Structured correction suggestions that respect variant availability
+- A normalized `SizeChart`-backed fallback rule (`measurement_rule_mismatch`) for category pairs that share a `sizeSystem` but have no explicit mapping
+- Structured correction suggestions that respect variant availability (never promote an out-of-stock or nonexistent size as the primary action)
 - Shopper-facing size conflict recommendation payloads for cart and checkout consumers
-- Incremental extensions to the existing Knowledge Graph size tooling for merchant compatibility control
+- A merchant "Preview Compatibility" control in the Knowledge Graph admin for read-only, non-persisting rule testing
 - Regression and integration coverage for conflict detection, payload building, and admin mapping workflows
 
 ## Local Development Setup
@@ -53,6 +54,10 @@ Use the Knowledge Graph admin to create or confirm a `CrossSizeMapping` for a kn
 - the severity is correct
 - the preferred correction is only shown when the expected size is available
 
+### 6. Try the admin "Preview Compatibility" control
+
+In the **Size Charts** tab, use the **Preview Compatibility** card to test a source/target category + size pair. This calls the `preview-cross-size-conflict` action and renders an inline banner without persisting anything.
+
 ## Key Files
 
 | File | Purpose |
@@ -79,7 +84,7 @@ Set the expected target size on a mapped category pair, then ensure the correspo
 
 ### Confirm low-noise behavior for incomplete carts
 
-Run the unit suite with carts that contain only one sized item, missing `sizeValue`, or no mapping between categories. The detector should return no conflict rather than inferring one from incomplete evidence.
+Run the unit suite with carts that contain only one sized item, missing `sizeValue`, unsupported size labels, or no mapping/shared `SizeChart` sizeSystem between categories. The detector should return no conflict rather than inferring one from incomplete evidence.
 
 ### Exercise a shopper-facing payload build
 

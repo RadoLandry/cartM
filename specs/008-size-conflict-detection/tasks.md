@@ -50,7 +50,7 @@
 
 - [X] T007 [US1] Extend `app/lib/cart-intelligence/size-conflicts.ts` to emit `conflictKey`, `reasonType`, and summary counts while preserving deterministic pairwise conflict detection
 - [X] T008 [US1] Align `app/lib/knowledge-graph/sizing.ts` exports and shared types with the richer conflict result contract consumed by downstream cart-intelligence modules
-- [ ] T009 [US1] Add supported normalized size-rule evaluation in `app/lib/cart-intelligence/size-conflicts.ts` and `app/lib/db/queries.ts` for category pairs backed by existing `SizeChart` data
+- [X] T009 [US1] Add supported normalized size-rule evaluation in `app/lib/cart-intelligence/size-conflicts.ts` and `app/lib/db/queries.ts` for category pairs backed by existing `SizeChart` data
 
 **Checkpoint**: The app can detect and classify shopper-facing size conflicts with stable identifiers and explainable result summaries.
 
@@ -64,14 +64,14 @@
 
 ### Tests for User Story 2
 
-- [ ] T010 [P] [US2] Extend `tests/unit/knowledge-graph/size-conflicts.test.ts` with expected-size, in-stock, out-of-stock, and rerun-after-resolution assertions for `app/lib/cart-intelligence/size-conflicts.ts`
-- [ ] T011 [P] [US2] Add payload-building and primary-suggestion selection coverage in `tests/unit/cart-intelligence/size-conflict-recommendations.test.ts` for `app/lib/cart-intelligence/recommendations.ts`
+- [X] T010 [P] [US2] Extend `tests/unit/knowledge-graph/size-conflicts.test.ts` with expected-size, in-stock, out-of-stock, and rerun-after-resolution assertions for `app/lib/cart-intelligence/size-conflicts.ts`
+- [X] T011 [P] [US2] Add payload-building and primary-suggestion selection coverage in `tests/unit/cart-intelligence/size-conflict-recommendations.test.ts` for `app/lib/cart-intelligence/recommendations.ts`
 
 ### Implementation for User Story 2
 
-- [ ] T012 [US2] Extend `app/lib/cart-intelligence/size-conflicts.ts` to build structured `suggestions` from mapping expectations and variant availability lookups in `app/lib/db/queries.ts`
-- [ ] T013 [US2] Add shopper-facing size conflict payload builders in `app/lib/cart-intelligence/recommendations.ts` matching `specs/008-size-conflict-detection/contracts/size-conflict-recommendations.md`
-- [ ] T014 [US2] Update shared sizing result types and explanation helpers in `app/lib/knowledge-graph/sizing.ts` and `app/lib/cart-intelligence/size-conflicts.ts` so conflicts can return actionable guidance without guessing unavailable variants
+- [X] T012 [US2] Extend `app/lib/cart-intelligence/size-conflicts.ts` to build structured `suggestions` from mapping expectations and variant availability lookups in `app/lib/db/queries.ts`
+- [X] T013 [US2] Add shopper-facing size conflict payload builders in `app/lib/cart-intelligence/recommendations.ts` matching `specs/008-size-conflict-detection/contracts/size-conflict-recommendations.md`
+- [X] T014 [US2] Update shared sizing result types and explanation helpers in `app/lib/knowledge-graph/sizing.ts` and `app/lib/cart-intelligence/size-conflicts.ts` so conflicts can return actionable guidance without guessing unavailable variants
 
 **Checkpoint**: Conflict results now include structured explanations and safe correction guidance that cart and checkout consumers can render directly.
 
@@ -85,14 +85,14 @@
 
 ### Tests for User Story 3
 
-- [ ] T015 [P] [US3] Add loader and action integration coverage in `tests/integration/routes/knowledge-graph-size-conflicts.test.ts` for the size compatibility tooling in `app/routes/app.knowledge-graph.tsx`
+- [X] T015 [P] [US3] Add loader and action integration coverage in `tests/integration/routes/knowledge-graph-size-conflicts.test.ts` for the size compatibility tooling in `app/routes/app.knowledge-graph.tsx`
 
 ### Implementation for User Story 3
 
-- [ ] T016 [US3] Extend the size compatibility loader in `app/routes/app.knowledge-graph.tsx` to return preview state and richer mapping data defined in `specs/008-size-conflict-detection/contracts/merchant-size-compatibility-admin.md`
-- [ ] T017 [US3] Implement Zod-validated `preview-cross-size-conflict` support in `app/routes/app.knowledge-graph.tsx` using new read helpers from `app/lib/db/queries.ts`
-- [ ] T018 [US3] Build the Polaris preview and richer compatibility management UI in `app/routes/app.knowledge-graph.tsx` for mapping validation and merchant rule review
-- [ ] T019 [US3] Preserve merchant-defined compatibility behavior across override reset and reseed flows in `app/lib/db/queries.ts` and `scripts/seed-size-charts.ts`
+- [X] T016 [US3] Extend the size compatibility loader in `app/routes/app.knowledge-graph.tsx` to return preview state and richer mapping data defined in `specs/008-size-conflict-detection/contracts/merchant-size-compatibility-admin.md`
+- [X] T017 [US3] Implement Zod-validated `preview-cross-size-conflict` support in `app/routes/app.knowledge-graph.tsx` using new read helpers from `app/lib/db/queries.ts`
+- [X] T018 [US3] Build the Polaris preview and richer compatibility management UI in `app/routes/app.knowledge-graph.tsx` for mapping validation and merchant rule review
+- [X] T019 [US3] Preserve merchant-defined compatibility behavior across override reset and reseed flows in `app/lib/db/queries.ts` and `scripts/seed-size-charts.ts`
 
 **Checkpoint**: Merchant-managed compatibility rules are independently testable in admin and remain the source of truth for later cart analysis.
 
@@ -106,13 +106,13 @@
 
 ### Tests for User Story 4
 
-- [ ] T020 [P] [US4] Extend `tests/unit/knowledge-graph/size-conflicts.test.ts` with single-item, missing-size, unmapped-pair, unsupported-label, and mixed sized/non-sized cart cases for low-noise behavior
+- [X] T020 [P] [US4] Extend `tests/unit/knowledge-graph/size-conflicts.test.ts` with single-item, missing-size, unmapped-pair, unsupported-label, and mixed sized/non-sized cart cases for low-noise behavior
 
 ### Implementation for User Story 4
 
-- [ ] T021 [US4] Tighten skip, dedupe, and unsupported-label handling in `app/lib/cart-intelligence/size-conflicts.ts` so ambiguous carts do not produce fabricated conflicts
-- [ ] T022 [US4] Filter incomplete and non-sized cart inputs before pair evaluation in `app/lib/knowledge-graph/sizing.ts` and `app/lib/cart-intelligence/size-conflicts.ts`
-- [ ] T023 [US4] Refine fallback shopper payload behavior in `app/lib/cart-intelligence/recommendations.ts` so unavailable or low-confidence suggestions never become the primary action
+- [X] T021 [US4] Tighten skip, dedupe, and unsupported-label handling in `app/lib/cart-intelligence/size-conflicts.ts` so ambiguous carts do not produce fabricated conflicts
+- [X] T022 [US4] Filter incomplete and non-sized cart inputs before pair evaluation in `app/lib/knowledge-graph/sizing.ts` and `app/lib/cart-intelligence/size-conflicts.ts`
+- [X] T023 [US4] Refine fallback shopper payload behavior in `app/lib/cart-intelligence/recommendations.ts` so unavailable or low-confidence suggestions never become the primary action
 
 **Checkpoint**: The cart remains quiet for incomplete evidence while still surfacing distinct real conflicts clearly.
 
@@ -122,8 +122,8 @@
 
 **Purpose**: Final validation, quickstart alignment, and implementation quality gates across all user stories.
 
-- [ ] T024 [P] Update `specs/008-size-conflict-detection/quickstart.md` with the final focused test commands, admin preview flow, and manual verification steps
-- [ ] T025 Run `npx tsc --noEmit` and the focused Vitest suites for `tests/unit/knowledge-graph/size-conflicts.test.ts`, `tests/unit/cart-intelligence/size-conflict-recommendations.test.ts`, and `tests/integration/routes/knowledge-graph-size-conflicts.test.ts`
+- [X] T024 [P] Update `specs/008-size-conflict-detection/quickstart.md` with the final focused test commands, admin preview flow, and manual verification steps
+- [X] T025 Run `npx tsc --noEmit` and the focused Vitest suites for `tests/unit/knowledge-graph/size-conflicts.test.ts`, `tests/unit/cart-intelligence/size-conflict-recommendations.test.ts`, and `tests/integration/routes/knowledge-graph-size-conflicts.test.ts`
 
 ---
 

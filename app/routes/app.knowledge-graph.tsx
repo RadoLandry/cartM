@@ -24,12 +24,19 @@ import {
   resetSizeChartOverride,
   createCrossSizeMapping,
   deleteCrossSizeMapping,
+  previewCrossSizeConflict,
   getRelationshipCandidatesForAdmin,
   getMerchantActiveRelationships,
   approveRelationship,
   rejectRelationship,
   disableRelationship,
   upsertMerchantRelationship,
+  listKitDefinitionsForShop,
+  listProductsForKitEditor,
+  upsertKitDefinition,
+  upsertKitRequirement,
+  deleteKitRequirement,
+  archiveKitDefinition,
   type SizeBreakpointRow,
   type RelationshipAdminRow,
 } from "../lib/db/queries";
@@ -47,7 +54,13 @@ import {
   getDirectionality,
 } from "../lib/knowledge-graph/relationships";
 import { z } from "zod";
-import { ColorCompatibility, RelationshipType, KnowledgeGraphBulkOperationType } from "@prisma/client";
+import {
+  ColorCompatibility,
+  RelationshipType,
+  KnowledgeGraphBulkOperationType,
+  KitDefinitionSource,
+  RequirementMatchMode,
+} from "@prisma/client";
 
 import {
   Page,
@@ -129,6 +142,37 @@ type CrossSizeMappingRow = {
 
 type GovernedSizeMappingRow = CrossSizeMappingRow & { revision: number };
 
+type KitRequirementRow = {
+  id: string;
+  requirementKey: string;
+  label: string;
+  isRequired: boolean;
+  priority: number;
+  safetyCritical: boolean;
+  matchMode: string;
+  acceptedCategoryTags: string[];
+  acceptedShopifyProductIds: string[];
+  minQuantity: number;
+};
+
+type KitDefinitionRow = {
+  id: string;
+  key: string;
+  label: string;
+  disciplineTag: string;
+  description: string | null;
+  source: string;
+  status: string;
+  requirements: KitRequirementRow[];
+};
+
+type KitEditorProductRow = {
+  id: string;
+  shopifyProductId: string;
+  title: string;
+  categoryTags: string[];
+};
+
 type ChangeHistoryRowData = {
   id: string;
   actorId: string | null;
@@ -152,6 +196,8 @@ type LoaderData = {
   categoryTags: string[];
   relationshipCandidates: RelationshipAdminRow[];
   activeRelationships: RelationshipAdminRow[];
+  kitDefinitions: KitDefinitionRow[];
+  kitEditorProducts: KitEditorProductRow[];
 };
 
 // ---------------------------------------------------------------------------
@@ -161,7 +207,7 @@ type LoaderData = {
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
 
-  const [lowConfidenceProducts, allProducts, rawVisualProfiles, rawCompatibilityRules, rawSizeCharts, rawCrossMappings, categoryTags, relationshipCandidates, activeRelationships, changeHistoryPage] = await Promise.all([
+  const [lowConfidenceProducts, allProducts, rawVisualProfiles, rawCompatibilityRules, rawSizeCharts, rawCrossMappings, categoryTags, relationshipCandidates, activeRelationships, changeHistoryPage, rawKitDefinitions, rawKitEditorProducts] = await Promise.all([
     getLowConfidenceProducts(session.shop, CONFIDENCE_THRESHOLD, 50),
     getProductsWithTaxonomy(session.shop, 50),
     listVisualProfilesForReview(session.shop, 50),
@@ -172,6 +218,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     getRelationshipCandidatesForAdmin(session.shop),
     getMerchantActiveRelationships(session.shop),
     getKnowledgeGraphChangeHistory(session.shop, { take: 25 }),
+    listKitDefinitionsForShop(session.shop, 100),
+    listProductsForKitEditor(session.shop, 200),
   ]);
 
   const visualProfiles: VisualAdminRow[] = rawVisualProfiles.map((profile) => {
@@ -258,6 +306,35 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     createdAt: entry.createdAt.toISOString(),
   }));
 
+  const kitDefinitions: KitDefinitionRow[] = rawKitDefinitions.map((kit) => ({
+    id: kit.id,
+    key: kit.key,
+    label: kit.label,
+    disciplineTag: kit.disciplineTag,
+    description: kit.description,
+    source: kit.source,
+    status: kit.status,
+    requirements: kit.requirements.map((requirement) => ({
+      id: requirement.id,
+      requirementKey: requirement.requirementKey,
+      label: requirement.label,
+      isRequired: requirement.isRequired,
+      priority: requirement.priority,
+      safetyCritical: requirement.safetyCritical,
+      matchMode: requirement.matchMode,
+      acceptedCategoryTags: requirement.acceptedCategoryTags,
+      acceptedShopifyProductIds: requirement.acceptedShopifyProductIds,
+      minQuantity: requirement.minQuantity,
+    })),
+  }));
+
+  const kitEditorProducts: KitEditorProductRow[] = rawKitEditorProducts.map((product) => ({
+    id: product.id,
+    shopifyProductId: product.shopifyProductId,
+    title: product.title,
+    categoryTags: product.categoryTags,
+  }));
+
   return {
     lowConfidenceProducts,
     allProducts,
@@ -271,6 +348,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     categoryTags,
     relationshipCandidates,
     activeRelationships,
+    kitDefinitions,
+    kitEditorProducts,
   } satisfies LoaderData;
 };
 
@@ -311,6 +390,43 @@ const CreateMappingSchema = z.object({
 
 const DeleteMappingSchema = z.object({
   mappingId: z.string().min(1),
+});
+
+const PreviewCrossSizeConflictSchema = z.object({
+  sourceCategoryTag: z.string().min(1),
+  sourceSize: z.string().min(1),
+  targetCategoryTag: z.string().min(1),
+  targetSize: z.string().min(1),
+});
+
+const SaveKitDefinitionSchema = z.object({
+  id: z.string().optional(),
+  key: z.string().min(1),
+  label: z.string().min(1),
+  disciplineTag: z.string().min(1),
+  description: z.string().optional(),
+});
+
+const SaveKitRequirementSchema = z.object({
+  id: z.string().optional(),
+  kitDefinitionId: z.string().min(1),
+  requirementKey: z.string().min(1),
+  label: z.string().min(1),
+  isRequired: z.boolean(),
+  priority: z.number().int(),
+  safetyCritical: z.boolean(),
+  matchMode: z.nativeEnum(RequirementMatchMode),
+  acceptedCategoryTags: z.array(z.string()),
+  acceptedShopifyProductIds: z.array(z.string()),
+  minQuantity: z.number().int().min(1),
+});
+
+const DeleteKitRequirementSchema = z.object({
+  requirementId: z.string().min(1),
+});
+
+const ArchiveKitDefinitionSchema = z.object({
+  kitId: z.string().min(1),
 });
 
 const SaveVisualOverrideSchema = z.object({
@@ -516,6 +632,94 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return { ok: true };
   }
 
+  // T017 (008) — preview-cross-size-conflict: read-only evaluation, no persistence
+  if (intent === "preview-cross-size-conflict") {
+    const raw = {
+      sourceCategoryTag: formData.get("sourceCategoryTag"),
+      sourceSize: formData.get("sourceSize"),
+      targetCategoryTag: formData.get("targetCategoryTag"),
+      targetSize: formData.get("targetSize"),
+    };
+    const parsed = PreviewCrossSizeConflictSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    const preview = await previewCrossSizeConflict(
+      session.shop,
+      parsed.data.sourceCategoryTag,
+      parsed.data.sourceSize,
+      parsed.data.targetCategoryTag,
+      parsed.data.targetSize,
+    );
+    return { ok: true, preview };
+  }
+
+  // T018 (007) — save-kit-definition (merchant-authored kit metadata)
+  if (intent === "save-kit-definition") {
+    const raw = {
+      id: formData.get("id") || undefined,
+      key: formData.get("key"),
+      label: formData.get("label"),
+      disciplineTag: formData.get("disciplineTag"),
+      description: formData.get("description") || undefined,
+    };
+    const parsed = SaveKitDefinitionSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    await upsertKitDefinition({
+      id: parsed.data.id,
+      shop: session.shop,
+      key: parsed.data.key,
+      label: parsed.data.label,
+      disciplineTag: parsed.data.disciplineTag,
+      description: parsed.data.description ?? null,
+      source: KitDefinitionSource.MERCHANT,
+    });
+    return { ok: true };
+  }
+
+  // T018 (007) — save-kit-requirement
+  if (intent === "save-kit-requirement") {
+    const raw = {
+      id: formData.get("id") || undefined,
+      kitDefinitionId: formData.get("kitDefinitionId"),
+      requirementKey: formData.get("requirementKey"),
+      label: formData.get("label"),
+      isRequired: formData.get("isRequired") === "true",
+      priority: Number(formData.get("priority") ?? 100),
+      safetyCritical: formData.get("safetyCritical") === "true",
+      matchMode: formData.get("matchMode") ?? RequirementMatchMode.CATEGORY,
+      acceptedCategoryTags: String(formData.get("acceptedCategoryTags") ?? "")
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean),
+      acceptedShopifyProductIds: String(formData.get("acceptedShopifyProductIds") ?? "")
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean),
+      minQuantity: Number(formData.get("minQuantity") ?? 1),
+    };
+    const parsed = SaveKitRequirementSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    await upsertKitRequirement(parsed.data);
+    return { ok: true };
+  }
+
+  // T018 (007) — delete-kit-requirement
+  if (intent === "delete-kit-requirement") {
+    const raw = { requirementId: formData.get("requirementId") };
+    const parsed = DeleteKitRequirementSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, error: parsed.error.message };
+    await deleteKitRequirement(parsed.data.requirementId);
+    return { ok: true };
+  }
+
+  // T018 (007) — archive-kit-definition
+  if (intent === "archive-kit-definition") {
+    const raw = { kitId: formData.get("kitId") };
+    const parsed = ArchiveKitDefinitionSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, error: parsed.error.message };
+    await archiveKitDefinition(parsed.data.kitId);
+    return { ok: true };
+  }
+
   // T025 — upsert-size-mapping-rule (governed: contradiction + revision checks)
   if (intent === "upsert-size-mapping-rule") {
     const raw = {
@@ -703,8 +907,15 @@ function SizeChartsTab({
   categoryTags: string[];
 }) {
   const fetcher = useFetcher();
+  const previewFetcher = useFetcher<{ ok: boolean; preview?: { evaluated: boolean; severity?: string; expectedSize?: string; message?: string } }>();
   const [toast, setToast] = useState<{ message: string; error?: boolean } | null>(null);
   const [addModalOpen, setAddModalOpen] = useState(false);
+
+  // Preview form state
+  const [previewSourceCat, setPreviewSourceCat] = useState("");
+  const [previewSourceSize, setPreviewSourceSize] = useState("");
+  const [previewTargetCat, setPreviewTargetCat] = useState("");
+  const [previewTargetSize, setPreviewTargetSize] = useState("");
 
   // New mapping form state
   const [newSourceCat, setNewSourceCat] = useState("");
@@ -752,6 +963,20 @@ function SizeChartsTab({
     setAddModalOpen(false);
     setToast({ message: "Mapping created" });
   }, [fetcher, newSourceCat, newSourceSize, newTargetCat, newTargetSize, newSeverity]);
+
+  const handlePreview = useCallback(() => {
+    if (!previewSourceCat || !previewSourceSize || !previewTargetCat || !previewTargetSize) return;
+    previewFetcher.submit(
+      {
+        intent: "preview-cross-size-conflict",
+        sourceCategoryTag: previewSourceCat,
+        sourceSize: previewSourceSize,
+        targetCategoryTag: previewTargetCat,
+        targetSize: previewTargetSize,
+      },
+      { method: "post" },
+    );
+  }, [previewFetcher, previewSourceCat, previewSourceSize, previewTargetCat, previewTargetSize]);
 
   const catOptions = [
     { label: "— select —", value: "" },
@@ -846,6 +1071,63 @@ function SizeChartsTab({
         </BlockStack>
       </Card>
 
+      <Card>
+        <BlockStack gap="300">
+          <Text variant="headingMd" as="h2">Preview Compatibility</Text>
+          <Text tone="subdued" as="p">
+            Test a category pair against existing rules without saving anything.
+          </Text>
+          <InlineStack gap="300">
+            <Select
+              label="Source Category"
+              labelHidden
+              options={catOptions}
+              value={previewSourceCat}
+              onChange={setPreviewSourceCat}
+            />
+            <TextField
+              label="Source Size"
+              labelHidden
+              placeholder="Source size"
+              value={previewSourceSize}
+              onChange={setPreviewSourceSize}
+              autoComplete="off"
+            />
+            <Select
+              label="Target Category"
+              labelHidden
+              options={catOptions}
+              value={previewTargetCat}
+              onChange={setPreviewTargetCat}
+            />
+            <TextField
+              label="Target Size"
+              labelHidden
+              placeholder="Target size"
+              value={previewTargetSize}
+              onChange={setPreviewTargetSize}
+              autoComplete="off"
+            />
+            <Button onClick={handlePreview} loading={previewFetcher.state !== "idle"}>
+              Preview
+            </Button>
+          </InlineStack>
+          {previewFetcher.data?.preview && (
+            <Banner
+              tone={
+                !previewFetcher.data.preview.evaluated
+                  ? "info"
+                  : previewFetcher.data.preview.severity === "ERROR"
+                    ? "critical"
+                    : "warning"
+              }
+            >
+              <p>{previewFetcher.data.preview.message}</p>
+            </Banner>
+          )}
+        </BlockStack>
+      </Card>
+
       <Modal
         open={addModalOpen}
         onClose={() => setAddModalOpen(false)}
@@ -885,6 +1167,258 @@ function SizeChartsTab({
               value={newSeverity}
               onChange={(v) => setNewSeverity(v as "WARNING" | "ERROR")}
             />
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+    </BlockStack>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Kits Tab component (007 T019)
+// ---------------------------------------------------------------------------
+
+function KitsTab({
+  kitDefinitions,
+  kitEditorProducts,
+}: {
+  kitDefinitions: KitDefinitionRow[];
+  kitEditorProducts: KitEditorProductRow[];
+}) {
+  const fetcher = useFetcher();
+  const [toast, setToast] = useState<{ message: string; error?: boolean } | null>(null);
+  const [selectedKitId, setSelectedKitId] = useState<string | null>(kitDefinitions[0]?.id ?? null);
+  const [addKitModalOpen, setAddKitModalOpen] = useState(false);
+  const [addRequirementModalOpen, setAddRequirementModalOpen] = useState(false);
+
+  // New kit form state
+  const [newKitKey, setNewKitKey] = useState("");
+  const [newKitLabel, setNewKitLabel] = useState("");
+  const [newKitDiscipline, setNewKitDiscipline] = useState("");
+  const [newKitDescription, setNewKitDescription] = useState("");
+
+  // New requirement form state
+  const [newReqKey, setNewReqKey] = useState("");
+  const [newReqLabel, setNewReqLabel] = useState("");
+  const [newReqIsRequired, setNewReqIsRequired] = useState<"true" | "false">("true");
+  const [newReqPriority, setNewReqPriority] = useState("100");
+  const [newReqSafetyCritical, setNewReqSafetyCritical] = useState<"true" | "false">("false");
+  const [newReqMatchMode, setNewReqMatchMode] = useState<string>("CATEGORY");
+  const [newReqCategoryTags, setNewReqCategoryTags] = useState("");
+  const [newReqSubstituteProductIds, setNewReqSubstituteProductIds] = useState("");
+  const [newReqMinQuantity, setNewReqMinQuantity] = useState("1");
+
+  const submitAction = useCallback(
+    (data: Record<string, string>) => {
+      fetcher.submit(data, { method: "post" });
+    },
+    [fetcher],
+  );
+
+  const handleArchive = useCallback(
+    (kitId: string) => {
+      submitAction({ intent: "archive-kit-definition", kitId });
+      setToast({ message: "Kit archived" });
+    },
+    [submitAction],
+  );
+
+  const handleDeleteRequirement = useCallback(
+    (requirementId: string) => {
+      submitAction({ intent: "delete-kit-requirement", requirementId });
+      setToast({ message: "Requirement removed" });
+    },
+    [submitAction],
+  );
+
+  const handleAddKit = useCallback(() => {
+    if (!newKitKey || !newKitLabel || !newKitDiscipline) return;
+    fetcher.submit(
+      {
+        intent: "save-kit-definition",
+        key: newKitKey,
+        label: newKitLabel,
+        disciplineTag: newKitDiscipline,
+        description: newKitDescription,
+      },
+      { method: "post" },
+    );
+    setAddKitModalOpen(false);
+    setToast({ message: "Kit created" });
+  }, [fetcher, newKitKey, newKitLabel, newKitDiscipline, newKitDescription]);
+
+  const handleAddRequirement = useCallback(() => {
+    if (!selectedKitId || !newReqKey || !newReqLabel) return;
+    fetcher.submit(
+      {
+        intent: "save-kit-requirement",
+        kitDefinitionId: selectedKitId,
+        requirementKey: newReqKey,
+        label: newReqLabel,
+        isRequired: newReqIsRequired,
+        priority: newReqPriority,
+        safetyCritical: newReqSafetyCritical,
+        matchMode: newReqMatchMode,
+        acceptedCategoryTags: newReqCategoryTags,
+        acceptedShopifyProductIds: newReqSubstituteProductIds,
+        minQuantity: newReqMinQuantity,
+      },
+      { method: "post" },
+    );
+    setAddRequirementModalOpen(false);
+    setToast({ message: "Requirement created" });
+  }, [
+    fetcher,
+    selectedKitId,
+    newReqKey,
+    newReqLabel,
+    newReqIsRequired,
+    newReqPriority,
+    newReqSafetyCritical,
+    newReqMatchMode,
+    newReqCategoryTags,
+    newReqSubstituteProductIds,
+    newReqMinQuantity,
+  ]);
+
+  const matchModeOptions = [
+    { label: "Category", value: "CATEGORY" },
+    { label: "Product", value: "PRODUCT" },
+    { label: "Category or Product", value: "CATEGORY_OR_PRODUCT" },
+    { label: "Product or Alternative", value: "PRODUCT_OR_ALTERNATIVE" },
+  ];
+  const requiredOptions = [
+    { label: "Required", value: "true" },
+    { label: "Optional", value: "false" },
+  ];
+  const productOptions = [
+    { label: "— none —", value: "" },
+    ...kitEditorProducts.map((p) => ({ label: p.title, value: p.shopifyProductId })),
+  ];
+
+  const kitRows = kitDefinitions.map((kit) => [
+    kit.key,
+    kit.label,
+    kit.disciplineTag,
+    <Badge key={`src-${kit.id}`} tone={kit.source === "MERCHANT" ? "success" : kit.source === "HYBRID" ? "attention" : "info"}>
+      {kit.source}
+    </Badge>,
+    <Badge key={`st-${kit.id}`} tone={kit.status === "ACTIVE" ? "success" : "critical"}>{kit.status}</Badge>,
+    String(kit.requirements.length),
+    <InlineStack key={`act-${kit.id}`} gap="200">
+      <Button size="slim" onClick={() => setSelectedKitId(kit.id)}>Manage</Button>
+      {kit.status === "ACTIVE" && (
+        <Button size="slim" tone="critical" onClick={() => handleArchive(kit.id)}>Archive</Button>
+      )}
+    </InlineStack>,
+  ]);
+
+  const selectedKit = kitDefinitions.find((kit) => kit.id === selectedKitId) ?? null;
+
+  const requirementRows = (selectedKit?.requirements ?? []).map((requirement) => [
+    requirement.requirementKey,
+    requirement.label,
+    <Badge key={`req-${requirement.id}`} tone={requirement.isRequired ? "critical" : "info"}>
+      {requirement.isRequired ? "Required" : "Optional"}
+    </Badge>,
+    String(requirement.priority),
+    requirement.matchMode,
+    requirement.acceptedCategoryTags.join(", ") || "—",
+    String(requirement.minQuantity),
+    <Button key={`del-${requirement.id}`} size="slim" tone="critical" onClick={() => handleDeleteRequirement(requirement.id)}>
+      Delete
+    </Button>,
+  ]);
+
+  return (
+    <BlockStack gap="400">
+      {toast && (
+        <Toast content={toast.message} error={toast.error} onDismiss={() => setToast(null)} />
+      )}
+
+      <Card>
+        <BlockStack gap="300">
+          <InlineStack align="space-between">
+            <Text variant="headingMd" as="h2">Kit Definitions</Text>
+            <Button variant="primary" onClick={() => setAddKitModalOpen(true)}>Add kit</Button>
+          </InlineStack>
+          {kitDefinitions.length === 0 ? (
+            <EmptyState
+              heading="No kit definitions yet"
+              image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
+            >
+              <p>Run the kit seed script or create a kit to start tracking completeness.</p>
+            </EmptyState>
+          ) : (
+            <DataTable
+              columnContentTypes={["text", "text", "text", "text", "text", "numeric", "text"]}
+              headings={["Key", "Label", "Discipline", "Source", "Status", "Requirements", "Actions"]}
+              rows={kitRows}
+            />
+          )}
+        </BlockStack>
+      </Card>
+
+      {selectedKit && (
+        <Card>
+          <BlockStack gap="300">
+            <InlineStack align="space-between">
+              <Text variant="headingMd" as="h2">Requirements — {selectedKit.label}</Text>
+              <Button onClick={() => setAddRequirementModalOpen(true)}>Add requirement</Button>
+            </InlineStack>
+            {requirementRows.length === 0 ? (
+              <EmptyState
+                heading="No requirements yet"
+                image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
+              >
+                <p>Add required and optional slots to define this kit.</p>
+              </EmptyState>
+            ) : (
+              <DataTable
+                columnContentTypes={["text", "text", "text", "numeric", "text", "text", "numeric", "text"]}
+                headings={["Key", "Label", "Priority level", "Priority", "Match mode", "Accepted categories", "Min qty", "Actions"]}
+                rows={requirementRows}
+              />
+            )}
+          </BlockStack>
+        </Card>
+      )}
+
+      <Modal
+        open={addKitModalOpen}
+        onClose={() => setAddKitModalOpen(false)}
+        title="Add Kit Definition"
+        primaryAction={{ content: "Create", onAction: handleAddKit }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setAddKitModalOpen(false) }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <TextField label="Key" value={newKitKey} onChange={setNewKitKey} autoComplete="off" />
+            <TextField label="Label" value={newKitLabel} onChange={setNewKitLabel} autoComplete="off" />
+            <TextField label="Discipline Tag" value={newKitDiscipline} onChange={setNewKitDiscipline} autoComplete="off" />
+            <TextField label="Description" value={newKitDescription} onChange={setNewKitDescription} autoComplete="off" multiline={2} />
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      <Modal
+        open={addRequirementModalOpen}
+        onClose={() => setAddRequirementModalOpen(false)}
+        title="Add Kit Requirement"
+        primaryAction={{ content: "Create", onAction: handleAddRequirement }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setAddRequirementModalOpen(false) }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <TextField label="Requirement Key" value={newReqKey} onChange={setNewReqKey} autoComplete="off" />
+            <TextField label="Label" value={newReqLabel} onChange={setNewReqLabel} autoComplete="off" />
+            <Select label="Priority level" options={requiredOptions} value={newReqIsRequired} onChange={(v) => setNewReqIsRequired(v as "true" | "false")} />
+            <TextField label="Priority (lower = higher priority)" type="number" value={newReqPriority} onChange={setNewReqPriority} autoComplete="off" />
+            <Select label="Safety critical" options={requiredOptions.map((o) => ({ label: o.value === "true" ? "Yes" : "No", value: o.value }))} value={newReqSafetyCritical} onChange={(v) => setNewReqSafetyCritical(v as "true" | "false")} />
+            <Select label="Match mode" options={matchModeOptions} value={newReqMatchMode} onChange={setNewReqMatchMode} />
+            <TextField label="Accepted Category Tags (comma-separated)" value={newReqCategoryTags} onChange={setNewReqCategoryTags} autoComplete="off" />
+            <Select label="Substitute product (optional alternative coverage)" options={productOptions} value={newReqSubstituteProductIds} onChange={setNewReqSubstituteProductIds} />
+            <TextField label="Minimum Quantity" type="number" value={newReqMinQuantity} onChange={setNewReqMinQuantity} autoComplete="off" />
           </BlockStack>
         </Modal.Section>
       </Modal>
@@ -1333,6 +1867,8 @@ export default function KnowledgeGraphPage() {
     categoryTags,
     relationshipCandidates,
     activeRelationships,
+    kitDefinitions,
+    kitEditorProducts,
   } =
     useLoaderData<LoaderData>();
 
@@ -1368,6 +1904,10 @@ export default function KnowledgeGraphPage() {
     {
       id: "relationships",
       content: `Relationships (${relationshipCandidates.length + activeRelationships.length})`,
+    },
+    {
+      id: "kits",
+      content: `Kits (${kitDefinitions.length})`,
     },
   ];
 
@@ -1480,6 +2020,11 @@ export default function KnowledgeGraphPage() {
                 <RelationshipsTab
                   candidates={relationshipCandidates}
                   activeRelationships={activeRelationships}
+                />
+              ) : selectedTab === 5 ? (
+                <KitsTab
+                  kitDefinitions={kitDefinitions}
+                  kitEditorProducts={kitEditorProducts}
                 />
               ) : activeProducts.length === 0 ? (
                 <EmptyState
