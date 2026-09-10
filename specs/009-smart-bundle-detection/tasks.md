@@ -89,13 +89,13 @@
 ### Tests for User Story 3
 
 - [X] T018 [P] [US3] Add loader and action integration coverage in `tests/integration/routes/bundle-rule-manager.test.ts` for `app/routes/app.bundles.tsx`
-- [ ] T019 [P] [US3] Add shared template, activation-guard, and projection coverage in `tests/unit/knowledge-graph/bundles.test.ts` for `app/lib/knowledge-graph/bundles.ts`
+- [X] T019 [P] [US3] Add shared template, activation-guard, and projection coverage in `tests/unit/knowledge-graph/bundles.test.ts` for `app/lib/knowledge-graph/bundles.ts`
 
 ### Implementation for User Story 3
 
 - [X] T020 [US3] Implement the bundle manager loader and Zod-validated `save-bundle-rule`, `save-bundle-component`, `delete-bundle-component`, `archive-bundle-rule`, and `preview-bundle-rule` actions in `app/routes/app.bundles.tsx`
-- [ ] T021 [US3] Build the Polaris bundle rule manager UI, preview workflow, and priority/status controls in `app/routes/app.bundles.tsx`
-- [ ] T022 [US3] Enforce activation safeguards, duplicate-key handling, preview support, and active-rule projection persistence helpers in `app/lib/db/queries.ts`
+- [X] T021 [US3] Build the Polaris bundle rule manager UI, preview workflow, and priority/status controls in `app/routes/app.bundles.tsx`
+- [X] T022 [US3] Enforce activation safeguards, duplicate-key handling, preview support, and active-rule projection persistence helpers in `app/lib/db/queries.ts`
 - [X] T023 [US3] Update embedded admin navigation in `app/routes/app.tsx` to expose the new `/app/bundles` workflow
 
 **Checkpoint**: Merchant-authored bundle rules are independently manageable and previewable in admin, and they remain the source of truth for later cart analysis.
@@ -106,8 +106,8 @@
 
 **Purpose**: Final validation, quickstart alignment, and implementation quality gates across all user stories.
 
-- [ ] T024 [P] Update `specs/009-smart-bundle-detection/quickstart.md` with the final Prisma, admin preview, and focused validation commands
-- [ ] T025 Run `npx tsc --noEmit` and the focused Vitest suites for `tests/unit/cart-intelligence/bundle-detection.test.ts`, `tests/unit/cart-intelligence/bundle-recommendations.test.ts`, `tests/unit/knowledge-graph/bundles.test.ts`, and `tests/integration/routes/bundle-rule-manager.test.ts`
+- [X] T024 [P] Update `specs/009-smart-bundle-detection/quickstart.md` with the final Prisma, admin preview, and focused validation commands
+- [X] T025 Run `npx tsc --noEmit` and the focused Vitest suites for `tests/unit/cart-intelligence/bundle-detection.test.ts`, `tests/unit/cart-intelligence/bundle-recommendations.test.ts`, `tests/unit/knowledge-graph/bundles.test.ts`, and `tests/integration/routes/bundle-rule-manager.test.ts`
 
 ---
 

@@ -21,10 +21,13 @@ Implement and validate deterministic threshold suggestions that surface only cre
 
 ## Validation Flow
 
-1. Run the focused unit tests for threshold evaluation and recommendation shaping.
-2. Run the threshold manager integration tests covering save, archive, and preview actions.
+1. Run the focused unit tests for threshold evaluation and recommendation shaping:
+   `npx vitest run tests/unit/cart-intelligence/threshold.test.ts tests/unit/cart-intelligence/threshold-recommendations.test.ts tests/unit/knowledge-graph/thresholds.test.ts`
+2. Run the threshold manager integration tests covering save, archive, and preview actions:
+   `npx vitest run tests/integration/routes/threshold-manager.test.ts`
 3. Validate that eligible carts return one to three contextual suggestions and that already-qualified or low-relevance carts return hidden payloads.
-4. Confirm the admin route uses Polaris components and Zod-validated actions only.
+4. Confirm the admin route (`/app/thresholds`, linked from the embedded nav) uses Polaris components and Zod-validated actions only.
+5. Run `npx tsc --noEmit` and confirm no new errors are introduced in the threshold-related files (the repo has pre-existing unrelated TypeScript failures outside this feature's scope).
 
 ## Out of Scope for This Slice
 

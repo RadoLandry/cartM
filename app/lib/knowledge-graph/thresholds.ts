@@ -95,6 +95,8 @@ export const DEFAULT_THRESHOLD_SCORING_WEIGHTS: ThresholdScoringWeights = {
   availability: 0.1,
 };
 
+export const THRESHOLD_RELEVANCE_FLOOR = 0.35;
+
 export const DEFAULT_THRESHOLD_TEMPLATES: SeedThresholdTemplate[] = [
   {
     key: "free-shipping-default",
@@ -170,6 +172,58 @@ export function supportsDiscipline(rule: ThresholdRuleRecord, item: Pick<CartThr
 export function supportsCategory(rule: ThresholdRuleRecord, item: Pick<CartThresholdItem, "categoryTags">): boolean {
   return rule.supportedCategoryTags.length === 0
     || rule.supportedCategoryTags.some((tag) => item.categoryTags.includes(tag));
+}
+
+export function formatThresholdPriceLabel(unitPrice: number | null, currencyCode = "USD"): string | undefined {
+  if (unitPrice === null) {
+    return undefined;
+  }
+
+  const symbol = currencyCode === "USD" ? "$" : `${currencyCode} `;
+  return `${symbol}${unitPrice.toFixed(2)}`;
+}
+
+export function formatThresholdBenefitLabel(rule: Pick<ThresholdRuleRecord, "benefitLabel">): string {
+  return rule.benefitLabel;
+}
+
+export function buildThresholdUnlockMessage(
+  rule: Pick<ThresholdRuleRecord, "benefitLabel">,
+  gapAmount: number,
+): string {
+  return `Adding this item helps close the remaining $${gapAmount.toFixed(2)} toward ${rule.benefitLabel.toLowerCase()}.`;
+}
+
+export function buildThresholdSelectionReason(
+  rule: Pick<ThresholdRuleRecord, "benefitLabel" | "actionableWindow">,
+  gapAmount: number,
+): string {
+  return gapAmount <= rule.actionableWindow / 2
+    ? `The cart is very close to unlocking ${rule.benefitLabel.toLowerCase()}.`
+    : `The cart is within reach of unlocking ${rule.benefitLabel.toLowerCase()}.`;
+}
+
+export function diversifyThresholdCandidatesByDiscipline<
+  T extends { productId: string },
+>(candidates: T[], candidateDisciplines: Map<string, string | undefined>, maxSuggestions: number): T[] {
+  const seenDisciplines = new Set<string>();
+  const primary: T[] = [];
+  const overflow: T[] = [];
+
+  for (const candidate of candidates) {
+    const discipline = candidateDisciplines.get(candidate.productId);
+    if (discipline && seenDisciplines.has(discipline) && primary.length < maxSuggestions) {
+      overflow.push(candidate);
+      continue;
+    }
+
+    if (discipline) {
+      seenDisciplines.add(discipline);
+    }
+    primary.push(candidate);
+  }
+
+  return [...primary, ...overflow].slice(0, maxSuggestions);
 }
 
 export function buildThresholdTemplateRecords(): SeedThresholdTemplate[] {

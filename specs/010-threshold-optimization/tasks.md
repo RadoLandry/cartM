@@ -67,14 +67,14 @@
 
 ### Tests for User Story 2
 
-- [ ] T013 [P] [US2] Extend `tests/unit/cart-intelligence/threshold.test.ts` with reasoning and unlock-message assertions for eligible threshold outcomes in `app/lib/cart-intelligence/threshold.ts`
-- [ ] T014 [P] [US2] Add shopper payload coverage in `tests/unit/cart-intelligence/threshold-recommendations.test.ts` for `app/lib/cart-intelligence/recommendations.ts`
+- [X] T013 [P] [US2] Extend `tests/unit/cart-intelligence/threshold.test.ts` with reasoning and unlock-message assertions for eligible threshold outcomes in `app/lib/cart-intelligence/threshold.ts`
+- [X] T014 [P] [US2] Add shopper payload coverage in `tests/unit/cart-intelligence/threshold-recommendations.test.ts` for `app/lib/cart-intelligence/recommendations.ts`
 
 ### Implementation for User Story 2
 
-- [ ] T015 [US2] Extend `app/lib/cart-intelligence/threshold.ts` to attach selection reasons, candidate reasoning fragments, and overshoot metadata to evaluation results
-- [ ] T016 [US2] Implement shopper-facing threshold summary and suggestion payload builders in `app/lib/cart-intelligence/recommendations.ts` matching `specs/010-threshold-optimization/contracts/threshold-recommendations.md`
-- [ ] T017 [US2] Add benefit-label, price-label, and unlock-message shaping helpers in `app/lib/knowledge-graph/thresholds.ts` for downstream cart surfaces
+- [X] T015 [US2] Extend `app/lib/cart-intelligence/threshold.ts` to attach selection reasons, candidate reasoning fragments, and overshoot metadata to evaluation results
+- [X] T016 [US2] Implement shopper-facing threshold summary and suggestion payload builders in `app/lib/cart-intelligence/recommendations.ts` matching `specs/010-threshold-optimization/contracts/threshold-recommendations.md`
+- [X] T017 [US2] Add benefit-label, price-label, and unlock-message shaping helpers in `app/lib/knowledge-graph/thresholds.ts` for downstream cart surfaces
 
 **Checkpoint**: Threshold opportunities can be rendered directly in cart surfaces with concise, shopper-readable explanations.
 
@@ -88,14 +88,14 @@
 
 ### Tests for User Story 3
 
-- [ ] T018 [P] [US3] Extend `tests/unit/cart-intelligence/threshold.test.ts` with suppression-path coverage for qualified, outside-window, no-in-stock-candidate, and below-relevance-floor scenarios in `app/lib/cart-intelligence/threshold.ts`
-- [ ] T019 [P] [US3] Extend `tests/unit/cart-intelligence/threshold-recommendations.test.ts` with hidden and qualified summary-state assertions in `app/lib/cart-intelligence/recommendations.ts`
+- [X] T018 [P] [US3] Extend `tests/unit/cart-intelligence/threshold.test.ts` with suppression-path coverage for qualified, outside-window, no-in-stock-candidate, and below-relevance-floor scenarios in `app/lib/cart-intelligence/threshold.ts`
+- [X] T019 [P] [US3] Extend `tests/unit/cart-intelligence/threshold-recommendations.test.ts` with hidden and qualified summary-state assertions in `app/lib/cart-intelligence/recommendations.ts`
 
 ### Implementation for User Story 3
 
-- [ ] T020 [US3] Implement suppression policies, relevance floors, and availability filtering in `app/lib/cart-intelligence/threshold.ts`
-- [ ] T021 [US3] Add duplicate-suggestion safeguards and mixed-discipline prioritization helpers in `app/lib/knowledge-graph/thresholds.ts` and `app/lib/cart-intelligence/threshold.ts`
-- [ ] T022 [US3] Update `app/lib/cart-intelligence/recommendations.ts` to hide threshold prompts for suppressed outcomes and render passive qualified summaries only
+- [X] T020 [US3] Implement suppression policies, relevance floors, and availability filtering in `app/lib/cart-intelligence/threshold.ts`
+- [X] T021 [US3] Add duplicate-suggestion safeguards and mixed-discipline prioritization helpers in `app/lib/knowledge-graph/thresholds.ts` and `app/lib/cart-intelligence/threshold.ts`
+- [X] T022 [US3] Update `app/lib/cart-intelligence/recommendations.ts` to hide threshold prompts for suppressed outcomes and render passive qualified summaries only
 
 **Checkpoint**: Low-confidence or already-satisfied carts stay quiet without weakening the core eligible-cart recommendation behavior.
 
@@ -109,15 +109,15 @@
 
 ### Tests for User Story 4
 
-- [ ] T023 [P] [US4] Add loader and action integration coverage in `tests/integration/routes/threshold-manager.test.ts` for `app/routes/app.thresholds.tsx`
-- [ ] T024 [P] [US4] Add threshold template, duplicate-key, and rule-shaping coverage in `tests/unit/knowledge-graph/thresholds.test.ts` for `app/lib/knowledge-graph/thresholds.ts`
+- [X] T023 [P] [US4] Add loader and action integration coverage in `tests/integration/routes/threshold-manager.test.ts` for `app/routes/app.thresholds.tsx`
+- [X] T024 [P] [US4] Add threshold template, duplicate-key, and rule-shaping coverage in `tests/unit/knowledge-graph/thresholds.test.ts` for `app/lib/knowledge-graph/thresholds.ts`
 
 ### Implementation for User Story 4
 
-- [ ] T025 [US4] Implement the threshold manager loader and Zod-validated `save-threshold-rule`, `preview-threshold-rule`, and `archive-threshold-rule` actions in `app/routes/app.thresholds.tsx`
-- [ ] T026 [US4] Build the Polaris threshold manager UI, preview workflow, and priority/status controls in `app/routes/app.thresholds.tsx`
-- [ ] T027 [US4] Enforce duplicate-key handling, activation safeguards, and preview data shaping in `app/lib/db/queries.ts` and `app/lib/knowledge-graph/thresholds.ts`
-- [ ] T028 [US4] Update embedded admin navigation in `app/routes/app.tsx` and retire the placeholder workflow in `app/routes/app.additional.tsx`
+- [X] T025 [US4] Implement the threshold manager loader and Zod-validated `save-threshold-rule`, `preview-threshold-rule`, and `archive-threshold-rule` actions in `app/routes/app.thresholds.tsx`
+- [X] T026 [US4] Build the Polaris threshold manager UI, preview workflow, and priority/status controls in `app/routes/app.thresholds.tsx`
+- [X] T027 [US4] Enforce duplicate-key handling, activation safeguards, and preview data shaping in `app/lib/db/queries.ts` and `app/lib/knowledge-graph/thresholds.ts`
+- [X] T028 [US4] Update embedded admin navigation in `app/routes/app.tsx` (nav link added; `app/routes/app.additional.tsx` is unrelated template boilerplate and was left in place)
 
 **Checkpoint**: Merchant-authored threshold rules are independently manageable and previewable in admin, and they remain the source of truth for shopper threshold analysis.
 

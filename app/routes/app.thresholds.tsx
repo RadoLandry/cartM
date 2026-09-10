@@ -20,11 +20,16 @@ import {
 } from "@prisma/client";
 
 import {
+  archiveThresholdRule,
   getDistinctDisciplineTagsForShop,
   getDistinctProductCategoryTagsForShop,
+  getThresholdRuleById,
   listProductsForThresholdEditor,
+  listThresholdPreviewCartItems,
   listThresholdRulesForShop,
+  upsertThresholdRule,
 } from "../lib/db/queries";
+import { evaluateThreshold } from "../lib/cart-intelligence/threshold";
 import { authenticate } from "../shopify.server";
 
 const SaveThresholdRuleSchema = z.object({
@@ -53,7 +58,21 @@ const ArchiveThresholdRuleSchema = z.object({
 const PreviewThresholdRuleSchema = z.object({
   thresholdRuleId: z.string().min(1),
   cartFixture: z.string().min(2),
+  cartSubtotal: z.coerce.number().min(0),
 });
+
+const PreviewCartFixtureSchema = z.array(z.object({
+  productId: z.string().min(1),
+  variantId: z.string().min(1),
+  quantity: z.number().int().min(1),
+}));
+
+function parseCsvList(raw: string | undefined) {
+  return (raw ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -73,30 +92,84 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
 
   const formData = await request.formData();
   const intent = String(formData.get("intent") ?? "");
 
   if (intent === "save-threshold-rule") {
     const parsed = SaveThresholdRuleSchema.safeParse(Object.fromEntries(formData));
-    return parsed.success
-      ? { ok: true, intent, scaffold: true }
-      : { ok: false, intent, error: parsed.error.message };
+    if (!parsed.success) {
+      return { ok: false, intent, error: parsed.error.message };
+    }
+
+    try {
+      const rule = await upsertThresholdRule({
+        id: parsed.data.id,
+        shop: session.shop,
+        key: parsed.data.key,
+        label: parsed.data.label,
+        description: parsed.data.description ?? null,
+        status: parsed.data.status,
+        priority: parsed.data.priority,
+        benefitType: parsed.data.benefitType,
+        benefitLabel: parsed.data.benefitLabel,
+        targetSubtotal: parsed.data.targetSubtotal,
+        actionableWindow: parsed.data.actionableWindow,
+        allowOvershoot: parsed.data.allowOvershoot === "true",
+        maxSuggestions: parsed.data.maxSuggestions,
+        supportedCategoryTags: parseCsvList(parsed.data.supportedCategoryTags),
+        supportedDisciplineTags: parseCsvList(parsed.data.supportedDisciplineTags),
+        excludedShopifyProductIds: parseCsvList(parsed.data.excludedShopifyProductIds),
+        duplicatePurchasePolicy: parsed.data.duplicatePurchasePolicy,
+      });
+
+      return { ok: true, intent, ruleId: rule.id };
+    } catch (err: unknown) {
+      if (typeof err === "object" && err !== null && "code" in err && (err as { code: string }).code === "P2002") {
+        return { ok: false, intent, error: "A threshold rule with this key already exists." };
+      }
+
+      throw err;
+    }
   }
 
   if (intent === "archive-threshold-rule") {
     const parsed = ArchiveThresholdRuleSchema.safeParse(Object.fromEntries(formData));
-    return parsed.success
-      ? { ok: true, intent, scaffold: true }
-      : { ok: false, intent, error: parsed.error.message };
+    if (!parsed.success) {
+      return { ok: false, intent, error: parsed.error.message };
+    }
+
+    await archiveThresholdRule(parsed.data.thresholdRuleId);
+    return { ok: true, intent };
   }
 
   if (intent === "preview-threshold-rule") {
     const parsed = PreviewThresholdRuleSchema.safeParse(Object.fromEntries(formData));
-    return parsed.success
-      ? { ok: true, intent, scaffold: true, preview: null }
-      : { ok: false, intent, error: parsed.error.message };
+    if (!parsed.success) {
+      return { ok: false, intent, error: parsed.error.message };
+    }
+
+    const cartFixture = PreviewCartFixtureSchema.safeParse(JSON.parse(parsed.data.cartFixture));
+    if (!cartFixture.success) {
+      return { ok: false, intent, error: cartFixture.error.message };
+    }
+
+    const rule = await getThresholdRuleById(parsed.data.thresholdRuleId);
+    if (!rule) {
+      return { ok: false, intent, error: "not_found" };
+    }
+
+    const cartItems = await listThresholdPreviewCartItems(session.shop, cartFixture.data);
+    const preview = evaluateThreshold({
+      shop: session.shop,
+      currencyCode: "USD",
+      cartSubtotal: parsed.data.cartSubtotal,
+      cartItems,
+      thresholdRules: [rule],
+    });
+
+    return { ok: true, intent, preview };
   }
 
   return { ok: false, intent, error: "Unknown threshold action intent." };
@@ -156,6 +229,15 @@ export default function ThresholdRulesPage() {
                       <Text as="p" variant="bodySm" tone="subdued">
                         {rule.benefitType} · Target ${rule.targetSubtotal.toFixed(2)} · Window ${rule.actionableWindow.toFixed(2)}
                       </Text>
+                      {rule.status !== "ARCHIVED" ? (
+                        <Form method="post">
+                          <input type="hidden" name="intent" value="archive-threshold-rule" />
+                          <input type="hidden" name="thresholdRuleId" value={rule.id} />
+                          <Button submit tone="critical" variant="tertiary">
+                            Archive rule
+                          </Button>
+                        </Form>
+                      ) : null}
                     </BlockStack>
                   </Card>
                 ))}
@@ -167,10 +249,7 @@ export default function ThresholdRulesPage() {
         <Card>
           <BlockStack gap="300">
             <Text as="h2" variant="headingMd">
-              Action scaffolding
-            </Text>
-            <Text as="p" variant="bodySm" tone="subdued">
-              The route now validates threshold action contracts; persistence and preview execution are wired next.
+              Create a threshold rule
             </Text>
             <Form method="post">
               <BlockStack gap="300">
@@ -186,7 +265,7 @@ export default function ThresholdRulesPage() {
                 <input type="hidden" name="duplicatePurchasePolicy" value="DISALLOW" />
                 <TextField label="Threshold key" name="key" autoComplete="off" />
                 <TextField label="Threshold label" name="label" autoComplete="off" />
-                <Button submit>Validate save-threshold-rule intent</Button>
+                <Button submit>Save threshold rule</Button>
               </BlockStack>
             </Form>
           </BlockStack>

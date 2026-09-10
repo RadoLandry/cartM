@@ -94,20 +94,20 @@
 ## Sprint 6 - Thresholds and bundle detection
 
 ### Scope execution
-- [ ] Complete feature 010 tasks T013 to T017
-- [ ] Complete feature 009 tasks T019, T021, T022
-- [ ] Complete feature 010 tasks T018 to T022
-- [ ] Complete feature 009 tasks T024 to T025
-- [ ] Complete feature 010 tasks T023 to T030
+- [x] Complete feature 010 tasks T013 to T017
+- [x] Complete feature 009 tasks T019, T021, T022
+- [x] Complete feature 010 tasks T018 to T022
+- [x] Complete feature 009 tasks T024 to T025
+- [x] Complete feature 010 tasks T023 to T030
 
 ### Quality gate
-- [ ] Run lint
-- [ ] Run typecheck
-- [ ] Run tests unit cart-intelligence threshold
-- [ ] Run tests unit cart-intelligence threshold-recommendations
-- [ ] Run tests unit knowledge-graph bundles
-- [ ] Run tests integration routes threshold-manager
-- [ ] Confirm threshold suppression and qualified outcomes are correct
+- [x] Run lint
+- [x] Run typecheck
+- [x] Run tests unit cart-intelligence threshold
+- [x] Run tests unit cart-intelligence threshold-recommendations
+- [x] Run tests unit knowledge-graph bundles
+- [x] Run tests integration routes threshold-manager
+- [x] Confirm threshold suppression and qualified outcomes are correct
 
 ---
 

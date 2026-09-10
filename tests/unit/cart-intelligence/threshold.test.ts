@@ -198,4 +198,108 @@ describe("threshold evaluation", () => {
       },
     });
   });
+
+  it("attaches a selection reason and unlock message to eligible results", () => {
+    const result = evaluateThreshold({
+      shop: TEST_SHOP,
+      currencyCode: "USD",
+      cartSubtotal: 79.99,
+      cartItems: makeNearThresholdCart(),
+      thresholdRules: [
+        makeThresholdRuleFixture({
+          key: "free-shipping-default",
+          targetSubtotal: 100,
+          actionableWindow: 30,
+        }),
+      ],
+      candidates: [
+        {
+          productId: "prod-mouthguard",
+          variantId: "var-mouthguard-black",
+          title: "Mouthguard / Black",
+          unitPrice: 19.99,
+          relevanceScore: 0.94,
+          gapFitScore: 0.99,
+          compositeScore: 0.96,
+          wouldOvershoot: false,
+          reasoning: ["Supports the boxing intent already present in the cart."],
+        },
+      ],
+    });
+
+    expect(result.status).toBe("eligible");
+    expect(result.selectedRule?.selectionReason).toContain("Free shipping".toLowerCase());
+    expect(result.unlockMessage).toContain("20.01");
+  });
+
+  it("suppresses results when all candidates fall below the relevance floor", () => {
+    const result = evaluateThreshold({
+      shop: TEST_SHOP,
+      currencyCode: "USD",
+      cartSubtotal: 79.99,
+      cartItems: makeNearThresholdCart(),
+      thresholdRules: [
+        makeThresholdRuleFixture({
+          key: "free-shipping-default",
+          targetSubtotal: 100,
+        }),
+      ],
+      candidates: [
+        {
+          productId: "prod-low-relevance",
+          title: "Unrelated Item",
+          unitPrice: 19.99,
+          relevanceScore: 0.1,
+          gapFitScore: 0.4,
+          compositeScore: 0.2,
+          wouldOvershoot: false,
+          reasoning: ["Low relevance to this cart."],
+        },
+      ],
+    });
+
+    expect(result).toMatchObject({
+      status: "suppressed",
+      suppressionReason: "below_relevance_floor",
+      candidates: [],
+    });
+  });
+
+  it("suppresses results when the gap is outside the actionable window", () => {
+    const result = evaluateThreshold({
+      shop: TEST_SHOP,
+      currencyCode: "USD",
+      cartSubtotal: 10,
+      cartItems: makeNearThresholdCart(),
+      thresholdRules: [
+        makeThresholdRuleFixture({
+          key: "free-shipping-default",
+          targetSubtotal: 100,
+          actionableWindow: 25,
+        }),
+      ],
+      candidates: [],
+    });
+
+    expect(result).toMatchObject({
+      status: "suppressed",
+      suppressionReason: "outside_actionable_window",
+    });
+  });
+
+  it("returns not_applicable when there are no active threshold rules", () => {
+    const result = evaluateThreshold({
+      shop: TEST_SHOP,
+      currencyCode: "USD",
+      cartSubtotal: 50,
+      cartItems: makeNearThresholdCart(),
+      thresholdRules: [],
+      candidates: [],
+    });
+
+    expect(result).toMatchObject({
+      status: "not_applicable",
+      suppressionReason: "no_active_rules",
+    });
+  });
 });

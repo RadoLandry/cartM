@@ -3,6 +3,7 @@ import type { StorefrontGuidancePayload, StructuredGuidanceBlock } from "../ai/s
 import type { BundleDetectionResult } from "./bundles";
 import type { KitAssessment, KitAssessmentReason } from "../knowledge-graph/kits";
 import type { ThresholdEvaluationResult } from "./threshold";
+import { formatThresholdPriceLabel } from "../knowledge-graph/thresholds";
 import type {
   ShopperSizeConflictCard,
   ShopperSizeConflictSuggestion,
@@ -411,16 +412,18 @@ export function buildThresholdRecommendations(
       benefitLabel: result.selectedRule.benefitLabel,
       targetSubtotal: `${result.selectedRule.targetSubtotal.toFixed(2)}`,
       gapAmount: result.gapAmount !== null ? `${result.gapAmount.toFixed(2)}` : undefined,
-      reason: `Add a relevant item to unlock ${result.selectedRule.benefitLabel.toLowerCase()}.`,
+      reason: result.selectedRule.selectionReason
+        ?? `Add a relevant item to unlock ${result.selectedRule.benefitLabel.toLowerCase()}.`,
     },
     suggestions: result.candidates.map((candidate, index) => ({
       productId: candidate.productId,
       variantId: candidate.variantId,
       title: candidate.title,
-      ...(candidate.unitPrice !== null ? { priceLabel: `$${candidate.unitPrice.toFixed(2)}` } : {}),
+      priceLabel: formatThresholdPriceLabel(candidate.unitPrice),
       rank: index + 1,
       reason: candidate.reasoning[0] ?? "Relevant to the current cart.",
-      unlockMessage: `Helps close the remaining gap toward ${result.selectedRule?.benefitLabel.toLowerCase()}.`,
+      unlockMessage: result.unlockMessage
+        ?? `Helps close the remaining gap toward ${result.selectedRule?.benefitLabel.toLowerCase()}.`,
       wouldOvershoot: candidate.wouldOvershoot,
     })),
   };

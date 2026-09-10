@@ -5,9 +5,12 @@ import type {
 } from "../knowledge-graph/thresholds";
 import {
   buildThresholdCandidatesForRule,
+  buildThresholdSelectionReason,
+  buildThresholdUnlockMessage,
   roundThresholdCurrency,
   sortThresholdCandidates,
   sortThresholdRules,
+  THRESHOLD_RELEVANCE_FLOOR,
 } from "../knowledge-graph/thresholds";
 import { listActiveThresholdRules } from "../db/queries";
 
@@ -31,9 +34,11 @@ export interface ThresholdEvaluationResult {
     priority: number;
     targetSubtotal: number;
     actionableWindow: number;
+    selectionReason?: string;
   };
   status: ThresholdEvaluationStatus;
   gapAmount: number | null;
+  unlockMessage?: string;
   suppressionReason?:
     | "already_qualified"
     | "outside_actionable_window"
@@ -65,7 +70,7 @@ export function selectThresholdRule(
   return firstUnmetRule ?? activeRules.at(-1) ?? null;
 }
 
-export function buildSelectedRule(rule: ThresholdRuleRecord) {
+export function buildSelectedRule(rule: ThresholdRuleRecord, gapAmount?: number) {
   return {
     key: rule.key,
     label: rule.label,
@@ -74,6 +79,9 @@ export function buildSelectedRule(rule: ThresholdRuleRecord) {
     priority: rule.priority,
     targetSubtotal: rule.targetSubtotal,
     actionableWindow: rule.actionableWindow,
+    ...(gapAmount !== undefined && gapAmount > 0
+      ? { selectionReason: buildThresholdSelectionReason(rule, gapAmount) }
+      : {}),
   };
 }
 
@@ -81,7 +89,8 @@ export function capThresholdCandidates(
   candidates: ThresholdSuggestionCandidate[],
   maxSuggestions: number,
 ): ThresholdSuggestionCandidate[] {
-  return sortThresholdCandidates(candidates).slice(0, maxSuggestions);
+  const relevant = candidates.filter((candidate) => candidate.relevanceScore >= THRESHOLD_RELEVANCE_FLOOR);
+  return sortThresholdCandidates(relevant).slice(0, maxSuggestions);
 }
 
 export function createSuppressedThresholdResult(
@@ -128,15 +137,18 @@ export function evaluateThreshold(input: ThresholdEvaluationRequest): ThresholdE
     return createSuppressedThresholdResult(selectedRule, input.cartSubtotal, "outside_actionable_window");
   }
 
-  const candidates = capThresholdCandidates(input.candidates ?? [], selectedRule.maxSuggestions);
+  const allCandidates = input.candidates ?? [];
+  const candidates = capThresholdCandidates(allCandidates, selectedRule.maxSuggestions);
   if (candidates.length === 0) {
-    return createSuppressedThresholdResult(selectedRule, input.cartSubtotal, "no_in_stock_candidates");
+    const suppressionReason = allCandidates.length > 0 ? "below_relevance_floor" : "no_in_stock_candidates";
+    return createSuppressedThresholdResult(selectedRule, input.cartSubtotal, suppressionReason);
   }
 
   return {
-    selectedRule: buildSelectedRule(selectedRule),
+    selectedRule: buildSelectedRule(selectedRule, gapAmount),
     status: "eligible",
     gapAmount,
+    unlockMessage: buildThresholdUnlockMessage(selectedRule, gapAmount),
     candidates,
   };
 }
