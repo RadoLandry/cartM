@@ -1,6 +1,7 @@
 import type { VisualRecommendationPayload } from "../knowledge-graph/colorways";
 import type { StorefrontGuidancePayload, StructuredGuidanceBlock } from "../ai/schemas";
 import type { BundleDetectionResult } from "./bundles";
+import type { BundleProjectionRecord } from "../knowledge-graph/bundles";
 import type { KitAssessment, KitAssessmentReason } from "../knowledge-graph/kits";
 import type { ThresholdEvaluationResult } from "./threshold";
 import { formatThresholdPriceLabel } from "../knowledge-graph/thresholds";
@@ -376,6 +377,61 @@ export function buildBundleRecommendations(
       } satisfies ShopperBundleOpportunity;
     }),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Compact active bundle rule projection feed (022 T025/T033)
+// ---------------------------------------------------------------------------
+
+export const ACTIVE_BUNDLE_RULE_PROJECTION_VERSION = 1;
+
+export interface ActiveBundleRuleProjectionFeed {
+  shop: string;
+  generatedAt: string;
+  projectionVersion: number;
+  rules: BundleProjectionRecord[];
+  degraded?: boolean;
+}
+
+/**
+ * Builds the compact ACTIVE-only bundle rule projection for downstream consumers.
+ * Falls back to the last known-good feed when rule generation is unavailable
+ * (e.g. empty/undefined input from an upstream failure) instead of emitting an
+ * empty feed that would wipe out cart-transform/checkout projections.
+ */
+export function buildActiveBundleRuleProjectionFeed(input: {
+  shop: string;
+  rules: BundleProjectionRecord[] | null | undefined;
+  previousFeed?: ActiveBundleRuleProjectionFeed | null;
+  now?: Date;
+}): ActiveBundleRuleProjectionFeed {
+  const { shop, rules, previousFeed = null } = input;
+  const now = input.now ?? new Date();
+
+  if (!rules) {
+    if (previousFeed) {
+      return { ...previousFeed, degraded: true };
+    }
+
+    return {
+      shop,
+      generatedAt: now.toISOString(),
+      projectionVersion: ACTIVE_BUNDLE_RULE_PROJECTION_VERSION,
+      rules: [],
+      degraded: true,
+    };
+  }
+
+  return {
+    shop,
+    generatedAt: now.toISOString(),
+    projectionVersion: ACTIVE_BUNDLE_RULE_PROJECTION_VERSION,
+    rules: [...rules].sort((left, right) => left.priority - right.priority || left.key.localeCompare(right.key)),
+  };
+}
+
+export function isSupportedActiveBundleRuleProjectionVersion(version: number): boolean {
+  return version === ACTIVE_BUNDLE_RULE_PROJECTION_VERSION;
 }
 
 export function buildThresholdRecommendations(

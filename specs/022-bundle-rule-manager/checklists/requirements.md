@@ -32,3 +32,8 @@
 ## Notes
 
 - Validation pass completed in first iteration. No unresolved quality issues.
+- Implementation validation (T035, Sprint 7): US2 preview and US3 lifecycle (pause/resume/archive/duplicate)
+  behaviors implemented and covered by `tests/integration/routes/bundle-rule-manager.test.ts`,
+  `tests/unit/cart-intelligence/*`, and `tests/unit/knowledge-graph/bundles.test.ts` (82/82 passing).
+  Lint and typecheck show no new issues introduced by this feature; remaining errors are pre-existing
+  and unrelated (see `app/lib/db/queries.ts` and `extensions/checkout-ui/src/Checkout.tsx`).

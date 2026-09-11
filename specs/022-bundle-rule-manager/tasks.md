@@ -58,13 +58,13 @@
 
 ### Implementation for User Story 2
 
-- [ ] T019 [US2] Implement preview action endpoint using shared evaluator in app/routes/app.bundles.tsx
-- [ ] T020 [US2] Implement preview cart-line normalization and catalog existence checks in app/lib/cart-intelligence/bundles.ts
-- [ ] T021 [US2] Implement overlap candidate reporting with tie-break reasons in app/lib/cart-intelligence/bundles.ts
-- [ ] T022 [P] [US2] Render preview request builder UI in app/components/admin/BundleRulePreviewPanel.tsx
-- [ ] T023 [US2] Render qualification result, missing requirements, and decision trace in app/components/admin/BundleRulePreviewPanel.tsx
-- [ ] T024 [US2] Add preview result integration section in route view composition in app/routes/app.bundles.tsx
-- [ ] T025 [P] [US2] Add compact active-rule projection helper for downstream consumers in app/lib/cart-intelligence/recommendations.ts
+- [X] T019 [US2] Implement preview action endpoint using shared evaluator in app/routes/app.bundles.tsx
+- [X] T020 [US2] Implement preview cart-line normalization and catalog existence checks in app/lib/cart-intelligence/bundles.ts
+- [X] T021 [US2] Implement overlap candidate reporting with tie-break reasons in app/lib/cart-intelligence/bundles.ts
+- [X] T022 [P] [US2] Render preview request builder UI in app/components/admin/BundleRulePreviewPanel.tsx
+- [X] T023 [US2] Render qualification result, missing requirements, and decision trace in app/components/admin/BundleRulePreviewPanel.tsx
+- [X] T024 [US2] Add preview result integration section in route view composition in app/routes/app.bundles.tsx
+- [X] T025 [P] [US2] Add compact active-rule projection helper for downstream consumers in app/lib/cart-intelligence/recommendations.ts
 
 **Checkpoint**: User Story 2 is independently functional and testable.
 
@@ -78,13 +78,13 @@
 
 ### Implementation for User Story 3
 
-- [ ] T026 [US3] Implement transition actions for ACTIVE->PAUSED and PAUSED->ACTIVE in app/routes/app.bundles.tsx
-- [ ] T027 [US3] Implement archive action and archived-filter behavior in app/routes/app.bundles.tsx
-- [ ] T028 [P] [US3] Implement duplicate-rule persistence operation with draft reset in app/lib/db/queries.ts
-- [ ] T029 [US3] Implement immutable audit event creation for lifecycle actions in app/lib/db/queries.ts
-- [ ] T030 [P] [US3] Render lifecycle action controls (pause/archive/duplicate) in app/components/admin/BundleRuleList.tsx
-- [ ] T031 [US3] Implement lifecycle transition guards and failure semantics in app/lib/cart-intelligence/bundles.ts
-- [ ] T032 [US3] Add archived/default filtering and search handling in route loader in app/routes/app.bundles.tsx
+- [X] T026 [US3] Implement transition actions for ACTIVE->PAUSED and PAUSED->ACTIVE in app/routes/app.bundles.tsx
+- [X] T027 [US3] Implement archive action and archived-filter behavior in app/routes/app.bundles.tsx
+- [X] T028 [P] [US3] Implement duplicate-rule persistence operation with draft reset in app/lib/db/queries.ts
+- [X] T029 [US3] Implement immutable audit event creation for lifecycle actions in app/lib/db/queries.ts
+- [X] T030 [P] [US3] Render lifecycle action controls (pause/archive/duplicate) in app/components/admin/BundleRuleList.tsx
+- [X] T031 [US3] Implement lifecycle transition guards and failure semantics in app/lib/cart-intelligence/bundles.ts
+- [X] T032 [US3] Add archived/default filtering and search handling in route loader in app/routes/app.bundles.tsx
 
 **Checkpoint**: User Story 3 is independently functional and testable.
 
@@ -94,9 +94,9 @@
 
 **Purpose**: Final hardening across stories.
 
-- [ ] T033 Add projection versioning + fallback behavior checks in app/lib/cart-intelligence/recommendations.ts
-- [ ] T034 Update feature quickstart verification notes in specs/022-bundle-rule-manager/quickstart.md
-- [ ] T035 Run full feature validation checklist and mark outcomes in specs/022-bundle-rule-manager/checklists/requirements.md
+- [X] T033 Add projection versioning + fallback behavior checks in app/lib/cart-intelligence/recommendations.ts
+- [X] T034 Update feature quickstart verification notes in specs/022-bundle-rule-manager/quickstart.md
+- [X] T035 Run full feature validation checklist and mark outcomes in specs/022-bundle-rule-manager/checklists/requirements.md
 
 ---
 

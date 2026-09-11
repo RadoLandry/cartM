@@ -19,6 +19,7 @@ import {
   archiveBundleRule,
   createBundleRule,
   deleteBundleRuleComponent,
+  duplicateBundleRule,
   getBundleRuleById,
   getDistinctProductCategoryTagsForShop,
   listBundlePreviewCartItems,
@@ -31,6 +32,7 @@ import {
 import {
   detectBundles,
   validateBundleRuleActivation,
+  validateBundleRuleLifecycleTransition,
 } from "../lib/cart-intelligence/bundles";
 import { authenticate } from "../shopify.server";
 
@@ -136,6 +138,15 @@ const TransitionBundleRuleSchema = z.object({
   toStatus: z.literal(BundleRuleStatus.ACTIVE),
 });
 
+const LifecycleTransitionSchema = z.object({
+  bundleRuleId: z.string().min(1),
+  toStatus: z.enum(["PAUSED", "ACTIVE", "ARCHIVED"] as const),
+});
+
+const DuplicateBundleRuleSchema = z.object({
+  bundleRuleId: z.string().min(1),
+});
+
 const PreviewCartFixtureSchema = z.array(z.object({
   productId: z.string().min(1),
   variantId: z.string().min(1),
@@ -168,10 +179,13 @@ function toNullableString(value: string | undefined) {
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
-  const selectedRuleId = new URL(request.url).searchParams.get("ruleId");
+  const url = new URL(request.url);
+  const selectedRuleId = url.searchParams.get("ruleId");
+  const includeArchived = url.searchParams.get("includeArchived") === "true";
+  const search = url.searchParams.get("q")?.trim() || undefined;
 
   const [bundleRules, products, categoryTags] = await Promise.all([
-    listBundleRulesForShop(session.shop),
+    listBundleRulesForShop(session.shop, { includeArchived, search }),
     listProductsForBundleEditor(session.shop),
     getDistinctProductCategoryTagsForShop(session.shop),
   ]);
@@ -193,6 +207,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     categoryTags,
     selectedRule,
     selectedRuleId,
+    includeArchived,
+    search: search ?? "",
     validationByRuleId,
   };
 };
@@ -377,8 +393,80 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return { ok: false, intent, error: formatSchemaError(parsed.error) };
     }
 
+    const existingRule = await getBundleRuleById(parsed.data.bundleRuleId);
     await archiveBundleRule(parsed.data.bundleRuleId);
+
+    await logBundleRuleAuditEvent({
+      bundleRuleId: parsed.data.bundleRuleId,
+      actionType: "ARCHIVED",
+      actorId: session.shop,
+      fromStatus: existingRule?.status,
+      toStatus: BundleRuleStatus.ARCHIVED,
+      changeSummary: { sourceIntent: "archive-bundle-rule" },
+    });
+
     return { ok: true, intent };
+  }
+
+  if (intent === "pause-bundle-rule" || intent === "resume-bundle-rule") {
+    const parsed = LifecycleTransitionSchema.safeParse(Object.fromEntries(formData));
+    if (!parsed.success) {
+      return { ok: false, intent, error: formatSchemaError(parsed.error) };
+    }
+
+    const rule = await getBundleRuleById(parsed.data.bundleRuleId);
+    if (!rule) {
+      return { ok: false, intent, error: "not_found" };
+    }
+
+    const transition = validateBundleRuleLifecycleTransition(rule.status, parsed.data.toStatus);
+    if (!transition.allowed) {
+      return { ok: false, intent, error: transition.code, message: transition.message, ruleId: rule.id };
+    }
+
+    const updatedRule = await updateBundleRule({
+      id: rule.id,
+      shop: session.shop,
+      status: parsed.data.toStatus as BundleRuleStatus,
+    });
+
+    if (!updatedRule) {
+      return { ok: false, intent, error: "not_found" };
+    }
+
+    await logBundleRuleAuditEvent({
+      bundleRuleId: updatedRule.id,
+      actionType: "STATUS_CHANGED",
+      actorId: session.shop,
+      fromStatus: rule.status,
+      toStatus: updatedRule.status,
+      changeSummary: { from: rule.status, to: updatedRule.status, sourceIntent: intent },
+    });
+
+    return { ok: true, intent, ruleId: updatedRule.id, status: updatedRule.status };
+  }
+
+  if (intent === "duplicate-bundle-rule") {
+    const parsed = DuplicateBundleRuleSchema.safeParse(Object.fromEntries(formData));
+    if (!parsed.success) {
+      return { ok: false, intent, error: formatSchemaError(parsed.error) };
+    }
+
+    const duplicated = await duplicateBundleRule(parsed.data.bundleRuleId);
+    if (!duplicated) {
+      return { ok: false, intent, error: "not_found" };
+    }
+
+    await logBundleRuleAuditEvent({
+      bundleRuleId: duplicated.id,
+      actionType: "DUPLICATED",
+      actorId: session.shop,
+      fromStatus: null,
+      toStatus: duplicated.status,
+      changeSummary: { sourceRuleId: parsed.data.bundleRuleId },
+    });
+
+    return { ok: true, intent, ruleId: duplicated.id };
   }
 
   if (intent === "transition-bundle-rule-status") {
@@ -492,6 +580,8 @@ export default function BundleRulesPage() {
               bundleRules={data.bundleRules}
               selectedRuleId={data.selectedRuleId}
               validationByRuleId={data.validationByRuleId}
+              includeArchived={data.includeArchived}
+              search={data.search}
             />
           </BlockStack>
         </Card>
@@ -513,6 +603,8 @@ export default function BundleRulesPage() {
           <BundleRulePreviewPanel
             productCount={data.products.length}
             categoryCount={data.categoryTags.length}
+            bundleRules={data.bundleRules}
+            actionData={actionData}
           />
         </Card>
       </BlockStack>

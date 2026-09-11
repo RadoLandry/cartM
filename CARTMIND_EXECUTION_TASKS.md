@@ -114,17 +114,17 @@
 ## Sprint 7 - Bundle rule manager
 
 ### Scope execution
-- [ ] Complete feature 022 tasks T019 to T025
-- [ ] Complete feature 022 tasks T026 to T032
-- [ ] Complete feature 022 tasks T033 to T035
+- [x] Complete feature 022 tasks T019 to T025
+- [x] Complete feature 022 tasks T026 to T032
+- [x] Complete feature 022 tasks T033 to T035
 
 ### Quality gate
-- [ ] Run lint
-- [ ] Run typecheck
-- [ ] Run tests integration routes bundle-rule-manager
-- [ ] Run tests unit cart-intelligence bundle-detection
-- [ ] Run tests unit cart-intelligence bundle-recommendations
-- [ ] Confirm lifecycle actions pause, archive, duplicate and preview are stable
+- [x] Run lint
+- [x] Run typecheck
+- [x] Run tests integration routes bundle-rule-manager
+- [x] Run tests unit cart-intelligence bundle-detection
+- [x] Run tests unit cart-intelligence bundle-recommendations
+- [x] Confirm lifecycle actions pause, archive, duplicate and preview are stable
 
 ---
 

@@ -2751,9 +2751,36 @@ export async function getBundleRuleById(bundleRuleId: string): Promise<BundleRul
   return rule ? mapBundleRuleRecord(rule) : null;
 }
 
-export async function listBundleRulesForShop(shop: string, take = 50): Promise<BundleRuleRecord[]> {
+export interface ListBundleRulesForShopOptions {
+  includeArchived?: boolean;
+  search?: string;
+  take?: number;
+}
+
+export async function listBundleRulesForShop(
+  shop: string,
+  takeOrOptions: number | ListBundleRulesForShopOptions = 50,
+): Promise<BundleRuleRecord[]> {
+  const options: ListBundleRulesForShopOptions = typeof takeOrOptions === "number"
+    ? { take: takeOrOptions }
+    : takeOrOptions;
+  const { includeArchived = false, search, take = 50 } = options;
+
+  const where: Prisma.BundleRuleWhereInput = {
+    shop,
+    ...(includeArchived ? {} : { status: { not: BundleRuleStatus.ARCHIVED } }),
+    ...(search
+      ? {
+          OR: [
+            { label: { contains: search, mode: "insensitive" } },
+            { key: { contains: search, mode: "insensitive" } },
+          ],
+        }
+      : {}),
+  };
+
   const rules = await db.bundleRule.findMany({
-    where: { shop },
+    where,
     orderBy: [{ status: "asc" }, { priority: "asc" }, { label: "asc" }],
     take,
     include: {
@@ -2764,6 +2791,59 @@ export async function listBundleRulesForShop(shop: string, take = 50): Promise<B
   });
 
   return rules.map(mapBundleRuleRecord);
+}
+
+export async function duplicateBundleRule(bundleRuleId: string): Promise<BundleRuleRecord | null> {
+  const source = await db.bundleRule.findUnique({
+    where: { id: bundleRuleId },
+    include: {
+      components: {
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+      },
+    },
+  });
+
+  if (!source) {
+    return null;
+  }
+
+  const duplicateKey = `${source.key}-copy-${Date.now().toString(36)}`;
+
+  const created = await db.bundleRule.create({
+    data: {
+      shop: source.shop,
+      key: duplicateKey,
+      label: `${source.label} (copy)`,
+      description: source.description,
+      source: source.source,
+      status: BundleRuleStatus.DRAFT,
+      priority: source.priority,
+      completionThreshold: source.completionThreshold,
+      discountType: source.discountType,
+      discountValue: source.discountValue,
+      components: {
+        create: source.components.map((component) => ({
+          componentKey: component.componentKey,
+          label: component.label,
+          description: component.description,
+          isRequired: component.isRequired,
+          sortOrder: component.sortOrder,
+          matchMode: component.matchMode,
+          acceptedCategoryTags: component.acceptedCategoryTags,
+          acceptedShopifyProductIds: component.acceptedShopifyProductIds,
+          acceptedShopifyVariantIds: component.acceptedShopifyVariantIds,
+          minQuantity: component.minQuantity,
+        })),
+      },
+    },
+    include: {
+      components: {
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+      },
+    },
+  });
+
+  return mapBundleRuleRecord(created);
 }
 
 export async function listActiveBundleRules(shop: string): Promise<BundleRuleRecord[]> {

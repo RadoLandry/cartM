@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { action, loader } from "../../../app/routes/app.bundles";
-import { detectBundles, validateBundleRuleActivation } from "../../../app/lib/cart-intelligence/bundles";
+import { detectBundles, validateBundleRuleActivation, validateBundleRuleLifecycleTransition } from "../../../app/lib/cart-intelligence/bundles";
 import * as dbQueries from "../../../app/lib/db/queries";
 import { authenticate } from "../../../app/shopify.server";
 
@@ -14,12 +14,14 @@ vi.mock("../../../app/shopify.server", () => ({
 vi.mock("../../../app/lib/cart-intelligence/bundles", () => ({
   detectBundles: vi.fn(),
   validateBundleRuleActivation: vi.fn(() => []),
+  validateBundleRuleLifecycleTransition: vi.fn(() => ({ allowed: true })),
 }));
 
 vi.mock("../../../app/lib/db/queries", () => ({
   archiveBundleRule: vi.fn(),
   createBundleRule: vi.fn(),
   deleteBundleRuleComponent: vi.fn(),
+  duplicateBundleRule: vi.fn(),
   getBundleRuleById: vi.fn(),
   getDistinctProductCategoryTagsForShop: vi.fn(),
   listBundlePreviewCartItems: vi.fn(),
@@ -52,7 +54,10 @@ describe("bundle rule manager route", () => {
 
     const result = await loader({ request: new Request("http://localhost/app/bundles"), params: {}, context: {} } as never);
 
-    expect(dbQueries.listBundleRulesForShop).toHaveBeenCalledWith("test.myshopify.com");
+    expect(dbQueries.listBundleRulesForShop).toHaveBeenCalledWith("test.myshopify.com", {
+      includeArchived: false,
+      search: undefined,
+    });
     expect(dbQueries.listProductsForBundleEditor).toHaveBeenCalledWith("test.myshopify.com");
     expect(dbQueries.getDistinctProductCategoryTagsForShop).toHaveBeenCalledWith("test.myshopify.com");
     expect(result.categoryTags).toEqual(["gloves", "mouthguard"]);
@@ -300,6 +305,102 @@ describe("bundle rule manager route", () => {
       ok: true,
       intent: "preview-bundle-rule",
       preview: { bundleKey: "boxing-starter-bundle", status: "partial" },
+    });
+  });
+
+  it("pauses an active bundle rule and logs an audit event", async () => {
+    vi.mocked(dbQueries.getBundleRuleById).mockResolvedValueOnce({
+      id: "bundle-1",
+      status: "ACTIVE",
+    } as never);
+    vi.mocked(dbQueries.updateBundleRule).mockResolvedValueOnce({
+      id: "bundle-1",
+      status: "PAUSED",
+    } as never);
+
+    const request = new Request("http://localhost/app/bundles", {
+      method: "POST",
+      body: new URLSearchParams({
+        intent: "pause-bundle-rule",
+        bundleRuleId: "bundle-1",
+        toStatus: "PAUSED",
+      }),
+    });
+
+    const result = await action({ request, params: {}, context: {} } as never);
+
+    expect(dbQueries.updateBundleRule).toHaveBeenCalledWith({
+      id: "bundle-1",
+      shop: "test.myshopify.com",
+      status: "PAUSED",
+    });
+    expect(dbQueries.logBundleRuleAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ bundleRuleId: "bundle-1", actionType: "STATUS_CHANGED" }),
+    );
+    expect(result).toEqual({ ok: true, intent: "pause-bundle-rule", ruleId: "bundle-1", status: "PAUSED" });
+  });
+
+  it("rejects invalid lifecycle transitions", async () => {
+    vi.mocked(validateBundleRuleLifecycleTransition).mockReturnValueOnce({
+      allowed: false,
+      code: "invalid_lifecycle_transition",
+      message: "Cannot transition a bundle rule from DRAFT to PAUSED.",
+    });
+    vi.mocked(dbQueries.getBundleRuleById).mockResolvedValueOnce({
+      id: "bundle-1",
+      status: "DRAFT",
+    } as never);
+
+    const request = new Request("http://localhost/app/bundles", {
+      method: "POST",
+      body: new URLSearchParams({
+        intent: "pause-bundle-rule",
+        bundleRuleId: "bundle-1",
+        toStatus: "PAUSED",
+      }),
+    });
+
+    const result = await action({ request, params: {}, context: {} } as never);
+
+    expect(dbQueries.updateBundleRule).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ ok: false, intent: "pause-bundle-rule", error: "invalid_lifecycle_transition" });
+  });
+
+  it("duplicates a bundle rule as a new draft and logs an audit event", async () => {
+    vi.mocked(dbQueries.duplicateBundleRule).mockResolvedValueOnce({
+      id: "bundle-2",
+      status: "DRAFT",
+    } as never);
+
+    const request = new Request("http://localhost/app/bundles", {
+      method: "POST",
+      body: new URLSearchParams({
+        intent: "duplicate-bundle-rule",
+        bundleRuleId: "bundle-1",
+      }),
+    });
+
+    const result = await action({ request, params: {}, context: {} } as never);
+
+    expect(dbQueries.duplicateBundleRule).toHaveBeenCalledWith("bundle-1");
+    expect(dbQueries.logBundleRuleAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ bundleRuleId: "bundle-2", actionType: "DUPLICATED" }),
+    );
+    expect(result).toEqual({ ok: true, intent: "duplicate-bundle-rule", ruleId: "bundle-2" });
+  });
+
+  it("loads rules including archived when requested via query param", async () => {
+    vi.mocked(dbQueries.listBundleRulesForShop).mockResolvedValueOnce([] as never);
+
+    await loader({
+      request: new Request("http://localhost/app/bundles?includeArchived=true&q=starter"),
+      params: {},
+      context: {},
+    } as never);
+
+    expect(dbQueries.listBundleRulesForShop).toHaveBeenCalledWith("test.myshopify.com", {
+      includeArchived: true,
+      search: "starter",
     });
   });
 });

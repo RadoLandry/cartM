@@ -153,6 +153,46 @@ export function validateBundleRuleActivation(
   return issues;
 }
 
+export interface BundleLifecycleTransitionResult {
+  allowed: boolean;
+  code?: string;
+  message?: string;
+}
+
+const ALLOWED_LIFECYCLE_TRANSITIONS: Record<string, string[]> = {
+  DRAFT: ["ACTIVE", "ARCHIVED"],
+  ACTIVE: ["PAUSED", "ARCHIVED"],
+  PAUSED: ["ACTIVE", "ARCHIVED"],
+  ARCHIVED: [],
+};
+
+/**
+ * Guards lifecycle transitions (pause/resume/archive) independent of activation validation.
+ */
+export function validateBundleRuleLifecycleTransition(
+  fromStatus: string,
+  toStatus: string,
+): BundleLifecycleTransitionResult {
+  if (fromStatus === toStatus) {
+    return {
+      allowed: false,
+      code: "no_op_transition",
+      message: `Rule is already in ${toStatus} status.`,
+    };
+  }
+
+  const allowedTargets = ALLOWED_LIFECYCLE_TRANSITIONS[fromStatus] ?? [];
+  if (!allowedTargets.includes(toStatus)) {
+    return {
+      allowed: false,
+      code: "invalid_lifecycle_transition",
+      message: `Cannot transition a bundle rule from ${fromStatus} to ${toStatus}.`,
+    };
+  }
+
+  return { allowed: true };
+}
+
 const STATUS_RANK: Record<BundleMatchStatus, number> = {
   qualified: 0,
   nearly_complete: 1,
@@ -536,7 +576,7 @@ function resolveOverlaps(
   const overlapping = qualified.filter((m) => m.competitionGroupKeys.length > 0);
   const nonOverlapping = qualified.filter((m) => m.competitionGroupKeys.length === 0);
 
-  let winnerPerGroup: BundleMatch[] = [];
+  const winnerPerGroup: BundleMatch[] = [];
   const processedKeys = new Set<string>();
 
   for (const match of overlapping) {

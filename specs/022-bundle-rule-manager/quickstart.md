@@ -46,3 +46,20 @@ Implement and validate Bundle Rule Manager planning outcomes from `specs/022-bun
 - Invalid rules fail activation with actionable errors.
 - Overlapping matches resolve consistently using a deterministic policy.
 - Lifecycle actions preserve auditability and do not mutate unrelated rules.
+
+## Sprint 7 verification notes (US2/US3 closure)
+
+- Preview: `preview-bundle-rule` intent in `app/routes/app.bundles.tsx` normalizes cart fixtures via
+  `listBundlePreviewCartItems` and runs the shared `detectBundles` evaluator; `BundleRulePreviewPanel`
+  renders qualification status, missing requirements, decision-trace reasons, and competing-offer keys.
+- Lifecycle: `pause-bundle-rule`, `resume-bundle-rule`, `archive-bundle-rule`, and `duplicate-bundle-rule`
+  intents are guarded by `validateBundleRuleLifecycleTransition` in `app/lib/cart-intelligence/bundles.ts`
+  and each records a `BundleRuleAuditRecord` via `logBundleRuleAuditEvent`.
+- Duplication resets the copy to `DRAFT` status with a derived unique key (`duplicateBundleRule` in
+  `app/lib/db/queries.ts`) and copies all components.
+- Filtering: the admin loader accepts `includeArchived` and `q` query params
+  (`listBundleRulesForShop(shop, { includeArchived, search })`) so archived rules are hidden by default.
+- Projection: `buildActiveBundleRuleProjectionFeed` in `app/lib/cart-intelligence/recommendations.ts`
+  wraps `toBundleProjection`/`listActiveBundleRuleProjections` output with `projectionVersion` and falls
+  back to the last known-good feed (marked `degraded: true`) when rule generation input is unavailable.
+- Validated with `npx vitest run tests/integration/routes/bundle-rule-manager.test.ts tests/unit/cart-intelligence tests/unit/knowledge-graph/bundles.test.ts` (82 tests passing).
