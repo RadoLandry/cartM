@@ -131,20 +131,20 @@
 ## Sprint 8 - Customer profile and replenishment
 
 ### Scope execution
-- [ ] Complete feature 012 tasks T020 to T024
-- [ ] Complete feature 013 tasks T009 to T014
-- [ ] Complete feature 012 tasks T025 to T029
-- [ ] Complete feature 013 tasks T015 to T020
-- [ ] Complete feature 012 tasks T030 to T033
-- [ ] Complete feature 013 tasks T021 to T027
-- [ ] Complete feature 013 tasks T028 to T036
+- [x] Complete feature 012 tasks T020 to T024
+- [x] Complete feature 013 tasks T009 to T014
+- [x] Complete feature 012 tasks T025 to T029
+- [x] Complete feature 013 tasks T015 to T020
+- [x] Complete feature 012 tasks T030 to T033
+- [x] Complete feature 013 tasks T021 to T027
+- [x] Complete feature 013 tasks T028 to T036
 
 ### Quality gate
-- [ ] Run lint
-- [ ] Run typecheck
-- [ ] Run tests integration routes replenishment-recommendations
-- [ ] Run tests integration routes webhooks-orders-create-replenishment
-- [ ] Confirm personalization precedence, confidence and noise control
+- [x] Run lint
+- [x] Run typecheck
+- [x] Run tests integration routes replenishment-recommendations
+- [x] Run tests integration routes webhooks-orders-create-replenishment
+- [x] Confirm personalization precedence, confidence and noise control
 
 ---
 
