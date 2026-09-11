@@ -16,8 +16,8 @@ export interface CustomerPurchaseSnapshotFixture {
   productId: string;
   variantId?: string;
   categoryTag: string;
-  firstPurchasedAt: string;
-  lastPurchasedAt: string;
+  firstPurchasedAt: string | Date;
+  lastPurchasedAt: string | Date;
   orderCount: number;
   totalQuantity: number;
   latestTitle: string;

@@ -47,15 +47,15 @@
 
 ### Tests for User Story 1
 
-- [ ] T009 [P] [US1] Add unit tests for due-window evaluation, urgency ranking, and no-history fallback in tests/unit/cart-intelligence/replenishment.test.ts
-- [ ] T010 [P] [US1] Add integration tests for returning-shopper replenishment reminders in tests/integration/routes/replenishment-recommendations.test.ts
+- [X] T009 [P] [US1] Add unit tests for due-window evaluation, urgency ranking, and no-history fallback in tests/unit/cart-intelligence/replenishment.test.ts
+- [X] T010 [P] [US1] Add integration tests for returning-shopper replenishment reminders in tests/integration/routes/replenishment-recommendations.test.ts
 
 ### Implementation for User Story 1
 
-- [ ] T011 [US1] Implement lifecycle-rule lookup and due-candidate query helpers in app/lib/db/queries.ts
-- [ ] T012 [US1] Implement due-window evaluation and reminder ranking in app/lib/cart-intelligence/replenishment.ts
-- [ ] T013 [US1] Format shopper-facing reminder summaries and opportunities in app/lib/cart-intelligence/recommendations.ts
-- [ ] T014 [US1] Return replenishment reminders for recognized shoppers in app/routes/api.ai.recommendations.tsx
+- [X] T011 [US1] Implement lifecycle-rule lookup and due-candidate query helpers in app/lib/db/queries.ts
+- [X] T012 [US1] Implement due-window evaluation and reminder ranking in app/lib/cart-intelligence/replenishment.ts
+- [X] T013 [US1] Format shopper-facing reminder summaries and opportunities in app/lib/cart-intelligence/recommendations.ts
+- [X] T014 [US1] Return replenishment reminders for recognized shoppers in app/routes/api.ai.recommendations.tsx
 
 **Checkpoint**: User Story 1 should now provide independently testable timely replenishment reminders.
 
@@ -69,15 +69,15 @@
 
 ### Tests for User Story 2
 
-- [ ] T015 [P] [US2] Add unit tests for reorder-target selection, upgrade fallback, and grouped refresh-cart assembly in tests/unit/cart-intelligence/replenishment-recommendations.test.ts
-- [ ] T016 [P] [US2] Add integration tests for refresh-cart and upgrade-ready replenishment responses in tests/integration/routes/replenishment-recommendations.test.ts
+- [X] T015 [P] [US2] Add unit tests for reorder-target selection, upgrade fallback, and grouped refresh-cart assembly in tests/unit/cart-intelligence/replenishment-recommendations.test.ts
+- [X] T016 [P] [US2] Add integration tests for refresh-cart and upgrade-ready replenishment responses in tests/integration/routes/replenishment-recommendations.test.ts
 
 ### Implementation for User Story 2
 
-- [ ] T017 [US2] Implement reorder target hydration and upgrade candidate lookup in app/lib/db/queries.ts
-- [ ] T018 [US2] Implement action selection and grouped refresh-cart assembly in app/lib/cart-intelligence/replenishment.ts
-- [ ] T019 [US2] Extend replenishment response shaping with action targets and refresh-cart payloads in app/lib/cart-intelligence/recommendations.ts
-- [ ] T020 [US2] Return executable replenishment actions from app/routes/api.ai.recommendations.tsx
+- [X] T017 [US2] Implement reorder target hydration and upgrade candidate lookup in app/lib/db/queries.ts
+- [X] T018 [US2] Implement action selection and grouped refresh-cart assembly in app/lib/cart-intelligence/replenishment.ts
+- [X] T019 [US2] Extend replenishment response shaping with action targets and refresh-cart payloads in app/lib/cart-intelligence/recommendations.ts
+- [X] T020 [US2] Return executable replenishment actions from app/routes/api.ai.recommendations.tsx
 
 **Checkpoint**: User Story 2 should now provide independently testable reorder, upgrade, and grouped refresh-cart actions.
 
@@ -91,16 +91,16 @@
 
 ### Tests for User Story 3
 
-- [ ] T021 [P] [US3] Add unit tests for low-confidence suppression, quantity-aware timing, and recent-purchase cooldown logic in tests/unit/cart-intelligence/replenishment.test.ts
-- [ ] T022 [P] [US3] Add integration tests for reminder suppression after recent purchases in tests/integration/routes/replenishment-recommendations.test.ts
-- [ ] T023 [P] [US3] Add webhook ingestion tests for replenishment snapshot updates and reminder reset behavior in tests/integration/routes/webhooks-orders-create-replenishment.test.ts
+- [X] T021 [P] [US3] Add unit tests for low-confidence suppression, quantity-aware timing, and recent-purchase cooldown logic in tests/unit/cart-intelligence/replenishment.test.ts
+- [X] T022 [P] [US3] Add integration tests for reminder suppression after recent purchases in tests/integration/routes/replenishment-recommendations.test.ts
+- [X] T023 [P] [US3] Add webhook ingestion tests for replenishment snapshot updates and reminder reset behavior in tests/integration/routes/webhooks-orders-create-replenishment.test.ts
 
 ### Implementation for User Story 3
 
-- [ ] T024 [US3] Implement quantity-aware timing, sparse-history suppression, and confidence thresholds in app/lib/cart-intelligence/replenishment.ts
-- [ ] T025 [US3] Implement replenishment purchase snapshot upserts and shopper-summary refresh logic in app/lib/db/queries.ts
-- [ ] T026 [US3] Extend Shopify order webhook ingestion for replenishment snapshots in app/routes/webhooks.orders.create.tsx
-- [ ] T027 [US3] Reflect suppressed and hidden replenishment states in app/lib/cart-intelligence/recommendations.ts
+- [X] T024 [US3] Implement quantity-aware timing, sparse-history suppression, and confidence thresholds in app/lib/cart-intelligence/replenishment.ts
+- [X] T025 [US3] Implement replenishment purchase snapshot upserts and shopper-summary refresh logic in app/lib/db/queries.ts
+- [X] T026 [US3] Extend Shopify order webhook ingestion for replenishment snapshots in app/routes/webhooks.orders.create.tsx
+- [X] T027 [US3] Reflect suppressed and hidden replenishment states in app/lib/cart-intelligence/recommendations.ts
 
 **Checkpoint**: User Story 3 should now provide independently testable suppression of premature or irrelevant reminders.
 
@@ -114,14 +114,14 @@
 
 ### Tests for User Story 4
 
-- [ ] T028 [P] [US4] Add unit tests for shopper-specific cadence inference and action preference learning in tests/unit/cart-intelligence/replenishment.test.ts
-- [ ] T029 [P] [US4] Add integration tests for shopper-specific cadence and reorder-versus-upgrade behavior in tests/integration/routes/replenishment-recommendations.test.ts
+- [X] T028 [P] [US4] Add unit tests for shopper-specific cadence inference and action preference learning in tests/unit/cart-intelligence/replenishment.test.ts
+- [X] T029 [P] [US4] Add integration tests for shopper-specific cadence and reorder-versus-upgrade behavior in tests/integration/routes/replenishment-recommendations.test.ts
 
 ### Implementation for User Story 4
 
-- [ ] T030 [US4] Implement cadence inference and preferred-action persistence in app/lib/db/queries.ts
-- [ ] T031 [US4] Implement shopper-specific cadence adjustment and action-preference weighting in app/lib/cart-intelligence/replenishment.ts
-- [ ] T032 [US4] Extend replenishment shopper messaging with cadence-aware reasoning in app/lib/cart-intelligence/recommendations.ts
+- [X] T030 [US4] Implement cadence inference and preferred-action persistence in app/lib/db/queries.ts
+- [X] T031 [US4] Implement shopper-specific cadence adjustment and action-preference weighting in app/lib/cart-intelligence/replenishment.ts
+- [X] T032 [US4] Extend replenishment shopper messaging with cadence-aware reasoning in app/lib/cart-intelligence/recommendations.ts
 
 **Checkpoint**: User Story 4 should now provide independently testable shopper-specific replenishment timing and action selection.
 
@@ -131,10 +131,10 @@
 
 **Purpose**: Final validation, backfill support, and cross-story hardening.
 
-- [ ] T033 [P] Add historical order backfill script for replenishment seeding in scripts/backfill-customer-purchases.ts
-- [ ] T034 [P] Document final replenishment payload and ingestion examples in specs/013-replenishment-prediction/contracts/replenishment-recommendation-response.md and specs/013-replenishment-prediction/contracts/replenishment-purchase-ingestion.md
-- [ ] T035 Tune replenishment query and ranking performance in app/lib/db/queries.ts and app/lib/cart-intelligence/replenishment.ts
-- [ ] T036 Run quickstart regression scenarios in tests/integration/routes/replenishment-recommendations.test.ts and tests/integration/routes/webhooks-orders-create-replenishment.test.ts
+- [X] T033 [P] Add historical order backfill script for replenishment seeding in scripts/backfill-customer-purchases.ts
+- [X] T034 [P] Document final replenishment payload and ingestion examples in specs/013-replenishment-prediction/contracts/replenishment-recommendation-response.md and specs/013-replenishment-prediction/contracts/replenishment-purchase-ingestion.md
+- [X] T035 Tune replenishment query and ranking performance in app/lib/db/queries.ts and app/lib/cart-intelligence/replenishment.ts
+- [X] T036 Run quickstart regression scenarios in tests/integration/routes/replenishment-recommendations.test.ts and tests/integration/routes/webhooks-orders-create-replenishment.test.ts
 
 ---
 

@@ -135,6 +135,34 @@ describe("resolveCustomerProfile", () => {
       guidanceMode: "generic",
     });
   });
+
+  it("lets explicit input override conflicting stored purchase-history discipline and size signals", () => {
+    const resolved = resolveCustomerProfile({
+      shop: TEST_SHOP,
+      shopifyCustomerId: TEST_CUSTOMER_ID,
+      explicitInput: {
+        discipline: "muay-thai",
+        knownSizes: { gloves_oz: "16oz" },
+      },
+      storedProfile: {
+        profileKey: `${TEST_SHOP}:customer:${TEST_CUSTOMER_ID}`,
+        ...makeStoredCustomerProfileFixture(),
+      },
+    }, new Date("2026-05-26T12:00:00.000Z"));
+
+    expect(resolved.disciplinePreferences[0]).toEqual({
+      discipline: "muay-thai",
+      score: 1,
+      source: "explicit",
+    });
+    expect(resolved.knownSizes.gloves_oz).toBe("16oz");
+    expect(resolved.sourceSummary).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ attribute: "discipline", source: "explicit" }),
+        expect.objectContaining({ attribute: "knownSizes", source: "explicit" }),
+      ]),
+    );
+  });
 });
 
 describe("computeProfileRecencyState", () => {

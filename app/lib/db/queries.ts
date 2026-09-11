@@ -3988,6 +3988,146 @@ export async function listCustomerPurchaseSnapshots(
   return rows.map(toCustomerPurchaseSnapshotRecord);
 }
 
+export interface CustomerPurchaseSnapshotUpsertInput {
+  shop: string;
+  shopifyCustomerId: string;
+  productId: string;
+  variantId?: string;
+  categoryTag: string;
+  purchasedAt: Date;
+  orderId?: string;
+  quantity?: number;
+  title: string;
+  variantTitle?: string;
+  currencyCode?: string;
+  unitPrice?: number;
+}
+
+function inferCadenceFromHistory(
+  existing: SelectedCustomerPurchaseSnapshot | null,
+  purchasedAt: Date,
+  nextOrderCount: number,
+): number | null {
+  if (!existing || nextOrderCount < 2) {
+    return existing?.inferredCadenceDays ?? null;
+  }
+
+  const totalSpanDays = Math.round(
+    (purchasedAt.getTime() - existing.firstPurchasedAt.getTime()) / (1000 * 60 * 60 * 24),
+  );
+
+  if (totalSpanDays <= 0) {
+    return existing.inferredCadenceDays ?? null;
+  }
+
+  return Math.round(totalSpanDays / (nextOrderCount - 1));
+}
+
+/**
+ * Upsert a replenishment purchase snapshot for a customer/product/category.
+ * Resets the due-window clock (lastPurchasedAt) and refines the inferred cadence.
+ */
+export async function upsertCustomerPurchaseSnapshot(
+  input: CustomerPurchaseSnapshotUpsertInput,
+): Promise<CustomerPurchaseSnapshotRecord> {
+  const key = {
+    shop: input.shop,
+    shopifyCustomerId: input.shopifyCustomerId,
+    productId: input.productId,
+    categoryTag: input.categoryTag,
+  };
+
+  const existing = await db.customerPurchaseSnapshot.findUnique({
+    where: { shop_shopifyCustomerId_productId_categoryTag: key },
+    select: customerPurchaseSnapshotSelect,
+  });
+
+  const quantity = input.quantity ?? 1;
+  const nextOrderCount = (existing?.orderCount ?? 0) + 1;
+  const inferredCadenceDays = inferCadenceFromHistory(existing, input.purchasedAt, nextOrderCount);
+
+  const row = await db.customerPurchaseSnapshot.upsert({
+    where: { shop_shopifyCustomerId_productId_categoryTag: key },
+    update: {
+      lastPurchasedAt: input.purchasedAt,
+      ...(input.orderId ? { lastOrderId: input.orderId } : {}),
+      orderCount: { increment: 1 },
+      totalQuantity: { increment: quantity },
+      latestTitle: input.title,
+      ...(input.variantId ? { variantId: input.variantId } : {}),
+      ...(input.variantTitle ? { latestVariantTitle: input.variantTitle } : {}),
+      ...(input.currencyCode ? { currencyCode: input.currencyCode } : {}),
+      ...(input.unitPrice !== undefined ? { lastUnitPrice: input.unitPrice } : {}),
+      ...(inferredCadenceDays ? { inferredCadenceDays } : {}),
+    },
+    create: {
+      ...key,
+      variantId: input.variantId,
+      firstPurchasedAt: input.purchasedAt,
+      lastPurchasedAt: input.purchasedAt,
+      lastOrderId: input.orderId,
+      orderCount: 1,
+      totalQuantity: quantity,
+      latestTitle: input.title,
+      latestVariantTitle: input.variantTitle,
+      currencyCode: input.currencyCode,
+      lastUnitPrice: input.unitPrice,
+    },
+    select: customerPurchaseSnapshotSelect,
+  });
+
+  return toCustomerPurchaseSnapshotRecord(row);
+}
+
+export interface ReplenishmentActionTargetRow {
+  productId: string;
+  variantId?: string;
+  categoryTag?: string;
+  available: boolean;
+}
+
+/**
+ * Resolve reorder/upgrade action targets (availability + category) for a set of
+ * Shopify product ids so replenishment opportunities can be executed directly.
+ */
+export async function getReplenishmentActionTargets(
+  shop: string,
+  shopifyProductIds: string[],
+): Promise<Map<string, ReplenishmentActionTargetRow>> {
+  const results = new Map<string, ReplenishmentActionTargetRow>();
+
+  if (shopifyProductIds.length === 0) {
+    return results;
+  }
+
+  const products = await db.product.findMany({
+    where: { shop, shopifyProductId: { in: shopifyProductIds } },
+    select: {
+      shopifyProductId: true,
+      categoryTags: true,
+      variants: {
+        select: { shopifyVariantId: true, inventoryQuantity: true },
+        orderBy: { updatedAt: "desc" },
+      },
+    },
+  });
+
+  for (const product of products) {
+    const availableVariant = product.variants.find((variant) => (variant.inventoryQuantity ?? 0) > 0);
+    const fallbackVariant = product.variants[0];
+    const chosenVariant = availableVariant ?? fallbackVariant;
+
+    results.set(product.shopifyProductId, {
+      productId: product.shopifyProductId,
+      ...(chosenVariant ? { variantId: chosenVariant.shopifyVariantId } : {}),
+      ...(product.categoryTags[0] ? { categoryTag: product.categoryTags[0] } : {}),
+      available: Boolean(availableVariant),
+    });
+  }
+
+  return results;
+}
+
 export async function getReplenishmentShopperSummary(
   shop: string,
   shopifyCustomerId: string,

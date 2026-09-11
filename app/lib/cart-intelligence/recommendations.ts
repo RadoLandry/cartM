@@ -617,6 +617,41 @@ export function buildReplenishmentRecommendations(
           }
         : {}),
     })),
+    ...buildReplenishmentRefreshCart(visibleCandidates),
+  };
+}
+
+function buildReplenishmentRefreshCart(
+  visibleCandidates: Array<ReplenishmentCandidate & { dueState: "approaching" | "due" }>,
+): Pick<ReplenishmentRecommendationPayload, "refreshCart"> {
+  const dueCandidates = visibleCandidates.filter((candidate) => candidate.dueState === "due");
+  const actions = dueCandidates
+    .map((candidate) => {
+      const target = candidate.preferredAction === "reorder" ? candidate.reorderTarget : candidate.upgradeTarget;
+
+      if (!target || !target.available) {
+        return null;
+      }
+
+      return {
+        productId: target.productId,
+        ...(target.variantId ? { variantId: target.variantId } : {}),
+        quantity: 1,
+        actionType: candidate.preferredAction,
+      };
+    })
+    .filter((action): action is NonNullable<typeof action> => action !== null);
+
+  if (actions.length < 2) {
+    return {};
+  }
+
+  return {
+    refreshCart: {
+      suggestionKey: `refresh-cart:${dueCandidates.map((candidate) => candidate.candidateKey).join(",")}`,
+      totalItems: actions.length,
+      actions,
+    },
   };
 }
 

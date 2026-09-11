@@ -16,6 +16,7 @@ import {
   listActiveReplenishmentLifecycleRules,
   getCustomerProfile,
   getColorCompatibilityRulesForKeys,
+  getReplenishmentActionTargets,
   getSessionCustomerProfile,
   listCustomerPurchaseSnapshots,
   listCartVisualItems,
@@ -203,6 +204,11 @@ async function buildReplenishmentResponse(
     return undefined;
   }
 
+  const reorderTargets = await getReplenishmentActionTargets(
+    shop,
+    purchaseSnapshots.map((snapshot) => snapshot.productId),
+  );
+
   return buildReplenishmentRecommendations(
     evaluateReplenishmentCandidates({
       shop,
@@ -210,6 +216,7 @@ async function buildReplenishmentResponse(
       profile: storedProfile,
       purchaseSnapshots,
       lifecycleRules,
+      reorderTargets,
     }),
   );
 }

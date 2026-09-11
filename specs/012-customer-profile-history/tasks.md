@@ -90,14 +90,14 @@
 
 ### Tests for User Story 3
 
-- [ ] T020 [P] [US3] Add unit tests for explicit-input precedence and source summaries in tests/unit/cart-intelligence/customer-profile.test.ts
-- [ ] T021 [P] [US3] Add integration tests for profileInput request handling and validation in tests/integration/routes/customer-profile-recommendations.test.ts
+- [X] T020 [P] [US3] Add unit tests for explicit-input precedence and source summaries in tests/unit/cart-intelligence/customer-profile.test.ts
+- [X] T021 [P] [US3] Add integration tests for profileInput request handling and validation in tests/integration/routes/customer-profile-recommendations.test.ts
 
 ### Implementation for User Story 3
 
-- [ ] T022 [US3] Implement explicit profile merge and update handling in app/lib/db/queries.ts
-- [ ] T023 [US3] Implement explicit-input precedence and attribute source tracking in app/lib/cart-intelligence/customer-profile.ts
-- [ ] T024 [US3] Extend explicit profile-input parsing and response shaping in app/routes/api.ai.recommendations.tsx
+- [X] T022 [US3] Implement explicit profile merge and update handling in app/lib/db/queries.ts
+- [X] T023 [US3] Implement explicit-input precedence and attribute source tracking in app/lib/cart-intelligence/customer-profile.ts
+- [X] T024 [US3] Extend explicit profile-input parsing and response shaping in app/routes/api.ai.recommendations.tsx
 
 **Checkpoint**: User Story 3 should now provide independently testable explicit-profile override behavior.
 
@@ -111,14 +111,14 @@
 
 ### Tests for User Story 4
 
-- [ ] T025 [P] [US4] Add unit tests for guidance mode, low-confidence fallback, and repeat-shopper suppression in tests/unit/cart-intelligence/customer-profile.test.ts
-- [ ] T026 [P] [US4] Add integration tests for reduced-noise recommendation behavior in tests/integration/routes/customer-profile-recommendations.test.ts
+- [X] T025 [P] [US4] Add unit tests for guidance mode, low-confidence fallback, and repeat-shopper suppression in tests/unit/cart-intelligence/customer-profile.test.ts
+- [X] T026 [P] [US4] Add integration tests for reduced-noise recommendation behavior in tests/integration/routes/customer-profile-recommendations.test.ts
 
 ### Implementation for User Story 4
 
-- [ ] T027 [US4] Implement confidence thresholds, guidance modes, and repeat-shopper noise reduction in app/lib/cart-intelligence/customer-profile.ts
-- [ ] T028 [US4] Apply personalization intensity and source-aware messaging in app/lib/cart-intelligence/recommendations.ts
-- [ ] T029 [US4] Consume resolved known sizes and low-confidence fallback behavior in app/lib/knowledge-graph/sizing.ts
+- [X] T027 [US4] Implement confidence thresholds, guidance modes, and repeat-shopper noise reduction in app/lib/cart-intelligence/customer-profile.ts
+- [X] T028 [US4] Apply personalization intensity and source-aware messaging in app/lib/cart-intelligence/recommendations.ts
+- [X] T029 [US4] Consume resolved known sizes and low-confidence fallback behavior in app/lib/knowledge-graph/sizing.ts
 
 **Checkpoint**: User Story 4 should now provide independently testable noise reduction for experienced repeat shoppers.
 
@@ -128,10 +128,10 @@
 
 **Purpose**: Final regression validation, contract examples, and performance hardening across all stories.
 
-- [ ] T030 [P] Document final profile-resolution examples in specs/012-customer-profile-history/contracts/profile-resolution.md
-- [ ] T031 [P] Document final route request examples in specs/012-customer-profile-history/contracts/recommendation-personalization-request.md
-- [ ] T032 Tune profile-resolution and payload performance in app/lib/cart-intelligence/customer-profile.ts
-- [ ] T033 Run quickstart regression scenarios in tests/integration/routes/customer-profile-recommendations.test.ts
+- [X] T030 [P] Document final profile-resolution examples in specs/012-customer-profile-history/contracts/profile-resolution.md
+- [X] T031 [P] Document final route request examples in specs/012-customer-profile-history/contracts/recommendation-personalization-request.md
+- [X] T032 Tune profile-resolution and payload performance in app/lib/cart-intelligence/customer-profile.ts
+- [X] T033 Run quickstart regression scenarios in tests/integration/routes/customer-profile-recommendations.test.ts
 
 ---
 

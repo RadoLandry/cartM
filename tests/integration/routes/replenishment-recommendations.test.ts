@@ -11,6 +11,7 @@ import {
 vi.mock("../../../app/lib/db/queries", () => ({
   getColorCompatibilityRulesForKeys: vi.fn(),
   getCustomerProfile: vi.fn(),
+  getReplenishmentActionTargets: vi.fn(),
   getSessionCustomerProfile: vi.fn(),
   listActiveReplenishmentLifecycleRules: vi.fn(),
   listCustomerPurchaseSnapshots: vi.fn(),
@@ -23,6 +24,7 @@ describe("replenishment recommendations route scaffold", () => {
     vi.clearAllMocks();
     vi.mocked(dbQueries.getColorCompatibilityRulesForKeys).mockResolvedValue([] as never);
     vi.mocked(dbQueries.getCustomerProfile).mockResolvedValue(null as never);
+    vi.mocked(dbQueries.getReplenishmentActionTargets).mockResolvedValue(new Map() as never);
     vi.mocked(dbQueries.getSessionCustomerProfile).mockResolvedValue(null as never);
     vi.mocked(dbQueries.listActiveReplenishmentLifecycleRules).mockResolvedValue([] as never);
     vi.mocked(dbQueries.listCustomerPurchaseSnapshots).mockResolvedValue([] as never);

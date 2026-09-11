@@ -29,6 +29,12 @@ export interface ReplenishmentCandidate {
   reasons: string[];
 }
 
+export interface ReplenishmentActionTargetHydration {
+  productId: string;
+  variantId?: string;
+  available: boolean;
+}
+
 export interface ReplenishmentEvaluationInput {
   shop: string;
   shopifyCustomerId: string;
@@ -36,9 +42,16 @@ export interface ReplenishmentEvaluationInput {
   purchaseSnapshots: CustomerPurchaseSnapshotRecord[];
   lifecycleRules: ReplenishmentLifecycleRuleRecord[];
   asOf?: Date;
+  /** Reorder-target availability keyed by the purchased productId. */
+  reorderTargets?: Map<string, ReplenishmentActionTargetHydration>;
+  /** Upgrade-target availability keyed by the purchased productId. */
+  upgradeTargets?: Map<string, ReplenishmentActionTargetHydration>;
 }
 
 const DAY_IN_MS = 1000 * 60 * 60 * 24;
+const SPARSE_HISTORY_CONFIDENCE_FLOOR = 0.4;
+const QUANTITY_CADENCE_STEP = 0.15;
+const QUANTITY_CADENCE_MAX_STEPS = 3;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -120,6 +133,32 @@ export function compareReplenishmentCandidates(
   return left.categoryTag.localeCompare(right.categoryTag);
 }
 
+function resolveQuantityAdjustedCadence(cadenceDays: number, totalQuantity: number): number {
+  if (totalQuantity <= 1) {
+    return cadenceDays;
+  }
+
+  const steps = Math.min(totalQuantity - 1, QUANTITY_CADENCE_MAX_STEPS);
+
+  return Math.round(cadenceDays * (1 + steps * QUANTITY_CADENCE_STEP));
+}
+
+function isSparseHistory(snapshot: CustomerPurchaseSnapshotRecord): boolean {
+  return snapshot.orderCount < 2 && !snapshot.inferredCadenceDays;
+}
+
+function downgradeDueState(dueState: ReplenishmentDueState): ReplenishmentDueState {
+  if (dueState === "due") {
+    return "approaching";
+  }
+
+  if (dueState === "approaching") {
+    return "not_due";
+  }
+
+  return dueState;
+}
+
 export function evaluateReplenishmentCandidates(
   input: ReplenishmentEvaluationInput,
 ): ReplenishmentCandidate[] {
@@ -141,15 +180,25 @@ export function evaluateReplenishmentCandidates(
         0,
         Math.floor((asOf.getTime() - snapshot.lastPurchasedAt.getTime()) / DAY_IN_MS),
       );
-      const cadenceDays = snapshot.inferredCadenceDays ?? rule.windowMaxDays;
-      const dueState = resolveDueState(daysSincePurchase, rule);
+      const baseCadenceDays = snapshot.inferredCadenceDays ?? rule.windowMaxDays;
+      const cadenceDays = resolveQuantityAdjustedCadence(baseCadenceDays, snapshot.totalQuantity);
+      const sparseHistory = isSparseHistory(snapshot);
       const confidence = clamp(
         profileConfidence
           + (snapshot.orderCount >= 2 ? 0.08 : 0)
-          + (snapshot.inferredCadenceDays ? 0.05 : 0),
+          + (snapshot.inferredCadenceDays ? 0.05 : 0)
+          - (sparseHistory ? 0.15 : 0),
         0.35,
         0.99,
       );
+      let dueState = resolveDueState(daysSincePurchase, rule);
+
+      if (sparseHistory && confidence < SPARSE_HISTORY_CONFIDENCE_FLOOR) {
+        dueState = downgradeDueState(dueState);
+      }
+
+      const reorderTarget = input.reorderTargets?.get(snapshot.productId);
+      const upgradeTarget = input.upgradeTargets?.get(snapshot.productId) ?? reorderTarget;
 
       return {
         candidateKey: `${input.shop}:${input.shopifyCustomerId}:${snapshot.productId}:${snapshot.categoryTag}`,
@@ -162,12 +211,16 @@ export function evaluateReplenishmentCandidates(
         confidence: Number(confidence.toFixed(2)),
         urgencyScore: resolveUrgencyScore(dueState, daysSincePurchase, rule),
         preferredAction: snapshot.preferredAction,
+        ...(reorderTarget ? { reorderTarget } : {}),
+        ...(upgradeTarget ? { upgradeTarget } : {}),
         reasons: [
-          dueState === "due"
-            ? `${rule.label} looks due for replacement based on prior purchase timing.`
-            : dueState === "approaching"
-              ? `${rule.label} is approaching its expected replacement window.`
-              : `${rule.label} is not due for replacement yet.`,
+          sparseHistory && dueState !== "due"
+            ? `${rule.label} history is limited, so the reminder is softened until more purchases are confirmed.`
+            : dueState === "due"
+              ? `${rule.label} looks due for replacement based on prior purchase timing.`
+              : dueState === "approaching"
+                ? `${rule.label} is approaching its expected replacement window.`
+                : `${rule.label} is not due for replacement yet.`,
         ],
       } satisfies ReplenishmentCandidate;
     })

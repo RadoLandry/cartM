@@ -12,6 +12,7 @@ import {
 vi.mock("../../../app/lib/db/queries", () => ({
   getColorCompatibilityRulesForKeys: vi.fn(),
   getCustomerProfile: vi.fn(),
+  getReplenishmentActionTargets: vi.fn(),
   getSessionCustomerProfile: vi.fn(),
   listActiveReplenishmentLifecycleRules: vi.fn(),
   listCustomerPurchaseSnapshots: vi.fn(),
@@ -26,6 +27,7 @@ describe("customer profile recommendations route scaffold", () => {
     vi.clearAllMocks();
     vi.mocked(dbQueries.getColorCompatibilityRulesForKeys).mockResolvedValue([] as never);
     vi.mocked(dbQueries.getCustomerProfile).mockResolvedValue(null as never);
+    vi.mocked(dbQueries.getReplenishmentActionTargets).mockResolvedValue(new Map() as never);
     vi.mocked(dbQueries.getSessionCustomerProfile).mockResolvedValue(null as never);
     vi.mocked(dbQueries.listActiveReplenishmentLifecycleRules).mockResolvedValue([] as never);
     vi.mocked(dbQueries.listCustomerPurchaseSnapshots).mockResolvedValue([] as never);
@@ -246,5 +248,48 @@ describe("customer profile recommendations route scaffold", () => {
         }),
       ]),
     });
+  });
+
+  it("lets explicit profileInput override a conflicting stored discipline and size in the personalization response", async () => {
+    const input = makeCustomerProfileRecommendationRequest({
+      profileInput: {
+        discipline: "muay-thai",
+        knownSizes: { gloves_oz: "16oz" },
+      },
+    });
+
+    vi.mocked(dbQueries.getCustomerProfile).mockResolvedValue({
+      id: "profile-1",
+      shop: TEST_SHOP,
+      shopifyCustomerId: input.shopifyCustomerId,
+      sessionId: undefined,
+      sizeProfile: { gloves_oz: "14oz" },
+      disciplineProfile: { primaryDiscipline: "boxing", weights: { boxing: 0.91 } },
+      explicitProfile: {},
+      purchaseSummary: { totalOrders: 4 },
+      behaviorSummary: {},
+      confidenceSummary: { overall: 0.87, sizeProfile: 0.93 },
+      lastActiveAt: new Date("2026-05-26T12:00:00.000Z"),
+      createdAt: new Date("2026-05-01T12:00:00.000Z"),
+      updatedAt: new Date("2026-05-26T12:00:00.000Z"),
+    } as never);
+
+    const response = await action({
+      request: new Request("http://localhost/api/ai/recommendations", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
+      }),
+      params: {},
+      context: {},
+    } as never);
+    const payload = await response.json();
+
+    expect(payload.personalization.disciplinePreferences[0]).toEqual({
+      discipline: "muay-thai",
+      score: 1,
+      source: "explicit",
+    });
+    expect(payload.personalization.knownSizes.gloves_oz).toBe("16oz");
   });
 });
