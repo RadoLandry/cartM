@@ -4,9 +4,79 @@
  * — it is bundled into the storefront widget IIFE.
  */
 import type {
+  BudgetOptimizationCandidate,
   BudgetOptimizationResult,
   StructuredGuidanceBlock,
 } from "./schemas";
+
+function roundCurrency(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+export interface MinimalBudgetOptimizationCandidate {
+  candidateId: string;
+  estimatedSavings: number;
+  safetyCriticalImpact: BudgetOptimizationCandidate["safetyCriticalImpact"];
+  rationale: string;
+}
+
+export function formatBudgetOptimizationCandidateTradeOff(
+  candidate: MinimalBudgetOptimizationCandidate,
+  currencyCode: string,
+): string {
+  const formatter = new Intl.NumberFormat(undefined, { style: "currency", currency: currencyCode });
+  const safetyNote = candidate.safetyCriticalImpact === "reduced_protection"
+    ? " This reduces protective coverage."
+    : candidate.safetyCriticalImpact === "critical_removal"
+      ? " This would remove a safety-critical item."
+      : "";
+
+  return `${candidate.rationale} Saves ${formatter.format(candidate.estimatedSavings)}.${safetyNote}`;
+}
+
+export interface RecomputedBudgetOptimizationSelection {
+  selectedCandidateIds: string[];
+  projectedSubtotal: number;
+  projectedGapAmount: number;
+  status: BudgetOptimizationResult["status"];
+}
+
+/**
+ * Recomputes the projected subtotal/gap/status for a subset of previously proposed
+ * candidates, so a shopper can accept/decline individual candidates and see an
+ * updated plan without re-running the full optimization.
+ */
+export function recomputeBudgetOptimizationSelection(input: {
+  result: {
+    baselineSubtotal: number;
+    targetBudgetAmount: number;
+    candidates: Array<Pick<MinimalBudgetOptimizationCandidate, "candidateId" | "estimatedSavings">>;
+  };
+  selectedCandidateIds: string[];
+}): RecomputedBudgetOptimizationSelection {
+  const availableIds = new Set(input.result.candidates.map((candidate) => candidate.candidateId));
+  const selectedCandidateIds = input.selectedCandidateIds.filter((candidateId) => availableIds.has(candidateId));
+  const selectedCandidates = input.result.candidates.filter((candidate) => (
+    selectedCandidateIds.includes(candidate.candidateId)
+  ));
+
+  const totalSavings = selectedCandidates.reduce((sum, candidate) => sum + candidate.estimatedSavings, 0);
+  const projectedSubtotal = roundCurrency(Math.max(input.result.baselineSubtotal - totalSavings, 0));
+  const projectedGapAmount = roundCurrency(Math.max(projectedSubtotal - input.result.targetBudgetAmount, 0));
+
+  const status: BudgetOptimizationResult["status"] = projectedSubtotal <= input.result.targetBudgetAmount
+    ? "optimized"
+    : selectedCandidates.length === 0
+      ? "insufficient_candidates"
+      : "constraint_blocked";
+
+  return {
+    selectedCandidateIds,
+    projectedSubtotal,
+    projectedGapAmount,
+    status,
+  };
+}
 
 export function mapBudgetOptimizationToGuidanceBlock(input: {
   optimization: BudgetOptimizationResult;

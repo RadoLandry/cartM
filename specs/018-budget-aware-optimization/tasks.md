@@ -54,7 +54,7 @@
 - [x] T016 [US1] Implement optimization result normalization and stream payload mapping in app/lib/ai/storefront-chat.ts
 - [x] T017 [US1] Render budget optimization card with totals and ranked candidates in storefront-widget/src/components/guidance/BudgetOptimizationCard.tsx
 - [x] T018 [US1] Integrate optimization result rendering in storefront chat reducer flow in storefront-widget/src/hooks/useStorefrontChat.ts
-- [ ] T019 [US1] Wire optimization card into chat surface component composition in storefront-widget/src/CartMindChat.tsx
+- [x] T019 [US1] Wire optimization card into chat surface component composition in storefront-widget/src/CartMindChat.tsx
 
 **Checkpoint**: User Story 1 independently functional.
 
@@ -68,16 +68,16 @@
 
 ### Tests for User Story 2
 
-- [ ] T020 [P] [US2] Add integration test for safety-critical preservation and constraint_blocked responses in tests/integration/routes/storefront-chat-budget-optimization.test.ts
-- [ ] T021 [P] [US2] Add unit tests for safety-first ranking and critical-removal exclusion logic in tests/unit/ai/budget-optimization-ranking.test.ts
+- [x] T020 [P] [US2] Add integration test for safety-critical preservation and constraint_blocked responses in tests/integration/routes/storefront-chat-budget-optimization.test.ts
+- [x] T021 [P] [US2] Add unit tests for safety-first ranking and critical-removal exclusion logic in tests/unit/ai/budget-optimization-ranking.test.ts
 
 ### Implementation for User Story 2
 
-- [ ] T022 [US2] Add safetyCriticalImpact guardrails and exclusion rules to candidate filtering in app/lib/cart-intelligence/budget-optimization.ts
-- [ ] T023 [US2] Add explicit CONSTRAINT_BLOCKED and NO_ELIGIBLE_CANDIDATES mapping in app/lib/ai/storefront-chat.ts
-- [ ] T024 [US2] Enforce safety/minimum-kit constraints at confirmation execution path in app/routes/api.ai.chat.actions.confirm.tsx
-- [ ] T025 [US2] Extend confirmation response payloads with constraint failure recovery guidance in app/routes/api.ai.chat.actions.confirm.tsx
-- [ ] T026 [US2] Surface safety-critical badges and blocked-state messaging in storefront-widget/src/components/guidance/BudgetOptimizationCard.tsx
+- [x] T022 [US2] Add safetyCriticalImpact guardrails and exclusion rules to candidate filtering in app/lib/cart-intelligence/budget-optimization.ts
+- [x] T023 [US2] Add explicit CONSTRAINT_BLOCKED and NO_ELIGIBLE_CANDIDATES mapping in app/lib/ai/storefront-chat.ts
+- [x] T024 [US2] Enforce safety/minimum-kit constraints at confirmation execution path in app/routes/api.ai.chat.actions.confirm.tsx
+- [x] T025 [US2] Extend confirmation response payloads with constraint failure recovery guidance in app/routes/api.ai.chat.actions.confirm.tsx
+- [x] T026 [US2] Surface safety-critical badges and blocked-state messaging in storefront-widget/src/components/guidance/BudgetOptimizationCard.tsx
 
 **Checkpoint**: User Stories 1 and 2 independently functional.
 
@@ -91,16 +91,16 @@
 
 ### Tests for User Story 3
 
-- [ ] T027 [P] [US3] Add integration test for partial accept/reject and recomputed proposal flow in tests/integration/routes/storefront-chat-budget-optimization.test.ts
-- [ ] T028 [P] [US3] Add storefront state unit tests for candidate-level decision handling in tests/unit/storefront/budget-optimization-state.test.ts
+- [x] T027 [P] [US3] Add integration test for partial accept/reject and recomputed proposal flow in tests/integration/routes/storefront-chat-budget-optimization.test.ts
+- [x] T028 [P] [US3] Add storefront state unit tests for candidate-level decision handling in tests/unit/storefront/budget-optimization-state.test.ts
 
 ### Implementation for User Story 3
 
-- [ ] T029 [US3] Add itemized rationale, savings delta, and trade-off text formatting for each candidate in app/lib/ai/storefront-chat.ts
-- [ ] T030 [US3] Implement candidate-level decision payload parsing and recomputation trigger in app/routes/api.ai.chat.actions.confirm.tsx
-- [ ] T031 [US3] Implement apply/decline candidate handlers and local timeline updates in storefront-widget/src/hooks/useStorefrontChat.ts
-- [ ] T032 [US3] Add remaining-gap and recalculated-total rendering states in storefront-widget/src/components/guidance/BudgetOptimizationCard.tsx
-- [ ] T033 [US3] Update session chat state model for optimization decision history in storefront-widget/src/hooks/useChatSessionState.ts
+- [x] T029 [US3] Add itemized rationale, savings delta, and trade-off text formatting for each candidate in app/lib/ai/storefront-chat.ts
+- [x] T030 [US3] Implement candidate-level decision payload parsing and recomputation trigger in app/routes/api.ai.chat.actions.confirm.tsx
+- [x] T031 [US3] Implement apply/decline candidate handlers and local timeline updates in storefront-widget/src/hooks/useStorefrontChat.ts
+- [x] T032 [US3] Add remaining-gap and recalculated-total rendering states in storefront-widget/src/components/guidance/BudgetOptimizationCard.tsx
+- [x] T033 [US3] Update session chat state model for optimization decision history in storefront-widget/src/hooks/useChatSessionState.ts
 
 **Checkpoint**: All user stories independently functional.
 
@@ -110,11 +110,11 @@
 
 **Purpose**: Finalize contracts, quickstart verification, and quality checks across stories.
 
-- [ ] T034 [P] Align stream contract with implemented payload fields in specs/018-budget-aware-optimization/contracts/storefront-budget-optimization-stream.md
-- [ ] T035 [P] Align follow-up action contract with implemented statuses/errors in specs/018-budget-aware-optimization/contracts/storefront-budget-optimization-action.md
-- [ ] T036 [P] Align data-source contract with final queried fields and failure mappings in specs/018-budget-aware-optimization/contracts/storefront-budget-optimization-data-source.md
-- [ ] T037 Update manual verification notes and acceptance mapping with final behavior in specs/018-budget-aware-optimization/quickstart.md
-- [ ] T038 Record focused test run results and quickstart validation completion in specs/018-budget-aware-optimization/quickstart.md
+- [x] T034 [P] Align stream contract with implemented payload fields in specs/018-budget-aware-optimization/contracts/storefront-budget-optimization-stream.md
+- [x] T035 [P] Align follow-up action contract with implemented statuses/errors in specs/018-budget-aware-optimization/contracts/storefront-budget-optimization-action.md
+- [x] T036 [P] Align data-source contract with final queried fields and failure mappings in specs/018-budget-aware-optimization/contracts/storefront-budget-optimization-data-source.md
+- [x] T037 Update manual verification notes and acceptance mapping with final behavior in specs/018-budget-aware-optimization/quickstart.md
+- [x] T038 Record focused test run results and quickstart validation completion in specs/018-budget-aware-optimization/quickstart.md
 
 ---
 

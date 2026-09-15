@@ -4296,6 +4296,7 @@ export interface AIBehaviorPreviewRunInput {
   status?: AIBehaviorPreviewStatus;
   inputSnapshot: Prisma.InputJsonValue;
   scenarioSet: Prisma.InputJsonValue;
+  resultPayload?: Prisma.InputJsonValue;
   requestedBy: string;
 }
 
@@ -4417,7 +4418,7 @@ function serializeBehaviorConfigSnapshot(config: AIBehaviorConfigPayload): Prism
 }
 
 export async function getAIBehaviorDraft(shop: string): Promise<AIBehaviorDraftRecord | null> {
-  const row = await db.aiBehaviorDraft.findUnique({
+  const row = await db.aIBehaviorDraft.findUnique({
     where: { shop },
     select: aiBehaviorDraftSelect,
   });
@@ -4426,7 +4427,7 @@ export async function getAIBehaviorDraft(shop: string): Promise<AIBehaviorDraftR
 }
 
 export async function getAIBehaviorVersionHistory(shop: string): Promise<AIBehaviorVersionSummaryRecord[]> {
-  const rows = await db.aiBehaviorPublishedVersion.findMany({
+  const rows = await db.aIBehaviorPublishedVersion.findMany({
     where: { shop },
     select: aiBehaviorVersionSelect,
     orderBy: [{ versionNumber: "desc" }, { publishedAt: "desc" }],
@@ -4446,7 +4447,7 @@ export async function saveAIBehaviorDraft(input: {
   const nextToken = createAIBehaviorVersionToken();
 
   const row = await db.$transaction(async (tx) => {
-    const existing = await tx.aiBehaviorDraft.findUnique({
+    const existing = await tx.aIBehaviorDraft.findUnique({
       where: { shop },
       select: aiBehaviorDraftSelect,
     });
@@ -4464,7 +4465,7 @@ export async function saveAIBehaviorDraft(input: {
     };
 
     if (!existing) {
-      return await tx.aiBehaviorDraft.create({
+      return await tx.aIBehaviorDraft.create({
         data: {
           shop,
           versionToken: nextToken,
@@ -4475,7 +4476,7 @@ export async function saveAIBehaviorDraft(input: {
       });
     }
 
-    return await tx.aiBehaviorDraft.update({
+    return await tx.aIBehaviorDraft.update({
       where: { id: existing.id },
       data: {
         versionToken: nextToken,
@@ -4490,7 +4491,7 @@ export async function saveAIBehaviorDraft(input: {
 }
 
 export async function createAIBehaviorAuditEntry(input: AIBehaviorAuditWriteInput) {
-  return await db.aiBehaviorAuditEntry.create({
+  return await db.aIBehaviorAuditEntry.create({
     data: {
       shop: input.shop,
       actionType: input.actionType,
@@ -4531,7 +4532,7 @@ export async function publishAIBehaviorDraft(input: {
   const { shop, actorId, reason } = input;
 
   return await db.$transaction(async (tx) => {
-    const draft = await tx.aiBehaviorDraft.findUnique({
+    const draft = await tx.aIBehaviorDraft.findUnique({
       where: { shop },
       select: aiBehaviorDraftSelect,
     });
@@ -4541,18 +4542,18 @@ export async function publishAIBehaviorDraft(input: {
     }
 
     const [latestVersion, activeVersion] = await Promise.all([
-      tx.aiBehaviorPublishedVersion.findFirst({
+      tx.aIBehaviorPublishedVersion.findFirst({
         where: { shop },
         orderBy: { versionNumber: "desc" },
         select: aiBehaviorVersionSelect,
       }),
-      tx.aiBehaviorPublishedVersion.findFirst({
+      tx.aIBehaviorPublishedVersion.findFirst({
         where: { shop, status: AIBehaviorVersionStatus.ACTIVE },
         select: aiBehaviorVersionSelect,
       }),
     ]);
 
-    await tx.aiBehaviorPublishedVersion.updateMany({
+    await tx.aIBehaviorPublishedVersion.updateMany({
       where: { shop, status: AIBehaviorVersionStatus.ACTIVE },
       data: {
         status: AIBehaviorVersionStatus.ARCHIVED,
@@ -4560,7 +4561,7 @@ export async function publishAIBehaviorDraft(input: {
       },
     });
 
-    const created = await tx.aiBehaviorPublishedVersion.create({
+    const created = await tx.aIBehaviorPublishedVersion.create({
       data: {
         shop,
         versionNumber: (latestVersion?.versionNumber ?? 0) + 1,
@@ -4571,15 +4572,15 @@ export async function publishAIBehaviorDraft(input: {
       select: aiBehaviorVersionSelect,
     });
 
-    await tx.aiBehaviorAuditEntry.create({
+    await tx.aIBehaviorAuditEntry.create({
       data: {
         shop,
         actorId,
         actionType: AIBehaviorAuditAction.PUBLISHED,
         draftId: draft.id,
         targetVersionId: created.id,
-        beforeSnapshot: activeVersion?.snapshot ?? null,
-        afterSnapshot: created.snapshot,
+        beforeSnapshot: (activeVersion?.snapshot ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+        afterSnapshot: created.snapshot as Prisma.InputJsonValue,
         reason,
       },
     });
@@ -4597,7 +4598,7 @@ export async function rollbackAIBehaviorVersion(input: {
   const { shop, actorId, targetVersionId, reason } = input;
 
   return await db.$transaction(async (tx) => {
-    const targetVersion = await tx.aiBehaviorPublishedVersion.findFirst({
+    const targetVersion = await tx.aIBehaviorPublishedVersion.findFirst({
       where: {
         id: targetVersionId,
         shop,
@@ -4610,18 +4611,18 @@ export async function rollbackAIBehaviorVersion(input: {
     }
 
     const [latestVersion, activeVersion] = await Promise.all([
-      tx.aiBehaviorPublishedVersion.findFirst({
+      tx.aIBehaviorPublishedVersion.findFirst({
         where: { shop },
         orderBy: { versionNumber: "desc" },
         select: aiBehaviorVersionSelect,
       }),
-      tx.aiBehaviorPublishedVersion.findFirst({
+      tx.aIBehaviorPublishedVersion.findFirst({
         where: { shop, status: AIBehaviorVersionStatus.ACTIVE },
         select: aiBehaviorVersionSelect,
       }),
     ]);
 
-    await tx.aiBehaviorPublishedVersion.updateMany({
+    await tx.aIBehaviorPublishedVersion.updateMany({
       where: { shop, status: AIBehaviorVersionStatus.ACTIVE },
       data: {
         status: AIBehaviorVersionStatus.ARCHIVED,
@@ -4629,7 +4630,7 @@ export async function rollbackAIBehaviorVersion(input: {
       },
     });
 
-    const restored = await tx.aiBehaviorPublishedVersion.create({
+    const restored = await tx.aIBehaviorPublishedVersion.create({
       data: {
         shop,
         versionNumber: (latestVersion?.versionNumber ?? 0) + 1,
@@ -4640,14 +4641,14 @@ export async function rollbackAIBehaviorVersion(input: {
       select: aiBehaviorVersionSelect,
     });
 
-    await tx.aiBehaviorAuditEntry.create({
+    await tx.aIBehaviorAuditEntry.create({
       data: {
         shop,
         actorId,
         actionType: AIBehaviorAuditAction.ROLLED_BACK,
         targetVersionId: restored.id,
-        beforeSnapshot: activeVersion?.snapshot ?? null,
-        afterSnapshot: restored.snapshot,
+        beforeSnapshot: (activeVersion?.snapshot ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+        afterSnapshot: restored.snapshot as Prisma.InputJsonValue,
         reason,
       },
     });
@@ -4657,15 +4658,17 @@ export async function rollbackAIBehaviorVersion(input: {
 }
 
 export async function createAIBehaviorPreviewRun(input: AIBehaviorPreviewRunInput) {
-  return await db.aiBehaviorPreviewRun.create({
+  return await db.aIBehaviorPreviewRun.create({
     data: {
       shop: input.shop,
       draftId: input.draftId,
       status: input.status ?? AIBehaviorPreviewStatus.RUNNING,
       inputSnapshot: input.inputSnapshot,
       scenarioSet: input.scenarioSet,
+      resultPayload: input.resultPayload,
       requestedBy: input.requestedBy,
       requestedAt: new Date(),
+      ...(input.status === AIBehaviorPreviewStatus.READY ? { completedAt: new Date() } : {}),
     },
   });
 }
@@ -4676,7 +4679,7 @@ export async function getActiveAIBehaviorConfigWithFallback(shop: string): Promi
   versionNumber?: number;
   config: AIBehaviorConfigPayload;
 }> {
-  const versions = await db.aiBehaviorPublishedVersion.findMany({
+  const versions = await db.aIBehaviorPublishedVersion.findMany({
     where: {
       shop,
     },

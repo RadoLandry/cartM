@@ -90,10 +90,22 @@ Expected outcome:
 ## Quick Validation Checklist
 
 - Draft fetch/save route returns typed payload and version token.
-- Preview endpoint returns `READY` with structured scenario outputs or `RUNNING` for async processing.
+- Preview endpoint returns `READY` synchronously with structured scenario outputs (the current implementation always computes scenarios inline; `PreviewRunningResponse`/`RUNNING` is reserved for a future async runner and is not emitted today).
+- Preview runner failures are caught, logged, and persisted as a `FAILED` preview run, returning a retryable `PREVIEW_RUNNER_FAILED` error instead of an unhandled 500; a preview-run persistence failure still returns the computed `READY` results (best-effort audit trail, not a request blocker).
+- Publish and rollback are both served from `POST /api/ai/behavior/config` (rollback via `{ "intent": "rollback", "targetVersionId": ... }`, publish via any other body), not separate `/ai/behavior/publish` / `/ai/behavior/rollback` routes; see `contracts/ai-behavior-configuration.openapi.yaml`.
 - Publish action creates a new active version and archives previous active version.
 - Rollback action creates a new active snapshot based on selected historical version.
 - Audit entries include actor, action type, and before/after snapshots.
 - Chat bootstrap includes merchant-configured conversation starters.
 - Prompt builder reflects active tone/aggressiveness/safety/guidance settings.
-- Tests pass for draft/preview/publish/rollback/fallback paths.
+- Config read (loader) and publish/rollback (action) latency are instrumented against the plan budgets (<=50ms / <=2s p95) with a `console.warn` when exceeded; see `app/routes/api.ai.behavior.config.tsx`.
+- Tests pass for draft/preview/publish/rollback/fallback paths, including API contract conformance against the Zod response schemas (`tests/integration/ai-behavior/api-contract.test.ts`).
+
+## Validation Run Record
+
+- Date: 2026-09-15.
+- Command: `npx vitest run tests/integration/ai-behavior tests/unit/ai/behavior-policy-schema.test.ts tests/unit/ai/prompt-safety-precedence.test.ts tests/unit/ai/prompt-tone-profile.test.ts tests/unit/ai/prompt-aggressiveness.test.ts tests/unit/ai/conversation-starters.test.ts tests/unit/ai/audit-snapshots.test.ts`
+- Result: 13 test files passed, 36 tests passed, 0 failed.
+- Repo-wide `npx vitest run`: full suite passing (no regressions from AI behavior configuration US1-US3 + polish work).
+- `npm run lint`: clean on all AI-behavior-related files (repo-wide lint has pre-existing unrelated failures documented outside this feature's scope).
+- `npm run typecheck`: clean on all AI-behavior-related files after fixing a pre-existing Prisma field-casing bug in `app/lib/db/queries.ts` (`db.aiBehaviorDraft` etc. renamed to the Prisma-generated `db.aIBehaviorDraft` etc.).

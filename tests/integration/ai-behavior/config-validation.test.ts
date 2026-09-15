@@ -24,6 +24,8 @@ vi.mock("../../../app/lib/db/queries", () => ({
   }),
   saveAIBehaviorDraft: vi.fn(),
   writeAIBehaviorDraftSavedAudit: vi.fn(),
+  publishAIBehaviorDraft: vi.fn(),
+  rollbackAIBehaviorVersion: vi.fn(),
 }));
 
 import { authenticate } from "../../../app/shopify.server";

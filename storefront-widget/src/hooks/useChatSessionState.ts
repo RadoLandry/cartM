@@ -42,6 +42,15 @@ export interface ChatSessionState {
   actionHistory: ChatActionHistoryItem[];
   pendingActionId?: string;
   comparisonContexts: unknown[];
+  budgetOptimizationDecisions: Record<string, string[]>;
+  budgetOptimizationDecisionHistory: BudgetOptimizationDecisionHistoryEntry[];
+}
+
+export interface BudgetOptimizationDecisionHistoryEntry {
+  optimizationContextId: string;
+  candidateId: string;
+  accepted: boolean;
+  decidedAt: string;
 }
 
 export type ChatSessionAction =
@@ -59,7 +68,8 @@ export type ChatSessionAction =
   | { type: "tool_action_status"; actionId: string; status: CartToolActionStatus; summary: string }
   | { type: "action_confirmation_requested"; actionId: string }
   | { type: "action_confirmation_finished"; actionId: string }
-  | { type: "action_confirmation_failed"; actionId: string; error: string };
+  | { type: "action_confirmation_failed"; actionId: string; error: string }
+  | { type: "budget_candidate_decision"; optimizationContextId: string; candidateId: string; accepted: boolean };
 
 export function buildChatThreadMessage(
   id: string,
@@ -90,6 +100,8 @@ export function createInitialChatSessionState(input: {
     messages: [],
     actionHistory: [],
     comparisonContexts: [],
+    budgetOptimizationDecisions: {},
+    budgetOptimizationDecisionHistory: [],
   };
 }
 
@@ -166,6 +178,31 @@ export function reduceChatSessionState(state: ChatSessionState, action: ChatSess
       return state.pendingActionId === action.actionId ? { ...state, pendingActionId: undefined } : state;
     case "action_confirmation_failed":
       return { ...state, status: "error", lastError: action.error, pendingActionId: undefined };
+    case "budget_candidate_decision": {
+      const currentlyDeclined = state.budgetOptimizationDecisions[action.optimizationContextId] ?? [];
+      const nextDeclined = action.accepted
+        ? currentlyDeclined.filter((candidateId) => candidateId !== action.candidateId)
+        : currentlyDeclined.includes(action.candidateId)
+          ? currentlyDeclined
+          : [...currentlyDeclined, action.candidateId];
+
+      return {
+        ...state,
+        budgetOptimizationDecisions: {
+          ...state.budgetOptimizationDecisions,
+          [action.optimizationContextId]: nextDeclined,
+        },
+        budgetOptimizationDecisionHistory: [
+          ...state.budgetOptimizationDecisionHistory,
+          {
+            optimizationContextId: action.optimizationContextId,
+            candidateId: action.candidateId,
+            accepted: action.accepted,
+            decidedAt: new Date().toISOString(),
+          },
+        ],
+      };
+    }
     default:
       return state;
   }

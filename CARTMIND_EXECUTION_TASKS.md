@@ -151,20 +151,20 @@
 ## Sprint 9 - AI behavior and budget optimization
 
 ### Scope execution
-- [ ] Complete feature 018 task T019
-- [ ] Complete feature 024 tasks T032 to T043
-- [ ] Complete feature 018 tasks T020 to T026
-- [ ] Complete feature 024 tasks T044 to T055
-- [ ] Complete feature 018 tasks T027 to T033
-- [ ] Complete feature 024 tasks T056 to T061
-- [ ] Complete feature 018 tasks T034 to T038
+- [x] Complete feature 018 task T019
+- [x] Complete feature 024 tasks T032 to T043
+- [x] Complete feature 018 tasks T020 to T026
+- [x] Complete feature 024 tasks T044 to T055
+- [x] Complete feature 018 tasks T027 to T033
+- [x] Complete feature 024 tasks T056 to T061
+- [x] Complete feature 018 tasks T034 to T038
 
 ### Quality gate
-- [ ] Run lint
-- [ ] Run typecheck
-- [ ] Run tests integration ai-behavior preview, publish, rollback suites
-- [ ] Run tests integration routes storefront-chat-budget-optimization
-- [ ] Confirm AI preview publish rollback and budget guardrails are operational
+- [x] Run lint
+- [x] Run typecheck
+- [x] Run tests integration ai-behavior preview, publish, rollback suites
+- [x] Run tests integration routes storefront-chat-budget-optimization
+- [x] Confirm AI preview publish rollback and budget guardrails are operational
 
 ---
 

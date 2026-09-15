@@ -105,6 +105,13 @@ Research findings are documented in `specs/024-ai-behavior-configuration/researc
 3. Developer/operator flow documented in `specs/024-ai-behavior-configuration/quickstart.md`.
 4. Agent context updated in `.github/copilot-instructions.md` to point to this feature plan.
 
+## Data Migration and Backfill Notes
+
+- The `AIBehaviorDraft`, `AIBehaviorPublishedVersion`, `AIBehaviorAuditEntry`, and `AIBehaviorPreviewRun` tables are additive (new tables, no column changes to existing models), so the Prisma migration in `prisma/migrations/20260602135351_ai_behavior_configuration/` is safe to apply without downtime for existing shops.
+- No backfill script is required: shops with no `AIBehaviorDraft`/`AIBehaviorPublishedVersion` rows are handled by `getActiveAIBehaviorConfigWithFallback` (`app/lib/db/queries.ts`), which falls back from `active` -> `draft` -> hard-coded `AI_BEHAVIOR_DEFAULTS` (`app/lib/ai/behavior-config.ts`) when no rows exist yet. This is exercised by `tests/integration/ai-behavior/fallback-runtime.test.ts`.
+- A shop's first draft save (`saveAIBehaviorDraft`) upserts its `AIBehaviorDraft` row on demand; there is no need to pre-provision rows for existing installs before this feature ships.
+- Rollback targets only ever reference `AIBehaviorPublishedVersion` rows created after this feature ships, so there is no historical version data to migrate from a prior format.
+
 ## Complexity Tracking
 
 No constitution violations or exceptional complexity justifications identified at planning time.

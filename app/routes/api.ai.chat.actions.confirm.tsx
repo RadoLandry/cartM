@@ -11,6 +11,7 @@ import {
   getCartToolActionRecord,
   getProductComparisonContext,
   isCartToolActionTerminalStatus,
+  recomputeBudgetOptimizationSelection,
   transitionCartToolActionRecord,
   validateBudgetOptimizationContextScope,
   validateProductComparisonContextScope,
@@ -410,6 +411,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               message: failedTransition.ok
                 ? failedTransition.record.summary
                 : "Budget optimization result is no longer available. Please run optimization again.",
+              recoveryOptions: [
+                "Ask CartMind to re-run budget optimization",
+                "Refresh your cart and retry",
+              ],
             },
           },
           { status: 409 },
@@ -446,6 +451,36 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               message: failedTransition.ok
                 ? failedTransition.record.summary
                 : "Selected budget candidates are no longer valid for this optimization context.",
+              recoveryOptions: [
+                "Ask CartMind to re-run budget optimization",
+                "Refresh your cart and retry",
+              ],
+            },
+          },
+          { status: 422 },
+        );
+      }
+
+      const criticalRemoval = selectedCandidates.find((candidate) => candidate.safetyCriticalImpact === "critical_removal");
+      if (criticalRemoval) {
+        const failedTransition = transitionCartToolActionRecord({
+          actionId: parsed.data.actionId,
+          nextStatus: "failed",
+          summary: "This selection would remove a safety-critical item and was blocked.",
+        });
+
+        return Response.json(
+          {
+            ok: false,
+            error: {
+              code: "CONSTRAINT_BLOCKED",
+              message: failedTransition.ok
+                ? failedTransition.record.summary
+                : "This selection would remove a safety-critical item and was blocked.",
+              recoveryOptions: [
+                "Ask CartMind for a plan that keeps safety-critical items",
+                "Manually review the cart before optimizing again",
+              ],
             },
           },
           { status: 422 },
@@ -495,6 +530,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         summary: `Applied budget optimization with ${selectedCandidateIds.length} change${selectedCandidateIds.length > 1 ? "s" : ""}.`,
       });
 
+      const recomputed = recomputeBudgetOptimizationSelection({
+        result: optimizationResult,
+        selectedCandidateIds,
+      });
+
       return Response.json({
         ok: true,
         result: {
@@ -504,8 +544,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             ? executedTransition.record.summary
             : `Applied budget optimization with ${selectedCandidateIds.length} change${selectedCandidateIds.length > 1 ? "s" : ""}.`,
           optimizationContextId: parsed.data.optimizationContextId,
-          projectedSubtotal: optimizationResult.projectedSubtotal,
-          projectedGapAmount: optimizationResult.projectedGapAmount,
+          selectedCandidateIds: recomputed.selectedCandidateIds,
+          optimizationStatus: recomputed.status,
+          projectedSubtotal: recomputed.projectedSubtotal,
+          projectedGapAmount: recomputed.projectedGapAmount,
           cart: mutationOutcome.cart,
         },
       });

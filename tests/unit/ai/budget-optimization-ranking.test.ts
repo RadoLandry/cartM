@@ -78,5 +78,67 @@ describe("budget optimization ranking", () => {
     expect(result.status).toBe("optimized");
   });
 
-  it.todo("excludes critical-removal candidates by default");
+  it("excludes critical-removal candidates by default", () => {
+    const result = buildBudgetOptimizationProposal({
+      optimizationContextId: "bgt_ctx_3",
+      requestId: "req_3",
+      baselineSubtotal: 150,
+      targetBudgetAmount: 100,
+      fetchedAt: "2026-06-02T10:00:00.000Z",
+      candidates: [
+        {
+          candidateId: "c_critical",
+          changeType: "remove",
+          sourceLineId: "line_1",
+          sourceProductId: "prod_helmet",
+          estimatedSavings: 60,
+          safetyCriticalImpact: "critical_removal",
+          rationale: "Removing helmet would exceed safety limits.",
+          disciplineFitScore: 0.9,
+          availability: "available",
+        },
+        {
+          candidateId: "c_optional",
+          changeType: "remove",
+          sourceLineId: "line_2",
+          sourceProductId: "prod_bag",
+          estimatedSavings: 20,
+          safetyCriticalImpact: "none",
+          rationale: "Optional gear bag.",
+          disciplineFitScore: 0.6,
+          availability: "available",
+        },
+      ],
+    });
+
+    expect(result.candidates.map((candidate) => candidate.candidateId)).not.toContain("c_critical");
+    expect(result.status).toBe("constraint_blocked");
+    expect(result.projectedGapAmount).toBeGreaterThan(0);
+  });
+
+  it("reports insufficient_candidates when no safe candidates remain", () => {
+    const result = buildBudgetOptimizationProposal({
+      optimizationContextId: "bgt_ctx_4",
+      requestId: "req_4",
+      baselineSubtotal: 150,
+      targetBudgetAmount: 100,
+      fetchedAt: "2026-06-02T10:00:00.000Z",
+      candidates: [
+        {
+          candidateId: "c_critical_only",
+          changeType: "remove",
+          sourceLineId: "line_1",
+          sourceProductId: "prod_helmet",
+          estimatedSavings: 60,
+          safetyCriticalImpact: "critical_removal",
+          rationale: "Only candidate would remove a safety-critical item.",
+          disciplineFitScore: 0.9,
+          availability: "available",
+        },
+      ],
+    });
+
+    expect(result.candidates).toHaveLength(0);
+    expect(result.status).toBe("insufficient_candidates");
+  });
 });

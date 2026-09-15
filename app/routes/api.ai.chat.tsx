@@ -12,6 +12,7 @@ import {
   resolveCompatibleAddActionProposals,
   createProductComparisonContext,
   normalizeBudgetOptimizationResult,
+  resolveBudgetOptimizationStreamOutcome,
   normalizeProductComparisonResult,
   setBudgetOptimizationContextError,
   setBudgetOptimizationContextResult,
@@ -343,22 +344,39 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         fetchedAt: candidateFetch.fetchedAt,
       }));
 
-      setBudgetOptimizationContextResult({
+      const streamOutcome = resolveBudgetOptimizationStreamOutcome({
         optimizationContextId,
         result: budgetResult,
       });
 
-      budgetParts.push({
-        type: "budget-optimization.result",
-        optimization: budgetResult,
-      });
+      if (streamOutcome.kind === "error") {
+        setBudgetOptimizationContextError({
+          optimizationContextId,
+          error: streamOutcome.error,
+        });
 
-      budgetActionProposal = buildBudgetOptimizationSelectionActionProposal({
-        shop: parsed.data.shop,
-        sessionKey: parsed.data.sessionKey,
-        cartId: parsed.data.cart.cartId,
-        optimization: budgetResult,
-      });
+        budgetParts.push({
+          type: "budget-optimization.error",
+          error: streamOutcome.error,
+        });
+      } else {
+        setBudgetOptimizationContextResult({
+          optimizationContextId,
+          result: budgetResult,
+        });
+
+        budgetParts.push({
+          type: "budget-optimization.result",
+          optimization: budgetResult,
+        });
+
+        budgetActionProposal = buildBudgetOptimizationSelectionActionProposal({
+          shop: parsed.data.shop,
+          sessionKey: parsed.data.sessionKey,
+          cartId: parsed.data.cart.cartId,
+          optimization: budgetResult,
+        });
+      }
     }
   }
 

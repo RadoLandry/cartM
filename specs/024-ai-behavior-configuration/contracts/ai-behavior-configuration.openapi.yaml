@@ -45,6 +45,44 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+    post:
+      summary: Publish the current draft, or roll back to a prior published version
+      description: >-
+        Implemented as a single POST endpoint on this route (not separate
+        `/ai/behavior/publish` and `/ai/behavior/rollback` paths). A JSON body
+        with `intent: "rollback"` and `targetVersionId` performs a rollback;
+        any other body (including an empty one) is treated as a publish request
+        and accepts the optional `reason` field from `PublishRequest`.
+      operationId: publishOrRollbackAiBehavior
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/PublishRequest'
+                - $ref: '#/components/schemas/RollbackRequest'
+      responses:
+        '200':
+          description: Publish or rollback completed
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/PublishResponse'
+                  - $ref: '#/components/schemas/RollbackResponse'
+        '400':
+          description: Invalid publish or rollback payload (`INVALID_PUBLISH_REQUEST` | `INVALID_ROLLBACK_REQUEST`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Publish failed (`PUBLISH_FAILED`), e.g. no draft exists for the shop
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /ai/behavior/preview:
     post:
       summary: Preview assistant behavior for draft settings
@@ -57,71 +95,16 @@ paths:
               $ref: '#/components/schemas/PreviewRequest'
       responses:
         '200':
-          description: Preview completed
+          description: >-
+            Preview completed synchronously. The current implementation always
+            returns `READY` with results in the same request; `PreviewRunningResponse`
+            is reserved for a future async preview runner and is not emitted today.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/PreviewReadyResponse'
-        '202':
-          description: Preview accepted and running
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PreviewRunningResponse'
         '400':
           description: Invalid preview request
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-  /ai/behavior/publish:
-    post:
-      summary: Publish current draft behavior configuration
-      operationId: publishAiBehavior
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PublishRequest'
-      responses:
-        '200':
-          description: Published successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PublishResponse'
-        '400':
-          description: Validation failed
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-  /ai/behavior/rollback:
-    post:
-      summary: Roll back to a previous published version
-      operationId: rollbackAiBehavior
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RollbackRequest'
-      responses:
-        '200':
-          description: Rollback completed
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RollbackResponse'
-        '400':
-          description: Invalid rollback request
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '404':
-          description: Target version not found
           content:
             application/json:
               schema:

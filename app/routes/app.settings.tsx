@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
-import { BlockStack, Button, Page, Select, Text, TextField } from "@shopify/polaris";
+import { Form, useActionData, useLoaderData, useNavigation, useSubmit } from "react-router";
+import { BlockStack, Button, Page, Text } from "@shopify/polaris";
 
 import {
   AI_BEHAVIOR_DEFAULTS,
@@ -13,10 +13,15 @@ import {
   getAIBehaviorDraft,
   getAIBehaviorVersionHistory,
   getActiveAIBehaviorConfigWithFallback,
+  publishAIBehaviorDraft,
+  rollbackAIBehaviorVersion,
   saveAIBehaviorDraft,
   writeAIBehaviorDraftSavedAudit,
 } from "../lib/db/queries";
 import { SafetyPolicySection } from "../components/admin/ai-behavior/SafetyPolicySection";
+import { StyleControlsSection } from "../components/admin/ai-behavior/StyleControlsSection";
+import { GuidanceSection } from "../components/admin/ai-behavior/GuidanceSection";
+import { ReleaseControlsSection } from "../components/admin/ai-behavior/ReleaseControlsSection";
 import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -33,6 +38,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     versionToken: draft?.versionToken ?? "initial",
     draft: draft?.config ?? active.config,
     active: active.config,
+    activeSource: active.source,
+    activeVersionNumber: active.versionNumber,
     history: history.map((entry) => ({
       id: entry.id,
       versionNumber: entry.versionNumber,
@@ -46,6 +53,48 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const formData = await request.formData();
+  const intent = String(formData.get("intent") ?? "save");
+
+  if (intent === "publish") {
+    try {
+      const activeVersion = await publishAIBehaviorDraft({
+        shop: session.shop,
+        actorId: session.shop,
+      });
+
+      return { ok: true, intent: "publish" as const, activeVersion };
+    } catch (error) {
+      return {
+        ok: false,
+        intent: "publish" as const,
+        error: error instanceof Error ? error.message : "Unable to publish AI behavior draft.",
+      };
+    }
+  }
+
+  if (intent === "rollback") {
+    const targetVersionId = String(formData.get("targetVersionId") ?? "");
+
+    if (!targetVersionId) {
+      return { ok: false, intent: "rollback" as const, error: "Select a version to roll back to." };
+    }
+
+    try {
+      const activeVersion = await rollbackAIBehaviorVersion({
+        shop: session.shop,
+        actorId: session.shop,
+        targetVersionId,
+      });
+
+      return { ok: true, intent: "rollback" as const, activeVersion };
+    } catch (error) {
+      return {
+        ok: false,
+        intent: "rollback" as const,
+        error: error instanceof Error ? error.message : "Unable to roll back AI behavior version.",
+      };
+    }
+  }
 
   const versionToken = String(formData.get("versionToken") ?? "").trim();
   const tone = String(formData.get("tone") ?? AI_BEHAVIOR_DEFAULTS.tone);
@@ -71,6 +120,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (!resolved.ok) {
     return {
       ok: false,
+      intent: "save" as const,
       error: "Invalid behavior configuration.",
       issues: resolved.issues,
     };
@@ -95,6 +145,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     return {
       ok: true,
+      intent: "save" as const,
       versionToken: saved.versionToken,
       conflicts: resolved.conflicts,
     };
@@ -102,6 +153,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (error instanceof AIBehaviorVersionConflictError) {
       return {
         ok: false,
+        intent: "save" as const,
         error: "This draft changed in another tab. Refresh and try again.",
       };
     }
@@ -114,6 +166,7 @@ export default function AppSettingsRoute() {
   const data = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
+  const submit = useSubmit();
 
   const [tone, setTone] = useState(data.draft.tone);
   const [versionToken, setVersionToken] = useState(data.versionToken);
@@ -127,7 +180,7 @@ export default function AppSettingsRoute() {
   const isSaving = navigation.state !== "idle";
 
   useEffect(() => {
-    if (actionData?.ok && actionData.versionToken && actionData.versionToken !== versionToken) {
+    if (actionData?.ok && actionData.intent === "save" && actionData.versionToken && actionData.versionToken !== versionToken) {
       setVersionToken(actionData.versionToken);
     }
   }, [actionData, versionToken]);
@@ -139,18 +192,19 @@ export default function AppSettingsRoute() {
           Configure storefront assistant behavior with safety-first defaults.
         </Text>
 
+        <Text as="p" tone="subdued">
+          Active configuration source: {data.activeSource}
+          {data.activeVersionNumber ? ` (v${data.activeVersionNumber})` : ""}.
+        </Text>
+
         <Form method="post">
           <BlockStack gap="400">
-            <Select
-              label="Tone"
-              options={[
-                { label: "Professional", value: "PROFESSIONAL" },
-                { label: "Friendly", value: "FRIENDLY" },
-                { label: "Concise", value: "CONCISE" },
-                { label: "Coaching", value: "COACHING" },
-              ]}
-              value={tone}
-              onChange={(value) => setTone(value as typeof tone)}
+            <StyleControlsSection
+              tone={tone}
+              aggressiveness={policy.aggressiveness}
+              onToneChange={(value) => setTone(value as typeof tone)}
+              onAggressivenessChange={(value) => setPolicy((current) => ({ ...current, aggressiveness: value }))}
+              disabled={isSaving}
             />
 
             <SafetyPolicySection
@@ -159,14 +213,15 @@ export default function AppSettingsRoute() {
               disabled={isSaving}
             />
 
-            <TextField
-              label="Conversation starters"
-              multiline={4}
-              value={conversationStarters}
-              autoComplete="off"
-              onChange={setConversationStarters}
+            <GuidanceSection
+              customGuidance={policy.customGuidance}
+              conversationStarters={conversationStarters}
+              onCustomGuidanceChange={(value) => setPolicy((current) => ({ ...current, customGuidance: value }))}
+              onConversationStartersChange={setConversationStarters}
+              disabled={isSaving}
             />
 
+            <input type="hidden" name="intent" value="save" />
             <input type="hidden" name="versionToken" value={versionToken} />
             <input type="hidden" name="tone" value={tone} />
             <input type="hidden" name="safetyPriority" value={policy.safetyPriority} />
@@ -174,13 +229,13 @@ export default function AppSettingsRoute() {
             <input type="hidden" name="customGuidance" value={policy.customGuidance} />
             <input type="hidden" name="conversationStarters" value={conversationStarters} />
 
-            <Button submit loading={isSaving} variant="primary">
+            <Button submit loading={isSaving && navigation.formData?.get("intent") !== "publish" && navigation.formData?.get("intent") !== "rollback"} variant="primary">
               Save draft
             </Button>
           </BlockStack>
         </Form>
 
-        {actionData?.ok ? (
+        {actionData?.ok && actionData.intent === "save" ? (
           <Text as="p" tone="success">
             Draft saved.
           </Text>
@@ -189,6 +244,22 @@ export default function AppSettingsRoute() {
         {actionData && !actionData.ok ? (
           <Text as="p" tone="critical">
             {actionData.error}
+          </Text>
+        ) : null}
+
+        <Text as="h2" variant="headingSm">
+          Release
+        </Text>
+        <ReleaseControlsSection
+          history={data.history}
+          onPublish={() => submit({ intent: "publish" }, { method: "post" })}
+          onRollback={(versionId) => submit({ intent: "rollback", targetVersionId: versionId }, { method: "post" })}
+          disabled={isSaving}
+        />
+
+        {actionData?.ok && (actionData.intent === "publish" || actionData.intent === "rollback") ? (
+          <Text as="p" tone="success">
+            {actionData.intent === "publish" ? "Draft published." : "Rolled back to selected version."}
           </Text>
         ) : null}
 

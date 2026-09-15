@@ -76,21 +76,21 @@
 
 ### Tests for User Story 2
 
-- [ ] T032 [P] [US2] Add tone rendering prompt tests in tests/unit/ai/prompt-tone-profile.test.ts
-- [ ] T033 [P] [US2] Add aggressiveness-level behavior tests in tests/unit/ai/prompt-aggressiveness.test.ts
-- [ ] T034 [P] [US2] Add conversation starter constraints tests in tests/unit/ai/conversation-starters.test.ts
-- [ ] T035 [P] [US2] Add bootstrap payload starter integration tests in tests/integration/ai-behavior/bootstrap-starters.test.ts
+- [x] T032 [P] [US2] Add tone rendering prompt tests in tests/unit/ai/prompt-tone-profile.test.ts
+- [x] T033 [P] [US2] Add aggressiveness-level behavior tests in tests/unit/ai/prompt-aggressiveness.test.ts
+- [x] T034 [P] [US2] Add conversation starter constraints tests in tests/unit/ai/conversation-starters.test.ts
+- [x] T035 [P] [US2] Add bootstrap payload starter integration tests in tests/integration/ai-behavior/bootstrap-starters.test.ts
 
 ### Implementation for User Story 2
 
-- [ ] T036 [US2] Implement tone and aggressiveness UI controls in app/components/admin/ai-behavior/StyleControlsSection.tsx
-- [ ] T037 [US2] Implement custom guidance and starter management UI in app/components/admin/ai-behavior/GuidanceSection.tsx
-- [ ] T038 [US2] Persist tone/aggressiveness/custom guidance fields in config API route app/routes/api.ai.behavior.config.tsx
-- [ ] T039 [US2] Persist and normalize conversation starters in app/lib/ai/behavior-config.ts
-- [ ] T040 [US2] Apply tone/aggressiveness/custom guidance composition rules in app/lib/ai/prompts.ts
-- [ ] T041 [US2] Extend chat bootstrap schema with conversation starters in app/lib/ai/schemas.ts
-- [ ] T042 [US2] Return active starters in bootstrap route app/routes/api.app-proxy.chat-bootstrap.tsx
-- [ ] T043 [US2] Add config metadata panel in settings page app/routes/app.settings.tsx
+- [x] T036 [US2] Implement tone and aggressiveness UI controls in app/components/admin/ai-behavior/StyleControlsSection.tsx
+- [x] T037 [US2] Implement custom guidance and starter management UI in app/components/admin/ai-behavior/GuidanceSection.tsx
+- [x] T038 [US2] Persist tone/aggressiveness/custom guidance fields in config API route app/routes/api.ai.behavior.config.tsx
+- [x] T039 [US2] Persist and normalize conversation starters in app/lib/ai/behavior-config.ts
+- [x] T040 [US2] Apply tone/aggressiveness/custom guidance composition rules in app/lib/ai/prompts.ts
+- [x] T041 [US2] Extend chat bootstrap schema with conversation starters in app/lib/ai/schemas.ts
+- [x] T042 [US2] Return active starters in bootstrap route app/routes/api.app-proxy.chat-bootstrap.tsx
+- [x] T043 [US2] Add config metadata panel in settings page app/routes/app.settings.tsx
 
 **Checkpoint**: User Stories 1 and 2 are independently functional.
 
@@ -104,21 +104,21 @@
 
 ### Tests for User Story 3
 
-- [ ] T044 [P] [US3] Add preview response contract tests in tests/integration/ai-behavior/preview-contract.test.ts
-- [ ] T045 [P] [US3] Add publish lifecycle transaction tests in tests/integration/ai-behavior/publish-lifecycle.test.ts
-- [ ] T046 [P] [US3] Add rollback lifecycle transaction tests in tests/integration/ai-behavior/rollback-lifecycle.test.ts
-- [ ] T047 [P] [US3] Add audit snapshot integrity tests in tests/unit/ai/audit-snapshots.test.ts
+- [x] T044 [P] [US3] Add preview response contract tests in tests/integration/ai-behavior/preview-contract.test.ts
+- [x] T045 [P] [US3] Add publish lifecycle transaction tests in tests/integration/ai-behavior/publish-lifecycle.test.ts
+- [x] T046 [P] [US3] Add rollback lifecycle transaction tests in tests/integration/ai-behavior/rollback-lifecycle.test.ts
+- [x] T047 [P] [US3] Add audit snapshot integrity tests in tests/unit/ai/audit-snapshots.test.ts
 
 ### Implementation for User Story 3
 
-- [ ] T048 [US3] Implement preview endpoint request handling in app/routes/api.ai.behavior.preview.tsx
-- [ ] T049 [US3] Implement preview scenario runner and policy checks in app/lib/ai/behavior-preview.ts
-- [ ] T050 [US3] Implement publish endpoint and active-version swap in app/routes/api.ai.behavior.config.tsx
-- [ ] T051 [US3] Implement rollback endpoint and version recreation in app/routes/api.ai.behavior.config.tsx
-- [ ] T052 [US3] Implement version history retrieval for settings page in app/lib/db/queries.ts
-- [ ] T053 [US3] Implement preview/publish/rollback controls in app/components/admin/ai-behavior/ReleaseControlsSection.tsx
-- [ ] T054 [US3] Render version history and rollback picker in app/routes/app.settings.tsx
-- [ ] T055 [US3] Persist publish/rollback audit snapshots in app/lib/db/queries.ts
+- [x] T048 [US3] Implement preview endpoint request handling in app/routes/api.ai.behavior.preview.tsx
+- [x] T049 [US3] Implement preview scenario runner and policy checks in app/lib/ai/behavior-preview.ts
+- [x] T050 [US3] Implement publish endpoint and active-version swap in app/routes/api.ai.behavior.config.tsx
+- [x] T051 [US3] Implement rollback endpoint and version recreation in app/routes/api.ai.behavior.config.tsx
+- [x] T052 [US3] Implement version history retrieval for settings page in app/lib/db/queries.ts
+- [x] T053 [US3] Implement preview/publish/rollback controls in app/components/admin/ai-behavior/ReleaseControlsSection.tsx
+- [x] T054 [US3] Render version history and rollback picker in app/routes/app.settings.tsx
+- [x] T055 [US3] Persist publish/rollback audit snapshots in app/lib/db/queries.ts
 
 **Checkpoint**: All user stories are independently functional.
 
@@ -128,12 +128,12 @@
 
 **Purpose**: Final hardening, documentation, and validation across all stories.
 
-- [ ] T056 [P] Add end-to-end quickstart validation checklist updates in specs/024-ai-behavior-configuration/quickstart.md
-- [ ] T057 [P] Add API contract conformance tests for behavior endpoints in tests/integration/ai-behavior/api-contract.test.ts
-- [ ] T058 Add performance instrumentation for config read and publish latency in app/routes/api.ai.behavior.config.tsx
-- [ ] T059 Add resilience telemetry for preview failures in app/routes/api.ai.behavior.preview.tsx
-- [ ] T060 Add data migration/backfill notes for existing shops in specs/024-ai-behavior-configuration/plan.md
-- [ ] T061 Run and document full test command set for feature in specs/024-ai-behavior-configuration/quickstart.md
+- [x] T056 [P] Add end-to-end quickstart validation checklist updates in specs/024-ai-behavior-configuration/quickstart.md
+- [x] T057 [P] Add API contract conformance tests for behavior endpoints in tests/integration/ai-behavior/api-contract.test.ts
+- [x] T058 Add performance instrumentation for config read and publish latency in app/routes/api.ai.behavior.config.tsx
+- [x] T059 Add resilience telemetry for preview failures in app/routes/api.ai.behavior.preview.tsx
+- [x] T060 Add data migration/backfill notes for existing shops in specs/024-ai-behavior-configuration/plan.md
+- [x] T061 Run and document full test command set for feature in specs/024-ai-behavior-configuration/quickstart.md
 
 ---
 

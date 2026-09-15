@@ -253,6 +253,7 @@ export const StorefrontChatBootstrapSchema = z.object({
   expiresAt: z.string().datetime(),
   chatUrl: z.string().url(),
   conversationLimits: StorefrontConversationLimitsSchema,
+  conversationStarters: z.array(z.string().trim().min(1).max(160)).max(8).default([]),
 });
 
 export const StorefrontChatBootstrapResponseSchema = z.object({

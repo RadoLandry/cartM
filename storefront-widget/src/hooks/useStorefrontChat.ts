@@ -1,5 +1,5 @@
 import type { CartToolAction } from "../types";
-import type { ChatSessionState } from "./useChatSessionState";
+import type { ChatSessionAction, ChatSessionState } from "./useChatSessionState";
 import { normalizeCartJsPayload } from "./useCartStateSync";
 import type { StorefrontCartSnapshot } from "../types";
 
@@ -76,4 +76,30 @@ export function resolveBudgetApprovalShortcut(state: ChatSessionState, text: str
   }
 
   return null;
+}
+
+/** Candidate ids still applied after any per-candidate accept/decline decisions for this optimization context. */
+export function resolveBudgetOptimizationSelectedCandidateIds(
+  block: { candidates: Array<{ candidateId: string }> },
+  state: Pick<ChatSessionState, "budgetOptimizationDecisions">,
+  optimizationContextId: string,
+): string[] {
+  const declined = new Set(state.budgetOptimizationDecisions[optimizationContextId] ?? []);
+  return block.candidates
+    .map((candidate) => candidate.candidateId)
+    .filter((candidateId) => !declined.has(candidateId));
+}
+
+/** Builds the dispatchable action for a shopper accepting/declining one proposed budget optimization candidate. */
+export function buildBudgetOptimizationCandidateDecisionAction(input: {
+  optimizationContextId: string;
+  candidateId: string;
+  accepted: boolean;
+}): ChatSessionAction {
+  return {
+    type: "budget_candidate_decision",
+    optimizationContextId: input.optimizationContextId,
+    candidateId: input.candidateId,
+    accepted: input.accepted,
+  };
 }

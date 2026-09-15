@@ -38,7 +38,11 @@ import { buildProfileKey, resolveCustomerProfile } from "../cart-intelligence/cu
 import { issueActionConfirmationToken } from "../shopify/app-proxy";
 
 // Re-export client-safe utilities so existing server-side consumers keep working
-export { mapBudgetOptimizationToGuidanceBlock } from "./storefront-chat-client";
+export {
+  formatBudgetOptimizationCandidateTradeOff,
+  mapBudgetOptimizationToGuidanceBlock,
+  recomputeBudgetOptimizationSelection,
+} from "./storefront-chat-client";
 
 export interface StorefrontChatBehaviorResolution {
   source: "active" | "draft" | "defaults";
@@ -2418,6 +2422,26 @@ export function normalizeProductComparisonResult(input: {
 
 function roundCurrency(value: number) {
   return Math.round(value * 100) / 100;
+}
+
+export function resolveBudgetOptimizationStreamOutcome(input: {
+  optimizationContextId: string;
+  result: BudgetOptimizationResult;
+}): { kind: "result"; result: BudgetOptimizationResult } | { kind: "error"; error: BudgetOptimizationError } {
+  if (input.result.status === "insufficient_candidates") {
+    return {
+      kind: "error",
+      error: {
+        optimizationContextId: input.optimizationContextId,
+        code: "NO_ELIGIBLE_CANDIDATES",
+        message: "No viable candidate changes were found to reduce this cart safely.",
+        retryable: true,
+        suggestedNextStep: "Try increasing your budget target or adding alternatives to your cart.",
+      },
+    };
+  }
+
+  return { kind: "result", result: input.result };
 }
 
 export function normalizeBudgetOptimizationResult(

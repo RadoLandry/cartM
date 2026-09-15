@@ -2,6 +2,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 
 import { StorefrontChatBootstrapRequestSchema } from "../lib/ai/schemas";
 import { buildAppProxyStorefrontMountConfig, issueStorefrontChatToken } from "../lib/shopify/app-proxy";
+import { getActiveAIBehaviorConfigWithFallback } from "../lib/db/queries";
 import { authenticate } from "../shopify.server";
 
 const CORS_BASE_HEADERS = {
@@ -50,6 +51,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const bootstrap = issueStorefrontChatToken(parsed.data);
   const requestUrl = new URL(request.url);
   const appUrl = process.env.SHOPIFY_APP_URL || `${requestUrl.protocol}//${requestUrl.host}`;
+  const activeBehavior = await getActiveAIBehaviorConfigWithFallback(parsed.data.shop).catch(() => null);
 
   return Response.json(
     {
@@ -58,6 +60,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         shop: parsed.data.shop,
         ...(parsed.data.cartId ? { cartId: parsed.data.cartId } : {}),
         ...bootstrap,
+        conversationStarters: activeBehavior?.config.conversationStarters ?? [],
         chatUrl: new URL("/api/ai/chat", appUrl).toString(),
         kitPreviewUrl: new URL("/api/ai/kit-preview", appUrl).toString(),
       },

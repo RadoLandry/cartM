@@ -58,6 +58,7 @@ Payload:
       "estimatedSavings": 35.0,
       "safetyCriticalImpact": "none",
       "rationale": "Maintains discipline fit with lower cost.",
+      "disciplineFitScore": 0.92,
       "availability": "available"
     }
   ],
@@ -74,10 +75,12 @@ Payload:
 Validation:
 - `projectedSubtotal` must be <= `baselineSubtotal` for `optimized` status.
 - Candidates sorted by safety-first, then savings.
+- `status` enum: `within_budget` | `optimized` | `constraint_blocked` | `insufficient_candidates`. `constraint_blocked` means some candidates were applied but the target could not be fully reached without unsafe removals; it is still delivered as a `budget-optimization.result`, not an error.
+- `candidates` never include a `critical_removal` safety impact; those are filtered out during ranking (see `rankBudgetOptimizationCandidates`).
 
 ### 3) `budget-optimization.error`
 
-Emitted for recoverable optimization failures.
+Emitted for recoverable optimization failures. This includes the case where `buildBudgetOptimizationProposal` produces an `insufficient_candidates` status: the stream never forwards that status as a `result` part, it is remapped to this error event via `resolveBudgetOptimizationStreamOutcome`.
 
 Payload:
 
@@ -85,15 +88,15 @@ Payload:
 {
   "type": "budget-optimization.error",
   "optimizationContextId": "bo_01HX...",
-  "code": "CONSTRAINT_BLOCKED",
-  "message": "Target budget cannot be reached without removing safety-critical items.",
+  "code": "NO_ELIGIBLE_CANDIDATES",
+  "message": "No viable candidate changes were found to reduce this cart safely.",
   "retryable": true,
-  "suggestedNextStep": "Raise budget or choose reduced kit completeness explicitly."
+  "suggestedNextStep": "Try increasing your budget target or adding alternatives to your cart."
 }
 ```
 
 Validation:
-- `code` in known optimization error enum.
+- `code` in known optimization error enum: `INVALID_TARGET_BUDGET` | `EMPTY_CART` | `NO_ELIGIBLE_CANDIDATES` | `UPSTREAM_RATE_LIMIT` | `UNKNOWN`. `UPSTREAM_RATE_LIMIT` is reserved for future upstream throttling handling and is not yet emitted by any code path.
 - Shopper-safe message only.
 
 ## Ordering Guarantees
