@@ -195,12 +195,12 @@
     return `cm-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   }
 
-  function getOrCreateSessionId(config) {
+  function getOrCreateSessionId(config, forceNew = false) {
     const storageKey = buildSessionStorageKey(config);
 
     try {
       const existing = window.sessionStorage.getItem(storageKey);
-      if (existing) {
+      if (existing && !forceNew) {
         return existing;
       }
 
@@ -210,6 +210,100 @@
     } catch {
       return createSessionId();
     }
+  }
+
+  function historyStorageKey(config) {
+    return `cartmind-chat:history:v1:${config.shop}:${config.surface}`;
+  }
+
+  function readConversationHistory(config) {
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(historyStorageKey(config)) || "{}");
+      const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+      const conversations = (Array.isArray(stored.conversations) ? stored.conversations : [])
+        .filter((entry) => entry && typeof entry.id === "string" && Number.isFinite(entry.updatedAt)
+          && entry.updatedAt > cutoff && entry.updatedAt <= Date.now() && Array.isArray(entry.messages))
+        .slice(0, 20)
+        .map((entry) => ({
+          id: entry.id,
+          updatedAt: entry.updatedAt,
+          draft: typeof entry.draft === "string" ? entry.draft.slice(0, 4000) : "",
+          messages: entry.messages.filter((message) => message
+            && (message.role === "user" || message.role === "assistant")
+            && typeof message.content === "string")
+            .slice(-100).map((message, index) => ({
+              id: `restored-${index}`,
+              role: message.role,
+              content: message.content.slice(0, 12000),
+            })),
+        }));
+      return { conversations, activeId: stored.activeId, minimized: stored.minimized === true };
+    } catch {
+      return { conversations: [], activeId: "", minimized: false };
+    }
+  }
+
+  function saveConversationHistory(state) {
+    const messages = state.messages.slice(-100).map((message) => ({
+      role: message.role,
+      content: (message._cartmindFullContent || message.content || "").slice(0, 12000),
+    }));
+    const previous = state.conversations.find((entry) => entry.id === state.conversationId);
+    if (messages.some((message) => message.role === "user") || state.draft.trim()) {
+      const changed = !previous || JSON.stringify(previous.messages.map(({ role, content }) => ({ role, content }))) !== JSON.stringify(messages)
+        || previous.draft !== state.draft;
+      const entry = {
+        id: state.conversationId,
+        updatedAt: changed ? Date.now() : previous.updatedAt,
+        messages,
+        draft: state.draft.slice(0, 4000),
+      };
+      state.conversations = [entry, ...state.conversations.filter((item) => item.id !== entry.id)]
+        .sort((first, second) => second.updatedAt - first.updatedAt).slice(0, 20);
+    }
+    try {
+      window.localStorage.setItem(historyStorageKey(state.config), JSON.stringify({
+        conversations: state.conversations,
+        activeId: state.conversationId,
+        minimized: state.panelMinimized,
+      }));
+    } catch {
+      state.historyStorageUnavailable = true;
+    }
+  }
+
+  function conversationBusy(state) {
+    return state.sending || Boolean(state.pendingActionId || state.pendingRecommendationKey);
+  }
+
+  function switchConversation(instance, conversation) {
+    if (conversationBusy(instance.state)) {
+      return;
+    }
+    saveConversationHistory(instance.state);
+    const state = instance.state;
+    const initial = createInitialState(state.config, false);
+    Object.assign(state, {
+      messages: conversation ? conversation.messages.map(({ role, content }, index) => ({ id: `restored-${index}`, role, content })) : initial.messages,
+      conversationId: conversation ? conversation.id : createSessionId(),
+      sessionId: initial.sessionId,
+      sessionKey: "",
+      streamToken: "",
+      streamTokenExpiresAt: "",
+      chatUrl: "",
+      draft: conversation ? conversation.draft : "",
+      error: "",
+      statusMessage: "",
+      actionStatusById: {},
+      recommendationStatusByKey: {},
+      actionPreviewById: {},
+      kitPreviewUrl: "",
+      historyOpen: false,
+      panelOpen: true,
+      panelMinimized: false,
+    });
+    render(instance);
+    instance.mountNode.querySelector('textarea[name="message"]')?.focus();
   }
 
   function escapeHtml(value) {
@@ -492,6 +586,23 @@
       .cm-icon-button:hover {
         background: rgba(255, 255, 255, 0.22);
       }
+
+      .cm-panel__header > div:first-child { min-width: 0; overflow-wrap: anywhere; }
+      .cm-panel__header { gap: 8px; padding: 16px; }
+      .cm-panel__tools { display: flex; gap: 4px; flex: none; }
+      .cm-icon-button { flex: none; }
+      .cm-icon-button:disabled { opacity: 0.45; cursor: not-allowed; }
+      button:focus-visible, textarea:focus-visible { outline: 2px solid #c97b2d; outline-offset: -2px; }
+      .cm-history { overflow-y: auto; flex: 1; min-height: 0; padding: 16px; }
+      .cm-history h2 { font-size: 16px; margin: 0 0 16px; }
+      .cm-history__row { display: flex; gap: 8px; border-bottom: 1px solid #edf1f7; padding: 8px 0; }
+      .cm-history__open { flex: 1; min-width: 0; text-align: left; border: 0; background: transparent; color: #14213d; cursor: pointer; padding: 8px; }
+      .cm-history__open[aria-current="true"] { background: #f1f3f7; border-radius: 6px; }
+      .cm-history__open strong { display: block; overflow-wrap: anywhere; font-size: 14px; }
+      .cm-history__open time { display: block; font-size: 12px; margin-top: 6px; color: #4f5d75; }
+      .cm-history .cm-icon-button { background: #f1f3f7; color: #14213d; }
+      .cm-history__empty { color: #4f5d75; font-size: 14px; }
+      .cm-history__notice { padding: 8px 16px; font-size: 12px; color: #8a341a; }
 
       .cm-panel__body {
         flex: 1;
@@ -973,6 +1084,7 @@
           right: 0;
           width: 100vw;
           height: 100vh;
+          height: 100dvh;
           max-width: none;
           max-height: none;
           border-radius: 0;
@@ -1981,6 +2093,7 @@
 
   function render(instance) {
     const state = instance.state;
+    saveConversationHistory(state);
     const labels = state.config.labels || {};
     console.log(`[CartMind] Rendering state:`, { panelOpen: state.panelOpen, cartItems: state.cart.items.length });
     const totalItems = state.cart.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
@@ -2005,7 +2118,7 @@
 
     instance.mountNode.innerHTML = `
       <div class="cm-root">
-        ${state.config.features && state.config.features.showChatEntry === false ? "" : `
+        ${state.config.features && state.config.features.showChatEntry === false && state.panelOpen ? "" : `
           <button class="cm-launcher" type="button" data-action="toggle-panel" aria-expanded="${state.panelOpen ? "true" : "false"}">
             <span class="cm-launcher__badge">AI</span>
             <span class="cm-launcher__title">${escapeHtml(labels.launcherLabel || "Chat")}</span>
@@ -2017,9 +2130,29 @@
               <h1 class="cm-panel__title">${escapeHtml(labels.panelTitle || state.config.panelTitle || "Assistant")}</h1>
               <div class="cm-panel__meta">${escapeHtml(state.statusMessage || subtitle)}</div>
             </div>
-            <button class="cm-icon-button" type="button" data-action="close-panel" aria-label="Close chat">×</button>
+            <div class="cm-panel__tools">
+              <button class="cm-icon-button" type="button" data-action="toggle-history" title="${state.historyOpen ? "Retour au chat" : "Historique des conversations"}" aria-label="${state.historyOpen ? "Retour au chat" : "Historique des conversations"}" aria-pressed="${state.historyOpen}">${state.historyOpen ? "&#8592;" : "&#9719;"}</button>
+              <button class="cm-icon-button" type="button" data-action="new-conversation" title="Nouvelle conversation" aria-label="Nouvelle conversation" ${conversationBusy(state) ? "disabled" : ""}>+</button>
+              <button class="cm-icon-button" type="button" data-action="close-panel" title="R&#233;duire le chat" aria-label="R&#233;duire le chat">&#8722;</button>
+            </div>
           </header>
           <div class="cm-panel__body">
+            ${state.historyStorageUnavailable ? '<div class="cm-history__notice" role="status">Sauvegarde indisponible dans ce navigateur.</div>' : ""}
+            ${state.historyOpen ? `
+              <section class="cm-history" aria-label="Historique des conversations">
+                <h2>Conversations</h2>
+                ${state.conversations.length ? state.conversations.map((entry) => {
+                  const firstMessage = entry.messages.find((message) => message.role === "user");
+                  const title = (firstMessage ? firstMessage.content : entry.draft || "Nouvelle conversation").slice(0, 80);
+                  return `<div class="cm-history__row">
+                    <button class="cm-history__open" type="button" data-conversation-id="${escapeHtml(entry.id)}" data-action="open-conversation" aria-current="${entry.id === state.conversationId}" ${conversationBusy(state) ? "disabled" : ""}>
+                      <strong>${escapeHtml(title)}</strong><time datetime="${new Date(entry.updatedAt).toISOString()}">${escapeHtml(new Date(entry.updatedAt).toLocaleString("fr-FR", { dateStyle: "medium", timeStyle: "short" }))}</time>
+                    </button>
+                    <button class="cm-icon-button" type="button" data-conversation-id="${escapeHtml(entry.id)}" data-action="delete-conversation" title="Supprimer la conversation" aria-label="Supprimer la conversation : ${escapeHtml(title)}" ${conversationBusy(state) ? "disabled" : ""}>&#215;</button>
+                  </div>`;
+                }).join("") : '<p class="cm-history__empty">Aucune conversation.</p>'}
+              </section>
+            ` : `
             <div class="cm-cart-summary">${cartLines}</div>
             <div class="cm-messages">${messagesHtml}</div>
             ${state.error ? `<div class="cm-error">${escapeHtml(state.error)}</div>` : ""}
@@ -2030,6 +2163,7 @@
                 <button class="cm-submit" type="submit" ${state.sending || totalItems === 0 ? "disabled" : ""}>${state.sending ? "Sending..." : "Send"}</button>
               </div>
             </form>
+            `}
           </div>
         </section>
       </div>
@@ -2047,20 +2181,55 @@
     if (toggleButton) {
       toggleButton.addEventListener("click", () => {
         state.panelOpen = !state.panelOpen;
+        state.panelMinimized = !state.panelOpen;
         render(instance);
+        instance.mountNode.querySelector(state.panelOpen ? '[data-action="close-panel"]' : '[data-action="toggle-panel"]')?.focus();
       });
     }
 
     if (closeButton) {
       closeButton.addEventListener("click", () => {
         state.panelOpen = false;
+        state.panelMinimized = true;
         render(instance);
+        instance.mountNode.querySelector('[data-action="toggle-panel"]')?.focus();
       });
     }
+
+    instance.mountNode.querySelector('[data-action="toggle-history"]')?.addEventListener("click", () => {
+      state.historyOpen = !state.historyOpen;
+      render(instance);
+      instance.mountNode.querySelector('[data-action="toggle-history"]')?.focus();
+    });
+    instance.mountNode.querySelector('[data-action="new-conversation"]')?.addEventListener("click", () => {
+      switchConversation(instance, null);
+    });
+    instance.mountNode.querySelectorAll('[data-action="open-conversation"], [data-action="delete-conversation"]').forEach((button) => {
+      button.addEventListener("click", () => {
+        if (conversationBusy(state)) return;
+        const entry = state.conversations.find((item) => item.id === button.getAttribute("data-conversation-id"));
+        if (!entry) return;
+        if (button.getAttribute("data-action") === "open-conversation") {
+          if (entry.id === state.conversationId) {
+            state.historyOpen = false;
+            render(instance);
+          } else {
+            switchConversation(instance, entry);
+          }
+        } else {
+          if (entry.id === state.conversationId) switchConversation(instance, null);
+          state.conversations = state.conversations.filter((item) => item.id !== entry.id);
+          state.historyOpen = true;
+          render(instance);
+          instance.mountNode.querySelector('[data-action="toggle-history"]')?.focus();
+        }
+      });
+    });
 
     if (textarea) {
       textarea.addEventListener("input", (event) => {
         state.draft = event.target.value;
+        saveConversationHistory(state);
       });
     }
 
@@ -2140,18 +2309,31 @@
     const mountNode = document.createElement("div");
 
     styleElement.textContent = buildThemeStyles();
+    mountNode.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && instance.state.panelOpen) {
+        event.preventDefault();
+        mountNode.querySelector('[data-action="close-panel"]')?.click();
+      }
+    });
     instance.shadowRoot.replaceChildren(styleElement, mountNode);
     instance.mountNode = mountNode;
   }
 
-  function createInitialState(config) {
+  function createInitialState(config, restoreHistory = true) {
+    const history = restoreHistory ? readConversationHistory(config) : { conversations: [], activeId: "", minimized: false };
+    const active = history.conversations.find((entry) => entry.id === history.activeId);
     return {
       config,
+      conversations: history.conversations,
+      conversationId: active ? active.id : createSessionId(),
+      historyOpen: false,
+      historyStorageUnavailable: false,
+      panelMinimized: history.minimized,
       cart: config.cart || { cartId: undefined, currencyCode: "USD", items: [] },
       cartFingerprint: buildCartFingerprint(config.cart || { currencyCode: "USD", items: [] }),
-      panelOpen: config.features && config.features.showChatEntry === false,
+      panelOpen: !history.minimized && Boolean(config.features && config.features.showChatEntry === false),
       sending: false,
-      draft: "",
+      draft: active ? active.draft : "",
       error: "",
       statusMessage: "",
       pendingActionId: "",
@@ -2162,12 +2344,12 @@
       kitPreviewUrl: "",
       proactiveAnalysisFingerprint: "",
       proactiveAnalysisPending: false,
-      sessionId: getOrCreateSessionId(config),
+      sessionId: getOrCreateSessionId(config, true),
       sessionKey: "",
       streamToken: "",
       streamTokenExpiresAt: "",
       chatUrl: "",
-      messages: [
+      messages: active && active.messages.length ? active.messages : [
         {
           id: `assistant-${Date.now()}`,
           role: "assistant",
@@ -2490,7 +2672,7 @@
 
     state.messages.push(assistantMessage);
     state.sending = true;
-    state.panelOpen = true;
+    if (!state.panelMinimized) state.panelOpen = true;
     state.error = "";
     state.statusMessage = "Analyzing updated cart...";
     render(instance);

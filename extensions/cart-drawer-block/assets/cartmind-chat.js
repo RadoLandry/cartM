@@ -3,7 +3,7 @@
   const LOADING_FLAG = "__cartmindChatBlockRuntimeLoading";
   const SCRIPT_MARKER = "data-cartmind-chat-runtime";
   const RUNTIME_PATH = "/storefront/cartmind-chat-block-runtime.js";
-  const RUNTIME_VERSION = "20260715-compatible-catalog-images-v4";
+  const RUNTIME_VERSION = "20260928-conversation-history-v1";
 
   function normalizeAppBaseUrl(rawValue) {
     if (typeof rawValue !== "string") {
