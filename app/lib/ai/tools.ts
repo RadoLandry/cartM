@@ -199,6 +199,10 @@ function resolveTargetLine(
   return withLineId[0];
 }
 
+// Non-global twin of the directive regex used below, for a cheap presence check
+// without matchAll's lastIndex state.
+const QUANTITY_DIRECTIVE_TEST_PATTERN = /[a-z0-9\s'/-]{1,80}?\s*(?:a|to|=)\s*\d{1,3}\b/;
+
 function resolveExplicitQuantityTargets(input: StorefrontChatRequest, normalizedMessage: string) {
   const withLineId = input.cart.items.filter((item) => item.lineId || item.productId);
 
@@ -304,14 +308,105 @@ function parseRequestedVariantId(rawMessage: string) {
   return gidMatch[0];
 }
 
-function inferToolFromMessage(input: StorefrontChatRequest): {
+const SIZE_TOKEN = "(?:5xl|4xl|3xl|2xl|xxxxxl|xxxxl|xxxl|xxl|xxs|xl|xs|s|m|l|extra\\s+large|extra\\s+small|small|medium|large|\\d{1,3}(?:\\s*(?:oz|cm|mm))?)";
+
+function parseRequestedVariantLabel(normalizedMessage: string) {
+  const sizeToken = SIZE_TOKEN;
+  const explicitSize = normalizedMessage.match(new RegExp(`\\b(?:taille|size)\\b[^.?!]{0,40}?\\b(?:en|a|to|:)\\s*(${sizeToken})\\b`));
+  const directSize = explicitSize ?? normalizedMessage.match(new RegExp(`\\b(?:taille|size)\\s+(${sizeToken})\\b`));
+  const implicitSize = directSize ?? normalizedMessage.match(new RegExp(`\\b(?:en|to)\\s+(${sizeToken})\\b`));
+  return implicitSize?.[1]?.replace(/\s+/g, " ").trim() ?? null;
+}
+
+function normalizeVariantSizeLabel(label: string) {
+  const normalized = normalizeText(label).trim().replace(/^(?:taille|size)\s+/, "").replace(/\s+/g, " ");
+  const aliases: Record<string, string> = {
+    "extra small": "xs",
+    small: "s",
+    medium: "m",
+    large: "l",
+    "extra large": "xl",
+    "2xl": "xxl",
+    "3xl": "xxxl",
+    "4xl": "xxxxl",
+    "5xl": "xxxxxl",
+  };
+  return aliases[normalized] ?? normalized;
+}
+
+function resolveSizeTargetLine(input: StorefrontChatRequest, message: string) {
+  if (input.cart.items.length === 1) {
+    return input.cart.items[0];
+  }
+
+  const normalizedMessage = ` ${message.replace(/[^a-z0-9]+/g, " ")} `;
+  const matches = input.cart.items.map((item) => {
+    const candidates = buildLineMatchCandidates({ ...item, variantTitle: undefined, variantId: undefined });
+    const score = Math.max(0, ...candidates
+      .filter((candidate) => normalizedMessage.includes(` ${candidate.replace(/[^a-z0-9]+/g, " ")} `))
+      .map((candidate) => candidate.length));
+    return { item, score };
+  });
+  const bestScore = Math.max(0, ...matches.map((match) => match.score));
+  const bestMatches = matches.filter((match) => match.score > 0 && match.score === bestScore);
+  return bestMatches.length === 1 ? bestMatches[0].item : undefined;
+}
+
+export type CartToolClarification = {
+  code: "SIZE_REQUIRED" | "TARGET_REQUIRED" | "MIXED_CHANGES" | "VARIANT_UNRESOLVED";
+  productTitle?: string;
+  requestedSize?: string;
+};
+
+export type CartToolResolution =
+  | { status: "proposed"; action: CartToolAction }
+  | { status: "clarification"; clarification: CartToolClarification }
+  | { status: "no_action" };
+
+type CartToolInference = {
   toolName: CartToolAction["toolName"];
   payload: CartToolAction["payload"];
   preview?: CartToolAction["preview"];
-} | null {
+} | {
+  _swapTargetLine: StorefrontChatRequest["cart"]["items"][number];
+  _requestedVariantId: string | null;
+  _requestedVariantLabel: string | null;
+} | { clarification: CartToolClarification };
+
+function inferToolFromMessage(input: StorefrontChatRequest): CartToolInference | null {
   const latest = input.messages[input.messages.length - 1]?.content ?? "";
   const normalized = normalizeText(latest);
   const targetLine = resolveTargetLine(input, normalized);
+  // A named-product mutation (size/variant change) must resolve to a real cart
+  // line when several lines exist — otherwise silently defaulting to the first
+  // line would mutate the wrong product (e.g. "short" mistakenly resolving to
+  // "pantalon" or "gants").
+  const strictTargetLine = input.cart.items.length > 1
+    ? resolveTargetLine(input, normalized, { requireMatch: true })
+    : targetLine;
+  const requestedVariantLabel = parseRequestedVariantLabel(normalized);
+  const variantChangeIntent = /\b(swap|replace|switch|echanger|echange|change|changer|modifie|modifier|mets|mettez|mettre|passe|passer|remplace|remplacer)\b/.test(normalized);
+
+  const hasExplicitSizeIntent = /\b(taille|size)\b/.test(normalized);
+  const quantityIntentText = normalized.replace(/\b(?:(?:en\s+)?(?:gardant|garder|garde|conservant|conserver|conserve)|sans\s+(?:changer|modifier)|avec|keep(?:ing)?|retain(?:ing)?)(?:\s+(?:la|le|les|meme|the|same|current))*\s+(?:quantite|quantity)\b/g, "");
+  const hasExplicitQuantityIntent = /\b(quantity|quantite|exemplaires?|pieces?|unites?)\b/.test(quantityIntentText);
+  if (variantChangeIntent && (hasExplicitSizeIntent || (requestedVariantLabel && !hasExplicitQuantityIntent))) {
+    const sizeTargetLine = resolveSizeTargetLine(input, normalized);
+    if (!requestedVariantLabel) {
+      return { clarification: { code: "SIZE_REQUIRED" } };
+    }
+    if (!sizeTargetLine?.variantId) {
+      return { clarification: { code: "TARGET_REQUIRED", requestedSize: requestedVariantLabel } };
+    }
+    if (hasExplicitQuantityIntent) {
+      return { clarification: { code: "MIXED_CHANGES", productTitle: sizeTargetLine.productTitle } };
+    }
+    return {
+      _swapTargetLine: sizeTargetLine,
+      _requestedVariantId: parseRequestedVariantId(latest),
+      _requestedVariantLabel: requestedVariantLabel,
+    };
+  }
 
   if (/\b(add|ajoute|insert|include)\b/.test(normalized)) {
     const merchandiseId = resolveAddMerchandiseId(input, normalized);
@@ -350,8 +445,18 @@ function inferToolFromMessage(input: StorefrontChatRequest): {
     };
   }
 
-  if (/\b(quantity|quantite|increase|decrease|more|less|plus|moins|augmente|diminue|baisse|redui)\b/.test(normalized) && targetLine) {
+  const hasQuantityIntent = /\b(quantity|quantite|increase|decrease|more|less|plus|moins|augmente|diminue|baisse|redui|mets|mettez|mettre|set|fixe|fixer|passe|passer)\b/.test(normalized)
+    || (/\b(?:a|to|=)\s*\d{1,3}\b/.test(normalized) && /\b(?:exemplaire|piece|unite|quantity|quantite)\b/.test(normalized));
+  if (hasQuantityIntent && targetLine) {
     const explicitDirectives = resolveExplicitQuantityTargets(input, normalized);
+
+    // The message names a product with an explicit quantity (e.g. "le short a 2
+    // exemplaires") but it didn't resolve to any cart line — don't silently
+    // fall back to an unrelated line, bail out instead.
+    if (explicitDirectives.length === 0 && QUANTITY_DIRECTIVE_TEST_PATTERN.test(normalized)) {
+      return null;
+    }
+
     const primaryDirective = explicitDirectives[0];
     const quantityTargetLine = primaryDirective?.line ?? targetLine;
     const explicitQuantity = primaryDirective?.quantity ?? parseFirstInteger(normalized);
@@ -392,9 +497,13 @@ function inferToolFromMessage(input: StorefrontChatRequest): {
     };
   }
 
-  if (/\b(swap|replace)\b/.test(normalized) && targetLine?.variantId) {
+  if (/\b(swap|replace)\b/.test(normalized) && strictTargetLine?.variantId) {
     const requestedVariantId = parseRequestedVariantId(latest);
-    return { _swapTargetLine: targetLine, _requestedVariantId: requestedVariantId };
+    return {
+      _swapTargetLine: strictTargetLine,
+      _requestedVariantId: requestedVariantId,
+      _requestedVariantLabel: requestedVariantLabel,
+    };
   }
 
   return null;
@@ -405,10 +514,12 @@ async function resolveSwapVariantId(
   shop: string,
   productId: string,
   currentVariantId: string,
+  requestedVariantLabel?: string,
+  currentVariantTitle?: string,
 ): Promise<{ variantId: string; variantTitle: string | null } | null> {
   try {
     const product = await db.product.findFirst({
-      where: { shop, shopifyProductId: { contains: productId.replace(/^.*\//, "") } },
+      where: { shop, shopifyProductId: { in: [productId.replace(/^.*\//, ""), `gid://shopify/Product/${productId.replace(/^.*\//, "")}`] } },
       select: {
         variants: {
           orderBy: { inventoryQuantity: "desc" },
@@ -417,9 +528,23 @@ async function resolveSwapVariantId(
       },
     });
 
-    const alternative = product?.variants.find(
-      (v) => v.shopifyVariantId !== currentVariantId && (v.inventoryQuantity ?? 0) > 0,
+    const currentVariant = product?.variants.find(
+      (variant) => variant.shopifyVariantId.replace(/^.*\//, "") === currentVariantId.replace(/^.*\//, ""),
     );
+    const alternatives = product?.variants.filter(
+      (variant) => variant !== currentVariant && (variant.inventoryQuantity ?? 0) > 0,
+    ) ?? [];
+    const normalizedRequestedLabel = requestedVariantLabel ? normalizeVariantSizeLabel(requestedVariantLabel) : null;
+    const currentOptions = (currentVariant?.title ?? currentVariantTitle ?? "")
+      .split(/[/|,]|\s[-–]\s/).map(normalizeVariantSizeLabel);
+    const sizeIndexes = currentOptions.flatMap((option, index) => new RegExp(`^${SIZE_TOKEN}$`).test(option) ? [index] : []);
+    const alternative = normalizedRequestedLabel
+      ? alternatives.find((variant) => {
+          const options = variant.title.split(/[/|,]|\s[-–]\s/).map(normalizeVariantSizeLabel);
+          return sizeIndexes.length === 1 && options.length === currentOptions.length
+            && options.every((option, index) => option === (index === sizeIndexes[0] ? normalizedRequestedLabel : currentOptions[index]));
+        })
+      : alternatives[0];
 
     return alternative ? { variantId: alternative.shopifyVariantId, variantTitle: alternative.title } : null;
   } catch {
@@ -428,26 +553,38 @@ async function resolveSwapVariantId(
 }
 
 export async function buildCartToolActionProposal(input: StorefrontChatRequest): Promise<CartToolAction | null> {
+  const resolution = await resolveCartToolActionProposal(input);
+  return resolution.status === "proposed" ? resolution.action : null;
+}
+
+export async function resolveCartToolActionProposal(input: StorefrontChatRequest): Promise<CartToolResolution> {
   const inferred = inferToolFromMessage(input);
+
+  if (inferred && "clarification" in inferred) {
+    return { status: "clarification", clarification: inferred.clarification };
+  }
 
   // Handle deferred swap resolution requiring a DB lookup.
   if (inferred && "_swapTargetLine" in inferred) {
-    const { _swapTargetLine: targetLine, _requestedVariantId: requestedVariantId } = inferred as {
-      _swapTargetLine: StorefrontChatRequest["cart"]["items"][number];
-      _requestedVariantId: string | null;
-    };
+    const { _swapTargetLine: targetLine, _requestedVariantId: requestedVariantId, _requestedVariantLabel } = inferred;
 
-    const resolvedVariantId = requestedVariantId ?? (
-      await resolveSwapVariantId(input.shop, targetLine.productId, targetLine.variantId ?? "")
-    )?.variantId;
+    const resolvedVariant = requestedVariantId
+      ? { variantId: requestedVariantId, variantTitle: null }
+      : await resolveSwapVariantId(input.shop, targetLine.productId, targetLine.variantId ?? "", _requestedVariantLabel ?? undefined, targetLine.variantTitle);
+    const resolvedVariantId = resolvedVariant?.variantId;
 
     if (!resolvedVariantId) {
-      // No specific variant requested and no alternative found — let chat provide guidance.
-      return null;
+      return {
+        status: "clarification",
+        clarification: {
+          code: "VARIANT_UNRESOLVED",
+          productTitle: targetLine.productTitle,
+          requestedSize: _requestedVariantLabel ?? undefined,
+        },
+      };
     }
 
-    const resolved = await resolveSwapVariantId(input.shop, targetLine.productId, targetLine.variantId ?? "");
-    const newTitle = requestedVariantId ? "(requested variant)" : (resolved?.variantTitle ?? "alternate variant");
+    const newTitle = resolvedVariant?.variantTitle ?? _requestedVariantLabel ?? (requestedVariantId ? "requested variant" : "alternate variant");
     const beforeLabel = `${targetLine.productTitle || "Item"}${targetLine.variantTitle ? ` / ${targetLine.variantTitle}` : ""}`;
 
     const swapActionId = createActionId();
@@ -483,11 +620,11 @@ export async function buildCartToolActionProposal(input: StorefrontChatRequest):
       cartId: swapAction.cartId,
       payload: swapAction.payload,
     });
-    return swapAction;
+    return { status: "proposed", action: swapAction };
   }
 
   if (!inferred) {
-    return null;
+    return { status: "no_action" };
   }
 
   const actionId = createActionId();
@@ -518,7 +655,7 @@ export async function buildCartToolActionProposal(input: StorefrontChatRequest):
     payload: action.payload,
   });
 
-  return action;
+  return { status: "proposed", action };
 }
 
 export function buildComparisonSelectionActionProposal(input: {

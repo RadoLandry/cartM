@@ -709,6 +709,42 @@ describe("resolveCompatibleAddActionProposal", () => {
     }
   });
 
+  it("lists cart items and quantities for French cart-content questions", async () => {
+    const request = makeStorefrontChatRequest({
+      cart: {
+        cartId: "gid://shopify/Cart/123",
+        currencyCode: "EUR",
+        items: [
+          {
+            lineId: "line-gloves",
+            productId: "gid://shopify/Product/99",
+            productTitle: "Gants de boxe Venum Elite",
+            variantId: "gid://shopify/ProductVariant/991",
+            variantTitle: "12 oz / Noir",
+            quantity: 2,
+          },
+          {
+            lineId: "line-wraps",
+            productId: "gid://shopify/Product/88",
+            productTitle: "Bandages de boxe Venum Kontact",
+            variantId: "gid://shopify/ProductVariant/881",
+            variantTitle: "4 m / Noir",
+            quantity: 1,
+          },
+        ],
+      },
+      messages: [{ role: "user", content: "quelles sont les articles de mon panier et en quelles quantités?" }],
+    });
+
+    const reply = await buildStorefrontChatReply(request);
+
+    expect(reply.text).toContain("Gants de boxe Venum Elite (12 oz / Noir) : quantité 2");
+    expect(reply.text).toContain("Bandages de boxe Venum Kontact (4 m / Noir) : quantité 1");
+    expect(reply.text).not.toContain("recommandations personnalisées");
+    expect(reply.text).not.toContain("lacune");
+    expect(reply.guidanceBlocks).toHaveLength(0);
+  });
+
   it("does not recommend another bottom as a generic compatible product for pants", async () => {
     vi.mocked(getActiveRelationshipsForProduct).mockResolvedValue([]);
     vi.mocked(db.product.findMany)

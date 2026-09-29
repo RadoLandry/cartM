@@ -609,6 +609,13 @@ function isKitIntentMessage(message: string) {
   return /(kit|missing|manqu|essentiel|complete|compl[eé]ter)/i.test(message);
 }
 
+function isCartContentsIntentMessage(message: string) {
+  const normalized = message.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  return /\b(?:quel(?:s|le|les)?|quoi|what|which|list|show|affiche|liste)\b/.test(normalized)
+    && /\b(?:panier|cart|basket)\b/.test(normalized)
+    && /\b(?:articles?|produits?|items?|products?|quantites?|quantities?|contenus?|contents?)\b/.test(normalized);
+}
+
 function isSizeOrUseCaseIntentMessage(message: string) {
   return /(size|fit|sizing|taille|pointure|oz\b|ounce|sparring|combat|entrainement|entra[iî]nement|training|pratique|adapt[eé]|convient|compatible|suitable|muay\s*thai|tha[iï]|kick\s*boxing|kickboxing|boxe|boxing|mma)/i.test(message);
 }
@@ -1212,6 +1219,23 @@ export async function buildStorefrontChatReply(
           : "Add at least one cart item, then ask what to keep, add, remove, swap, or resize.",
         lang,
       )],
+    }, features);
+  }
+
+  if (isCartContentsIntentMessage(latestMessage)) {
+    const cartLines = input.cart.items.map((item) => {
+      const title = item.productTitle || (lang === "fr" ? "Article sans nom" : "Unnamed item");
+      const variant = item.variantTitle ? ` (${item.variantTitle})` : "";
+      return lang === "fr"
+        ? `${title}${variant} : quantité ${item.quantity}`
+        : `${title}${variant}: quantity ${item.quantity}`;
+    });
+
+    return buildFeatureAwareReply({
+      text: lang === "fr"
+        ? `Dans votre panier : ${cartLines.join("; ")}.`
+        : `In your cart: ${cartLines.join("; ")}.`,
+      guidanceBlocks: [],
     }, features);
   }
 

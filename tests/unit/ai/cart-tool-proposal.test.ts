@@ -1,11 +1,21 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { buildCartToolActionProposal } from "../../../app/lib/ai/tools";
+vi.mock("../../../app/db.server", () => ({
+  default: {
+    product: {
+      findFirst: vi.fn(),
+    },
+  },
+}));
+
+import { buildCartToolActionProposal, resolveCartToolActionProposal } from "../../../app/lib/ai/tools";
 import { makeStorefrontChatRequest } from "../../helpers/storefront-chat-fixtures";
+import db from "../../../app/db.server";
 
 describe("cart tool proposal inference", () => {
   beforeEach(() => {
     process.env.STOREFRONT_CHAT_SIGNING_SECRET = "test-signing-secret";
+    vi.mocked(db.product.findFirst).mockReset();
   });
 
   it("proposes add-to-cart action with requested quantity", async () => {
@@ -89,6 +99,174 @@ describe("cart tool proposal inference", () => {
       expect(proposal.payload.lineId).toBe("line-gloves");
       expect(proposal.payload.quantity).toBe(3);
     }
+  });
+
+  it("sets the requested quantity from a French 'mets ... à N exemplaires' command", async () => {
+    const request = makeStorefrontChatRequest({
+      cart: {
+        cartId: "gid://shopify/Cart/123",
+        currencyCode: "EUR",
+        items: [{
+          lineId: "line-pants",
+          productId: "gid://shopify/Product/44",
+          productTitle: "Pantalon Homme UFC Zenith by Venum Authentic Fight Week - Bordeaux",
+          variantId: "gid://shopify/ProductVariant/441",
+          variantTitle: "XS",
+          quantity: 5,
+        }],
+      },
+      messages: [{ role: "user", content: "Mets le pantalon à 2 exemplaires." }],
+    });
+
+    const proposal = await buildCartToolActionProposal(request);
+
+    expect(proposal?.toolName).toBe("changeQuantity");
+    expect(proposal?.payload.actionType).toBe("change_quantity");
+    if (proposal?.payload.actionType === "change_quantity") {
+      expect(proposal.payload.lineId).toBe("line-pants");
+      expect(proposal.payload.quantity).toBe(2);
+    }
+  });
+
+  it("does not mutate an unrelated cart line when the named product isn't in the cart", async () => {
+    const request = makeStorefrontChatRequest({
+      cart: {
+        cartId: "gid://shopify/Cart/123",
+        currencyCode: "EUR",
+        items: [
+          {
+            lineId: "line-pants",
+            productId: "gid://shopify/Product/44",
+            productTitle: "Pantalon Homme UFC Zenith by Venum Authentic Fight Week - Bordeaux",
+            variantId: "gid://shopify/ProductVariant/441",
+            variantTitle: "XS",
+            quantity: 5,
+          },
+          {
+            lineId: "line-gloves",
+            productId: "gid://shopify/Product/99",
+            productTitle: "Gants de Boxe Venum Impact Evo Scales - Vert Armee",
+            variantId: "gid://shopify/ProductVariant/991",
+            variantTitle: "Vert Armee",
+            quantity: 1,
+          },
+        ],
+      },
+      // The cart contains no "short" — must not fall back to gloves or pants.
+      messages: [{ role: "user", content: "Mets le short à 2 exemplaires." }],
+    });
+
+    const proposal = await buildCartToolActionProposal(request);
+    expect(proposal).toBeNull();
+  });
+
+  it.each([
+    ["Change la taille du pantalon en XL.", "XL"],
+    ["Mets le pantalon en S.", "S"],
+    ["Change la taille du pantalon en M.", "M"],
+    ["Change la taille du pantalon en L.", "L"],
+    ["Passe le pantalon en L.", "L"],
+    ["Change la taille du pantalon de XS a L.", "L"],
+    ["Mets le pantalon en taille 42.", "42"],
+    ["Remplace le pantalon  par le même modèle en taille S en gardant la quantité.", "S"],
+    ["Change le pantalon en M sans changer la quantité.", "M"],
+    ["Switch the pantalon to size L keeping the same quantity.", "L"],
+  ])("selects the requested size: %s", async (content, size) => {
+    vi.mocked(db.product.findFirst).mockResolvedValueOnce({
+      variants: [
+        { shopifyVariantId: "gid://shopify/ProductVariant/441", title: "XS / Bordeaux", inventoryQuantity: 5 },
+        { shopifyVariantId: "gid://shopify/ProductVariant/444", title: `${size} / Black`, inventoryQuantity: 20 },
+        { shopifyVariantId: "gid://shopify/ProductVariant/442", title: `${size} / Bordeaux`, inventoryQuantity: 8 },
+        { shopifyVariantId: "gid://shopify/ProductVariant/443", title: "XXL / Bordeaux", inventoryQuantity: 8 },
+      ],
+    } as never);
+    const request = makeStorefrontChatRequest({
+      cart: {
+        cartId: "gid://shopify/Cart/123",
+        currencyCode: "EUR",
+        items: [{
+          lineId: "line-gloves",
+          productId: "gid://shopify/Product/99",
+          productTitle: "Gants de Boxe Venum Impact Evo Scales - Vert Armee",
+          variantId: "gid://shopify/ProductVariant/991",
+          variantTitle: "8 oz",
+          quantity: 1,
+        }, {
+          lineId: "line-pants",
+          productId: "gid://shopify/Product/44",
+          productTitle: "Pantalon Homme UFC Zenith by Venum Authentic Fight Week - Bordeaux",
+          variantId: "gid://shopify/ProductVariant/441",
+          variantTitle: "XS / Bordeaux",
+          quantity: 5,
+        }],
+      },
+      messages: [{ role: "user", content }],
+    });
+
+    const proposal = await buildCartToolActionProposal(request);
+
+    expect(proposal?.toolName).toBe("swapVariant");
+    expect(proposal?.payload.actionType).toBe("swap_variant");
+    if (proposal?.payload.actionType === "swap_variant") {
+      expect(proposal.payload.lineId).toBe("line-pants");
+      expect(proposal.payload.newMerchandiseId).toBe("gid://shopify/ProductVariant/442");
+      expect(proposal.payload.quantity).toBe(5);
+    }
+    expect(proposal?.preview?.after).toContain(size);
+  });
+
+  it.each([
+    "Mets le pantalon en taille inconnue.",
+    "Mets le pantalon en M.",
+    "Passe la taille du pantalon a 42.",
+  ])("does not change quantity when the requested size is unavailable: %s", async (content) => {
+    vi.mocked(db.product.findFirst).mockResolvedValueOnce({
+      variants: [
+        { shopifyVariantId: "gid://shopify/ProductVariant/441", title: "XS / Bordeaux", inventoryQuantity: 5 },
+        { shopifyVariantId: "gid://shopify/ProductVariant/442", title: "M / Bordeaux", inventoryQuantity: 0 },
+        { shopifyVariantId: "gid://shopify/ProductVariant/443", title: "M / Black", inventoryQuantity: 8 },
+      ],
+    } as never);
+    const request = makeStorefrontChatRequest({
+      cart: {
+        currencyCode: "EUR",
+        items: [{ lineId: "pants", productId: "44", productTitle: "Pantalon", variantId: "441", variantTitle: "XS / Bordeaux", quantity: 2 }],
+      },
+      messages: [{ role: "user", content }],
+    });
+
+    expect(await resolveCartToolActionProposal(request)).toMatchObject({
+      status: "clarification",
+      clarification: { code: content.includes("inconnue") ? "SIZE_REQUIRED" : "VARIANT_UNRESOLVED" },
+    });
+  });
+
+  it.each(["Mets le pantalon en M.", "Mets la taille en M.", "Mets le short en M."])("does not guess a cart line for an ambiguous size request: %s", async (content) => {
+    const request = makeStorefrontChatRequest({
+      cart: {
+        currencyCode: "EUR",
+        items: [
+          { lineId: "pants-xs", productId: "44", productTitle: "Pantalon", variantId: "441", variantTitle: "XS", quantity: 2 },
+          { lineId: "pants-l", productId: "44", productTitle: "Pantalon", variantId: "442", variantTitle: "L", quantity: 1 },
+        ],
+      },
+      messages: [{ role: "user", content }],
+    });
+
+    expect(await resolveCartToolActionProposal(request)).toMatchObject({
+      status: "clarification",
+      clarification: { code: "TARGET_REQUIRED" },
+    });
+    expect(db.product.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("keeps an explicit quantity request separate from a size change", async () => {
+    const proposal = await buildCartToolActionProposal(makeStorefrontChatRequest({
+      messages: [{ role: "user", content: "change quantity to 3" }],
+    }));
+
+    expect(proposal?.payload.actionType).toBe("change_quantity");
+    expect(db.product.findFirst).not.toHaveBeenCalled();
   });
 
   it("proposes swap action using explicitly requested variant id", async () => {

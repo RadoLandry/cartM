@@ -1,5 +1,7 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import db from "../../../app/db.server";
+import type { CartToolAction } from "../../../app/lib/ai/schemas";
 import { action as confirmAction } from "../../../app/routes/api.ai.chat.actions.confirm";
 import { action as chatAction } from "../../../app/routes/api.ai.chat";
 import { buildCartToolActionProposal } from "../../../app/lib/ai/tools";
@@ -36,6 +38,10 @@ function parseSseEvents(body: string) {
 describe("storefront chat action confirmation route", () => {
   beforeEach(() => {
     process.env.STOREFRONT_CHAT_SIGNING_SECRET = "test-signing-secret";
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("executes approved add-to-cart action", async () => {
@@ -305,7 +311,17 @@ describe("storefront chat action confirmation route", () => {
     expect(payload.result.summary).toContain("No cart changes were made");
   });
 
-  it("executes approved swap action and replaces variant", async () => {
+  it.each([
+    "replace with gid://shopify/ProductVariant/22",
+    "Mets les gants en 14 oz.",
+    "Passe les gants en taille 14 oz.",
+  ])("streams and executes an approved variant change: %s", async (content) => {
+    vi.spyOn(db.product, "findFirst").mockResolvedValue({
+      variants: [
+        { shopifyVariantId: "gid://shopify/ProductVariant/11", title: "12 oz / Black", inventoryQuantity: 5 },
+        { shopifyVariantId: "gid://shopify/ProductVariant/22", title: "14 oz / Black", inventoryQuantity: 5 },
+      ],
+    } as never);
     const request = makeStorefrontChatRequest({
       cart: {
         ...buildBaseCart(),
@@ -317,11 +333,26 @@ describe("storefront chat action confirmation route", () => {
           },
         ],
       },
-      messages: [{ role: "user", content: "replace with gid://shopify/ProductVariant/22" }],
+      messages: [{ role: "user", content }],
     });
 
-    const proposal = await buildCartToolActionProposal(request);
+    const streamResponse = await chatAction({
+      request: new Request("http://localhost/api/ai/chat", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://test.myshopify.com",
+        },
+        body: JSON.stringify(request),
+      }),
+      params: {},
+      context: {},
+    } as never);
+    const events = parseSseEvents(await readResponseText(streamResponse));
+    const proposal = events.find((event) => event.type === "tool-action-proposed")?.action as CartToolAction | undefined;
     expect(proposal?.payload.actionType).toBe("swap_variant");
+    expect(events).toContainEqual(expect.objectContaining({ type: "tool-action-status", status: "proposed" }));
+    expect(request.cart.items[0].variantId).toBe("gid://shopify/ProductVariant/11");
 
     const response = await confirmAction({
       request: new Request("http://localhost/api/ai/chat/actions/confirm", {
@@ -350,6 +381,75 @@ describe("storefront chat action confirmation route", () => {
     expect(payload.ok).toBe(true);
     expect(payload.result.status).toBe("executed");
     expect(payload.result.cart.items.some((item: { variantId?: string }) => item.variantId === "gid://shopify/ProductVariant/22")).toBe(true);
+    expect(payload.result.cart.items[0].quantity).toBe(1);
+  });
+
+  it.each([true, false])("keeps the pants replacement intent and quantity (size available: %s)", async (available) => {
+    vi.spyOn(db.product, "findFirst").mockResolvedValue({
+      variants: [
+        { shopifyVariantId: "gid://shopify/ProductVariant/441", title: "XS / Bordeaux", inventoryQuantity: 10 },
+        { shopifyVariantId: "gid://shopify/ProductVariant/442", title: "S / Bordeaux", inventoryQuantity: available ? 10 : 0 },
+      ],
+    } as never);
+    const request = makeStorefrontChatRequest({
+      cart: {
+        ...buildBaseCart(),
+        items: [
+          { ...buildBaseCart().items[0], productTitle: "Gants de Boxe Venum Impact Evo Scales", variantTitle: "8 oz" },
+          { lineId: "line-pants", productId: "gid://shopify/Product/44", productTitle: "Pantalon Venum Bordeaux", variantId: "gid://shopify/ProductVariant/441", variantTitle: "XS / Bordeaux", quantity: 5 },
+        ],
+      },
+      messages: [{ role: "user", content: "Remplace le pantalon  par le même modèle en taille S en gardant la quantité." }],
+    });
+    const response = await chatAction({
+      request: new Request("http://localhost/api/ai/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "https://test.myshopify.com" },
+        body: JSON.stringify(request),
+      }),
+      params: {},
+      context: {},
+    } as never);
+    const events = parseSseEvents(await readResponseText(response));
+    const text = events.filter((event) => event.type === "text-delta").map((event) => event.text).join("");
+    const proposal = events.find((event) => event.type === "tool-action-proposed")?.action as CartToolAction | undefined;
+
+    expect(text).toContain("Pantalon Venum Bordeaux");
+    expect(text).not.toContain("Gants");
+    expect(events.some((event) => event.type === "guidance-block")).toBe(false);
+    if (!available) {
+      expect(proposal).toBeUndefined();
+      expect(text).toContain("taille S");
+      expect(text).toContain("restent inchangés");
+      return;
+    }
+
+    expect(text).toContain("Quantité conservée : 5");
+    expect(proposal?.payload).toMatchObject({ actionType: "swap_variant", lineId: "line-pants", newMerchandiseId: "gid://shopify/ProductVariant/442", quantity: 5 });
+    const confirmation = await confirmAction({
+      request: new Request("http://localhost/api/ai/chat/actions/confirm", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "https://test.myshopify.com" },
+        body: JSON.stringify({
+          shop: request.shop,
+          sessionKey: request.sessionKey,
+          actionId: proposal?.actionId,
+          confirmationToken: proposal?.confirmationToken,
+          decision: "approve",
+          actionType: "cart_tool",
+          cart: request.cart,
+        }),
+      }),
+      params: {},
+      context: {},
+    } as never);
+    const payload = await confirmation.json();
+    expect(payload.result.status).toBe("executed");
+    expect(payload.result.cart.items).toHaveLength(2);
+    expect(payload.result.cart.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ variantId: "gid://shopify/ProductVariant/11", quantity: 1 }),
+      expect.objectContaining({ variantId: "gid://shopify/ProductVariant/442", quantity: 5 }),
+    ]));
   });
 
   it("fails swap action safely when target variant is unavailable", async () => {

@@ -330,20 +330,41 @@ export async function failSyncJob(id: string) {
   });
 }
 
+// Guards against a crashed/interrupted sync leaving IN_PROGRESS forever and blocking all future syncs.
+const STALE_SYNC_JOB_MS = 10 * 60 * 1000;
+
 export async function getActiveSyncJob(shop: string) {
-  return await db.syncJob.findFirst({
+  const activeJob = await db.syncJob.findFirst({
     where: {
       shop,
       status: SyncJobStatus.IN_PROGRESS,
     },
   });
+
+  if (!activeJob) {
+    return null;
+  }
+
+  if (Date.now() - activeJob.updatedAt.getTime() > STALE_SYNC_JOB_MS) {
+    await failSyncJob(activeJob.id);
+    return null;
+  }
+
+  return activeJob;
 }
 
 export async function getLatestSyncJob(shop: string) {
-  return await db.syncJob.findFirst({
+  const job = await db.syncJob.findFirst({
     where: { shop },
     orderBy: { startedAt: "desc" },
   });
+
+  // Reflect the same staleness rule as getActiveSyncJob so the dashboard button unlocks without a manual retry.
+  if (job && job.status === SyncJobStatus.IN_PROGRESS && Date.now() - job.updatedAt.getTime() > STALE_SYNC_JOB_MS) {
+    return await failSyncJob(job.id);
+  }
+
+  return job;
 }
 
 export async function countProductsForShop(shop: string) {

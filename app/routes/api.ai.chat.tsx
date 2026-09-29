@@ -1,7 +1,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { streamText } from "ai";
 
-import type { StorefrontChatRequest } from "../lib/ai/schemas";
+import type { CartToolAction, StorefrontChatRequest } from "../lib/ai/schemas";
 import { StorefrontChatRequestSchema } from "../lib/ai/schemas";
 import {
   buildProductComparisonDataError,
@@ -24,7 +24,8 @@ import { getPrimaryModel, isAIAvailable } from "../lib/ai/providers";
 import {
   buildBudgetOptimizationSelectionActionProposal,
   buildBudgetOptimizationToolRequest,
-  buildCartToolActionProposal,
+  resolveCartToolActionProposal,
+  type CartToolClarification,
   buildCompareProductsToolRequest,
   buildComparisonSelectionActionProposal,
   createBudgetOptimizationContextId,
@@ -70,6 +71,49 @@ function buildCompatibleActionIntro(latestMessage: string, count: number) {
   return isFrench
     ? "J'ai trouvé un article compatible dans le catalogue. Vérifiez la proposition ci-dessous avant de l'ajouter au panier."
     : "I found a compatible product in the catalog. Review the proposed cart action below before adding it.";
+}
+
+// Reflects the deterministic cart mutation actually proposed (changeQuantity,
+// swapVariant, addToCart, removeFromCart), so the conversational text never
+// contradicts the action card the shopper is asked to confirm.
+function buildCartMutationIntroText(action: CartToolAction | null, latestMessage: string) {
+  const isFrench = /\b(mets|mettez|mettre|change|changer|modifie|modifier|passe|passer|diminue|augmente|retire|ajoute|remplace|taille|quantite|quantité|exemplaire)\b/i.test(latestMessage);
+  const afterLabel = action?.preview?.after;
+  const quantitySummary = action?.payload.actionType === "swap_variant"
+    ? (isFrench ? ` Quantité conservée : ${action.payload.quantity}.` : ` Quantity preserved: ${action.payload.quantity}.`)
+    : "";
+
+  return isFrench
+    ? (afterLabel
+      ? `J'ai préparé la modification suivante : ${afterLabel}.${quantitySummary} Confirmez ci-dessous pour l'appliquer.`
+      : "J'ai préparé la modification demandée pour votre panier. Confirmez ci-dessous pour l'appliquer.")
+    : (afterLabel
+      ? `I prepared the following cart change: ${afterLabel}.${quantitySummary} Confirm below to apply it.`
+      : "I prepared the requested cart change. Confirm below to apply it.");
+}
+
+function buildCartClarificationText(clarification: CartToolClarification, latestMessage: string) {
+  const isFrench = /\b(taille|remplace|mets|passe|pantalon|quantit[eé])\b/i.test(latestMessage);
+  const product = clarification.productTitle || (isFrench ? "cet article" : "this item");
+  const size = clarification.requestedSize?.toUpperCase();
+  switch (clarification.code) {
+    case "SIZE_REQUIRED":
+      return isFrench
+        ? "Quelle taille souhaitez-vous pour cet article ? Votre panier reste inchangé."
+        : "Which size would you like for this item? Your cart is unchanged.";
+    case "TARGET_REQUIRED":
+      return isFrench
+        ? `Je ne peux pas identifier une seule ligne du panier pour ce changement en taille ${size}. Précisez le nom complet et la taille actuelle de l'article. Votre panier reste inchangé.`
+        : `I cannot identify a single cart line for the change to size ${size}. Please specify the full product name and current size. Your cart is unchanged.`;
+    case "MIXED_CHANGES":
+      return isFrench
+        ? `Souhaitez-vous changer la taille de ${product} en conservant sa quantité, ou modifier aussi la quantité ? Votre panier reste inchangé.`
+        : `Would you like to change the size of ${product} keeping its quantity, or also change the quantity? Your cart is unchanged.`;
+    case "VARIANT_UNRESOLVED":
+      return isFrench
+        ? `Je ne peux pas confirmer une variante disponible de ${product}${size ? ` en taille ${size}` : ""} en conservant les autres options. Votre panier et sa quantité restent inchangés. Vérifiez la disponibilité sur la fiche produit ou indiquez une autre taille.`
+        : `I cannot confirm an available variant of ${product}${size ? ` in size ${size}` : ""} with the other options unchanged. Your cart and quantity are unchanged. Check availability on the product page or request another size.`;
+  }
 }
 
 function formatCatalogContextProduct(product: Awaited<ReturnType<typeof findSimilarProducts>>[number]) {
@@ -462,9 +506,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
+  const cartResolution = compatibleActionProposals.length > 0
+    ? { status: "no_action" as const }
+    : await resolveCartToolActionProposal(parsed.data);
+  const cartClarification = cartResolution.status === "clarification" ? cartResolution.clarification : null;
   const cartActionProposals = compatibleActionProposals.length > 0
     ? compatibleActionProposals
-    : [(await buildCartToolActionProposal(parsed.data))].filter((action): action is NonNullable<typeof action> => Boolean(action));
+    : cartResolution.status === "proposed" ? [cartResolution.action] : [];
   const toolActionEvents = [...cartActionProposals, comparisonActionProposal, budgetActionProposal]
     .filter((action): action is NonNullable<typeof action> => Boolean(action))
     .map((action) => ({
@@ -483,10 +531,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const latestRawMessage = parsed.data.messages[parsed.data.messages.length - 1]?.content ?? "";
   const latestMessage = latestRawMessage.toLowerCase();
   const hasCompatibleActionProposals = compatibleActionProposals.length > 0;
-  const replyText = hasCompatibleActionProposals ? buildCompatibleActionIntro(latestMessage, compatibleActionProposals.length) : guidanceReply.text;
-  const guidanceBlocks = hasCompatibleActionProposals ? [] : guidanceReply.guidanceBlocks;
+  // Direct mutation proposals (changeQuantity/swapVariant/addToCart/removeFromCart)
+  // inferred straight from the shopper's own wording, as opposed to compatible-add
+  // suggestions surfaced from catalog search.
+  const hasDirectCartMutationProposal = !hasCompatibleActionProposals && cartActionProposals.length > 0;
+  const replyText = hasCompatibleActionProposals
+    ? buildCompatibleActionIntro(latestMessage, compatibleActionProposals.length)
+    : hasDirectCartMutationProposal
+      ? buildCartMutationIntroText(cartActionProposals[0], latestMessage)
+      : cartClarification
+        ? buildCartClarificationText(cartClarification, latestMessage)
+        : guidanceReply.text;
+  const guidanceBlocks = (hasCompatibleActionProposals || hasDirectCartMutationProposal || cartClarification) ? [] : guidanceReply.guidanceBlocks;
   const shouldBypassLLM = /\b(budget|optimi[sz]|compare|add|remove|swap|quantit|quantity|size|fit|sparring|combat|taille|pratique|adapt[eé]|muay\s*thai|tha[iï]|kick\s*boxing|kickboxing|boxe|boxing|mma|recommend|recommand|suggest|sugg[eè]re|conseil|propose|s['’]?accorde|accorde|va\s+bien|works?\s+well|goes?\s+well)\b/.test(latestMessage);
-  const shouldUseLLM = aiEnabled && !hasCompatibleActionProposals && !shouldBypassLLM;
+  const shouldUseLLM = aiEnabled && !hasCompatibleActionProposals && !hasDirectCartMutationProposal && !cartClarification && !shouldBypassLLM;
   const catalogContext = shouldUseLLM
     ? await retrieveCatalogContextForChat(parsed.data)
     : undefined;
