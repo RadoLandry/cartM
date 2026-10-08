@@ -557,10 +557,42 @@ export async function buildCartToolActionProposal(input: StorefrontChatRequest):
   return resolution.status === "proposed" ? resolution.action : null;
 }
 
+const pendingSizeClarifications = new Map<string, {
+  line: StorefrontChatRequest["cart"]["items"][number];
+  cartId?: string;
+  expiresAt: number;
+}>();
+
 export async function resolveCartToolActionProposal(input: StorefrontChatRequest): Promise<CartToolResolution> {
-  const inferred = inferToolFromMessage(input);
+  const scope = JSON.stringify([input.shop, input.sessionKey]);
+  const latest = input.messages[input.messages.length - 1]?.content.trim() ?? "";
+  const pending = pendingSizeClarifications.get(scope);
+  pendingSizeClarifications.delete(scope);
+  for (const [key, clarification] of pendingSizeClarifications) {
+    if (clarification.expiresAt <= Date.now()) pendingSizeClarifications.delete(key);
+  }
+  let inferred = inferToolFromMessage(input);
+  const isSizeReply = /^(?:(?:taille|size)\s+)?(?:XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|[2-6]XL|\d{2}(?:\s*oz)?)\s*[.!]?$/i.test(latest);
+  if (!inferred && isSizeReply) {
+    const line = pending && pending.expiresAt > Date.now() && pending.cartId === input.cart.cartId
+      ? input.cart.items.find((candidate) => candidate.lineId === pending.line.lineId
+      && candidate.productId === pending.line.productId
+      && candidate.variantId === pending.line.variantId
+      && candidate.quantity === pending.line.quantity) : undefined;
+    inferred = line ? {
+      _swapTargetLine: line,
+      _requestedVariantId: null,
+      _requestedVariantLabel: latest.replace(/^(?:taille|size)\s+/i, "").replace(/[.!]$/, "").trim(),
+    } : { clarification: { code: "TARGET_REQUIRED" } };
+  }
 
   if (inferred && "clarification" in inferred) {
+    if (inferred.clarification.code === "SIZE_REQUIRED") {
+      const line = resolveSizeTargetLine(input, normalizeText(latest));
+      if (line?.lineId) pendingSizeClarifications.set(scope, {
+        line: { ...line }, cartId: input.cart.cartId, expiresAt: Date.now() + 5 * 60_000,
+      });
+    }
     return { status: "clarification", clarification: inferred.clarification };
   }
 
@@ -574,6 +606,9 @@ export async function resolveCartToolActionProposal(input: StorefrontChatRequest
     const resolvedVariantId = resolvedVariant?.variantId;
 
     if (!resolvedVariantId) {
+      if (targetLine.lineId) pendingSizeClarifications.set(scope, {
+        line: { ...targetLine }, cartId: input.cart.cartId, expiresAt: Date.now() + 5 * 60_000,
+      });
       return {
         status: "clarification",
         clarification: {

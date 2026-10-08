@@ -260,6 +260,55 @@ describe("cart tool proposal inference", () => {
     expect(db.product.findFirst).not.toHaveBeenCalled();
   });
 
+  it("resumes an invalid size clarification with S and preserves all 11 units", async () => {
+    const request = makeStorefrontChatRequest({
+      sessionKey: "size-clarification-regression",
+      cart: { currencyCode: "EUR", items: [{
+        lineId: "pants", productId: "44", productTitle: "Pantalon",
+        variantId: "441", variantTitle: "XS / Bordeaux", quantity: 11,
+      }] },
+      messages: [{ role: "user", content: "Remplace le pantalon en taille O en gardant la quantite." }],
+    });
+    expect(await resolveCartToolActionProposal(request)).toMatchObject({ status: "clarification" });
+    vi.mocked(db.product.findFirst).mockResolvedValueOnce({ variants: [
+      { shopifyVariantId: "441", title: "XS / Bordeaux", inventoryQuantity: 20 },
+      { shopifyVariantId: "442", title: "S / Bordeaux", inventoryQuantity: 20 },
+    ] } as never);
+    const resolution = await resolveCartToolActionProposal({ ...request, messages: [{ role: "user", content: "S" }] });
+    expect(resolution).toMatchObject({ status: "proposed", action: {
+      toolName: "swapVariant", payload: { lineId: "pants", newMerchandiseId: "442", quantity: 11 },
+    } });
+    expect(await resolveCartToolActionProposal({ ...request, messages: [{ role: "user", content: "oui" }] }))
+      .toEqual({ status: "no_action" });
+  });
+
+  it.each(["session", "quantity", "expired", "unrelated-turn"])("does not resume unsafe size context: %s", async (reason) => {
+    const request = makeStorefrontChatRequest({
+      sessionKey: `size-context-${reason}`,
+      cart: { currencyCode: "EUR", items: [{
+        lineId: "pants", productId: "44", productTitle: "Pantalon",
+        variantId: "441", variantTitle: "XS / Bordeaux", quantity: 11,
+      }] },
+      messages: [{ role: "user", content: "Remplace le pantalon en taille O en gardant la quantite." }],
+    });
+    await resolveCartToolActionProposal(request);
+    const followUp = { ...request, messages: [{ role: "user" as const, content: "S" }] };
+    if (reason === "session") followUp.sessionKey += "-other";
+    if (reason === "quantity") followUp.cart = { ...request.cart, items: [{ ...request.cart.items[0], quantity: 2 }] };
+    if (reason === "unrelated-turn") {
+      await resolveCartToolActionProposal({ ...request, messages: [{ role: "user", content: "Bonjour" }] });
+    }
+    const clock = reason === "expired" ? vi.spyOn(Date, "now").mockReturnValue(Date.now() + 6 * 60_000) : null;
+    try {
+      expect(await resolveCartToolActionProposal(followUp)).toMatchObject({
+        status: "clarification", clarification: { code: "TARGET_REQUIRED" },
+      });
+      expect(db.product.findFirst).not.toHaveBeenCalled();
+    } finally {
+      clock?.mockRestore();
+    }
+  });
+
   it("keeps an explicit quantity request separate from a size change", async () => {
     const proposal = await buildCartToolActionProposal(makeStorefrontChatRequest({
       messages: [{ role: "user", content: "change quantity to 3" }],

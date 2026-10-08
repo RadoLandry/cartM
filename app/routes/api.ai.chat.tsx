@@ -530,21 +530,27 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const aiEnabled = isAIAvailable();
   const latestRawMessage = parsed.data.messages[parsed.data.messages.length - 1]?.content ?? "";
   const latestMessage = latestRawMessage.toLowerCase();
+  const isConfirmationReply = /^(?:oui|non|yes|no|ok|okay|confirme|je confirme|confirm|annule|cancel|applique|apply)[.!\s]*$/i.test(latestRawMessage.trim());
+  const conversationLanguageText = parsed.data.messages.filter((message) => message.role === "user")
+    .map((message) => message.content).join(" ");
+  const confirmationReply = /\b(oui|non|confirme|annule|applique|taille|remplace|pantalon|quantit[eé])\b/i.test(conversationLanguageText)
+    ? "Aucune modification du panier n'est confirmee par ce message. Utilisez Appliquer ou Ignorer sur la carte de modification souhaitee ; si elle est annulee ou expiree, demandez une nouvelle proposition."
+    : "This message does not confirm a cart change. Use Apply or Ignore on the intended action card; if it was declined or expired, request a new proposal.";
   const hasCompatibleActionProposals = compatibleActionProposals.length > 0;
   // Direct mutation proposals (changeQuantity/swapVariant/addToCart/removeFromCart)
   // inferred straight from the shopper's own wording, as opposed to compatible-add
   // suggestions surfaced from catalog search.
   const hasDirectCartMutationProposal = !hasCompatibleActionProposals && cartActionProposals.length > 0;
-  const replyText = hasCompatibleActionProposals
+  const replyText = isConfirmationReply ? confirmationReply : hasCompatibleActionProposals
     ? buildCompatibleActionIntro(latestMessage, compatibleActionProposals.length)
     : hasDirectCartMutationProposal
-      ? buildCartMutationIntroText(cartActionProposals[0], latestMessage)
+      ? buildCartMutationIntroText(cartActionProposals[0], conversationLanguageText)
       : cartClarification
         ? buildCartClarificationText(cartClarification, latestMessage)
         : guidanceReply.text;
-  const guidanceBlocks = (hasCompatibleActionProposals || hasDirectCartMutationProposal || cartClarification) ? [] : guidanceReply.guidanceBlocks;
+  const guidanceBlocks = (isConfirmationReply || hasCompatibleActionProposals || hasDirectCartMutationProposal || cartClarification) ? [] : guidanceReply.guidanceBlocks;
   const shouldBypassLLM = /\b(budget|optimi[sz]|compare|add|remove|swap|quantit|quantity|size|fit|sparring|combat|taille|pratique|adapt[eé]|muay\s*thai|tha[iï]|kick\s*boxing|kickboxing|boxe|boxing|mma|recommend|recommand|suggest|sugg[eè]re|conseil|propose|s['’]?accorde|accorde|va\s+bien|works?\s+well|goes?\s+well)\b/.test(latestMessage);
-  const shouldUseLLM = aiEnabled && !hasCompatibleActionProposals && !hasDirectCartMutationProposal && !cartClarification && !shouldBypassLLM;
+  const shouldUseLLM = aiEnabled && !isConfirmationReply && !hasCompatibleActionProposals && !hasDirectCartMutationProposal && !cartClarification && !shouldBypassLLM;
   const catalogContext = shouldUseLLM
     ? await retrieveCatalogContextForChat(parsed.data)
     : undefined;

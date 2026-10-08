@@ -37,6 +37,22 @@ describe("storefront chat stream route", () => {
     }
   });
 
+  it.each(["oui", "non", "je confirme"])("does not claim a mutation for the text confirmation %s", async (content) => {
+    process.env.STOREFRONT_CHAT_SIGNING_SECRET = "test-signing-secret";
+    const input = makeStorefrontChatRequest({ messages: [
+      { role: "assistant", content: "Confirmez-vous cette modification ?" },
+      { role: "user", content },
+    ] });
+    const response = await action({ request: new Request("http://localhost/api/ai/chat", {
+      method: "POST", headers: { "content-type": "application/json", origin: "https://test.myshopify.com" },
+      body: JSON.stringify(input),
+    }), params: {}, context: {} } as never);
+    const body = await response.text();
+    expect(body).toContain("Aucune modification");
+    expect(body).not.toContain('"type":"tool-action-proposed"');
+    expect(body).not.toContain('"type":"guidance-block"');
+  });
+
   it("streams text and guidance parts for a valid shopper request", async () => {
     process.env.STOREFRONT_CHAT_SIGNING_SECRET = "test-signing-secret";
     const input = makeStorefrontChatRequest();

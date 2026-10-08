@@ -1755,10 +1755,33 @@
       }
 
       default:
-        return currentCart;
+        throw new Error("Unsupported Shopify cart action.");
     }
 
-    return await fetchLatestStorefrontCart(currentCart);
+    const nextCart = await fetchLatestStorefrontCart(currentCart);
+    const payload = action.payload;
+    const variantQuantity = (cart, variantId) => cart.items
+      .filter((item) => normalizeAjaxMerchandiseId(item.variantId || "") === normalizeAjaxMerchandiseId(variantId))
+      .reduce((total, item) => total + item.quantity, 0);
+    let verified = false;
+    if (payload.actionType === "swap_variant") {
+      const oldLine = currentCart.items.find((item) => item.lineId === payload.lineId);
+      verified = Boolean(oldLine && !nextCart.items.some((item) => item.lineId === payload.lineId)
+        && variantQuantity(nextCart, payload.newMerchandiseId)
+          === variantQuantity(currentCart, payload.newMerchandiseId) + (payload.quantity || oldLine.quantity));
+    } else if (payload.actionType === "add") {
+      verified = variantQuantity(nextCart, payload.merchandiseId)
+        === variantQuantity(currentCart, payload.merchandiseId) + payload.quantity;
+    } else if (payload.actionType === "remove") {
+      verified = !nextCart.items.some((item) => item.lineId === payload.lineId);
+    } else if (payload.actionType === "change_quantity") {
+      const changes = payload.changes && payload.changes.length ? payload.changes : [payload];
+      verified = changes.every((change) => (nextCart.items.find((item) => item.lineId === change.lineId)?.quantity || 0) === change.quantity);
+    }
+    if (!verified) {
+      throw new Error("Shopify cart verification failed. Refresh the cart before requesting another change.");
+    }
+    return nextCart;
   }
 
   async function addRecommendationItemToCart(instance, input) {
@@ -1892,12 +1915,31 @@
 
   async function submitActionConfirmation(instance, action, decision) {
     const state = instance.state;
+    const existingStatus = state.actionStatusById && state.actionStatusById[action.actionId];
+    if (state.pendingActionId || (existingStatus && existingStatus.status !== "proposed")) {
+      return false;
+    }
+    if (!(Date.parse(action.expiresAt) > Date.now())) {
+      updateActionStatus(state, action.actionId, "expired", "Request a new proposal before confirming.");
+      render(instance);
+      return false;
+    }
     state.pendingActionId = action.actionId;
     state.error = "";
     render(instance);
 
     try {
       await ensureBootstrap(instance);
+      if (decision === "approve") {
+        const latestCart = await fetchLatestStorefrontCart(state.cart);
+        if (action.payload.actionType === "swap_variant") {
+          const line = latestCart.items.find((item) => item.lineId === action.payload.lineId);
+          if (!line || (action.payload.quantity != null && line.quantity !== action.payload.quantity)) {
+            throw new Error("The cart changed before confirmation. Request a new proposal.");
+          }
+        }
+        applyUpdatedCart(state, latestCart);
+      }
 
       const response = await window.fetch(getConfirmationUrl(), {
         method: "POST",
@@ -1924,27 +1966,37 @@
       let nextCart = payload.result.cart;
 
       if (decision === "approve") {
+        if (payload.result.idempotentReplay || payload.result.status !== "executed") {
+          throw new Error("This action is already resolved or was not approved. No Shopify mutation was replayed.");
+        }
         nextCart = await applyStorefrontCartAction(action, state.cart);
       }
 
-      updateActionStatus(state, payload.result.actionId, payload.result.status, payload.result.summary || "");
+      const summary = decision === "approve"
+        ? "Modification verifiee dans le panier Shopify."
+        : "Modification annulee. Aucun changement du panier.";
+      updateActionStatus(state, payload.result.actionId, payload.result.status, summary);
       if (nextCart) {
         applyUpdatedCart(state, nextCart);
-        await refreshThemeCartDrawer(nextCart);
+        await refreshThemeCartDrawer(nextCart).catch((error) => {
+          state.error = error instanceof Error ? error.message : "Drawer refresh failed.";
+        });
       }
-      state.statusMessage = payload.result.summary || (decision === "approve" ? "Action completed." : "Action declined.");
+      state.statusMessage = summary;
+      return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to confirm this cart action.";
       updateActionStatus(state, action.actionId, "failed", message);
       state.error = message;
       state.statusMessage = "Action confirmation failed.";
+      return false;
     } finally {
       state.pendingActionId = "";
       render(instance);
     }
   }
 
-  function buildMessagesPayload(messages, pendingUserMessage) {
+  function buildMessagesPayload(messages, pendingUserMessage, state) {
     const payload = [];
 
     for (let index = 0; index < messages.length; index += 1) {
@@ -1954,9 +2006,13 @@
         continue;
       }
 
+      const actionStatuses = (message.actionProposals || []).map((action) => {
+        const status = state.actionStatusById && state.actionStatusById[action.actionId];
+        return `${action.toolName}: ${status ? status.status : "proposed"}. ${status ? status.summary : "Awaiting approval; not executed."}`;
+      });
       payload.push({
         role: message.role,
-        content: message.content,
+        content: message.content + (actionStatuses.length ? `\n[CartMind action results: ${actionStatuses.join("; ")}]` : ""),
       });
     }
 
@@ -2588,7 +2644,7 @@
         streamToken: bootstrap.streamToken,
         cart: instance.state.cart,
         features: instance.state.config.features || {},
-        messages: buildMessagesPayload(instance.state.messages.slice(0, -2), userText),
+        messages: buildMessagesPayload(instance.state.messages.slice(0, -2), userText, instance.state),
       }),
     });
 
@@ -2695,8 +2751,26 @@
     const state = instance.state;
     const draft = state.draft.trim();
 
-    if (!draft || state.sending || !state.cart.items.length) {
+    if (!draft || state.sending || state.pendingActionId || !state.cart.items.length) {
       return;
+    }
+
+    const confirmation = /^(?:oui|yes|ok|okay|confirme|je confirme|confirm|applique|apply)[.!\s]*$/i.test(draft)
+      ? "approve"
+      : /^(?:non|no|annule|cancel)[.!\s]*$/i.test(draft) ? "decline" : null;
+    if (confirmation) {
+      const proposals = state.messages.flatMap((message) => message.actionProposals || []);
+      const uniqueProposals = Array.from(new Map(proposals.map((action) => [action.actionId, action])).values());
+      const pending = uniqueProposals.filter((action) => {
+        const status = state.actionStatusById && state.actionStatusById[action.actionId];
+        return (!status || status.status === "proposed") && Date.parse(action.expiresAt) > Date.now();
+      });
+      if (pending.length === 1 && ["add", "remove", "change_quantity", "swap_variant"].includes(pending[0].payload.actionType)) {
+        state.draft = "";
+        state.messages.push({ id: `user-${Date.now()}`, role: "user", content: draft, guidanceBlocks: [] });
+        await submitActionConfirmation(instance, pending[0], confirmation);
+        return;
+      }
     }
 
     const timestamp = Date.now();

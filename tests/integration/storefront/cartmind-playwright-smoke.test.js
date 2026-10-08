@@ -11,6 +11,7 @@ async function mountConversationPreview(page, options = {}) {
     features: { showChatEntry: false, showRecommendations: false, showKitCompleteness: false, showSizeWarnings: false },
     cart: { cartId: 'preview', currencyCode: 'EUR', items: [{ lineId: 'line-1', productId: '1', variantId: '2', productTitle: 'Short de sport', quantity: 1 }] },
   };
+  if (options.cart) config.cart = options.cart;
   await page.route('http://cartmind.test/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname;
     if (pathname === '/cart.js') {
@@ -169,6 +170,105 @@ test.describe('conversation history', () => {
     ]));
     expect(await page.evaluate((key) => localStorage.getItem(key), historyKey)).not.toContain('private-token');
   });
+});
+
+test.describe('cart confirmation regression', () => {
+  for (const outcome of ['success', 'wrong-quantity', 'replay', 'ambiguous', 'expired']) {
+    test(`resumes the swap without fictitious success or duplicate execution: ${outcome}`, async ({ page }) => {
+      let variant = 441;
+      let quantity = 11;
+      let mutations = 0;
+      const requests = [];
+      const cart = { cartId: 'preview', currencyCode: 'EUR', items: [{
+        lineId: 'pants-xs', productId: '44', variantId: '441',
+        productTitle: 'Pantalon Bordeaux', variantTitle: 'XS / Bordeaux', quantity: 11,
+      }] };
+      await mountConversationPreview(page, { cart });
+      await page.route('**/cart.js', (route) => route.fulfill({ json: {
+        token: 'preview', currency: 'EUR', items: [{ key: variant === 441 ? 'pants-xs' : 'pants-s',
+          product_id: 44, variant_id: variant, product_title: 'Pantalon Bordeaux',
+          variant_title: variant === 441 ? 'XS / Bordeaux' : 'S / Bordeaux', quantity,
+        }],
+      } }));
+      await page.route('**/apps/cartmind-chat/chat-bootstrap', (route) => route.fulfill({ json: {
+        ok: true, bootstrap: { sessionKey: 'swap-session', streamToken: 'test-token',
+          expiresAt: new Date(Date.now() + 60000).toISOString(), chatUrl: '/chat-stream' },
+      } }));
+      await page.route('**/chat-stream', (route) => {
+        const request = route.request().postDataJSON();
+        requests.push(request);
+        const latest = request.messages.at(-1).content;
+        const events = [{ type: 'text-delta', text: latest.includes('taille O')
+          ? 'Quelle taille souhaitez-vous ?' : latest === 'oui'
+            ? 'Aucune modification supplementaire.' : 'Confirmez la carte ci-dessous.' }];
+        if (latest.includes('taille S') || latest === 'S') {
+          events.push({ type: 'tool-action-proposed', action: {
+            actionId: latest === 'S' ? 'second-swap' : 'first-swap', toolName: 'swapVariant',
+            shop: 'preview.myshopify.com', sessionKey: 'swap-session', confirmationToken: 'test-confirmation',
+            expiresAt: new Date(Date.now() + (latest === 'S' && outcome === 'expired' ? -60000 : 60000)).toISOString(),
+            payload: { actionType: 'swap_variant', lineId: 'pants-xs', newMerchandiseId: '442', quantity: 11 },
+            preview: { before: 'Pantalon Bordeaux / XS', after: 'Pantalon Bordeaux / S' },
+          } });
+          if (latest === 'S' && outcome === 'ambiguous') {
+            events.push({ type: 'tool-action-proposed', action: { ...events[1].action, actionId: 'other-swap' } });
+          }
+        }
+        return route.fulfill({ contentType: 'text/event-stream', body: events
+          .map((event) => `data: ${JSON.stringify(event)}\n\n`).join('') });
+      });
+      const confirmations = [];
+      await page.route('**/apps/cartmind-chat/chat-actions-confirm', (route) => {
+        const request = route.request().postDataJSON();
+        confirmations.push(request);
+        return route.fulfill({ json: { ok: true, result: { actionId: request.actionId,
+          status: request.decision === 'decline' ? 'declined' : 'executed',
+          ...(outcome === 'replay' && request.decision === 'approve' ? { idempotentReplay: true } : {}),
+        } } });
+      });
+      await page.route('**/cart/change.js', (route) => {
+        mutations += 1;
+        return route.fulfill({ json: {} });
+      });
+      await page.route('**/cart/add.js', (route) => {
+        mutations += 1;
+        variant = 442;
+        quantity = outcome === 'wrong-quantity' ? 1 : route.request().postDataJSON().quantity;
+        return route.fulfill({ json: {} });
+      });
+      const send = async (text) => {
+        await page.locator('textarea').fill(text);
+        await page.getByRole('button', { name: 'Send', exact: true }).click();
+        await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
+      };
+      await send('Remplace le pantalon en taille S en gardant la quantite.');
+      await send('non');
+      await expect(page.locator('.cm-messages')).toContainText('declined');
+      await send('Remplace le pantalon en taille O en gardant la quantite.');
+      expect(requests.at(-1).messages.some((message) => message.content.includes('swapVariant: declined'))).toBeTruthy();
+      await send('S');
+      await send('oui');
+      if (outcome === 'ambiguous' || outcome === 'expired') {
+        expect(confirmations.map((request) => request.decision)).toEqual(['decline']);
+        expect(mutations).toBe(0);
+        expect(quantity).toBe(11);
+        return;
+      }
+      await expect(page.locator('.cm-messages')).toContainText(outcome === 'success' ? 'Modification verifiee' : 'failed');
+      expect(confirmations.map((request) => request.decision)).toEqual(['decline', 'approve']);
+      expect(confirmations[1].actionId).toBe('second-swap');
+      expect(mutations).toBe(outcome === 'replay' ? 0 : 2);
+      if (outcome === 'success') {
+        expect(quantity).toBe(11);
+        await expect(page.locator('.cm-messages')).toContainText('Modification verifiee');
+      } else {
+        await expect(page.locator('.cm-messages')).toContainText('failed');
+        await expect(page.locator('.cm-messages')).not.toContainText('Modification verifiee');
+      }
+      await send('oui');
+      expect(confirmations).toHaveLength(2);
+      expect(mutations).toBe(outcome === 'replay' ? 0 : 2);
+    });
+  }
 });
 
 test('custom drawer mounts CartMind on storefront', async ({ page }) => {

@@ -1,12 +1,50 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { applyStorefrontCartAction, normalizeAjaxMerchandiseId } from "../../../storefront-widget/src/hooks/useStorefrontChat";
-import { makeCartToolAction, makeStorefrontCartSnapshot } from "../../helpers/storefront-chat-cart-fixtures";
+import type { StorefrontCartSnapshot } from "../../../storefront-widget/src/types";
+import { makeCartToolAction, makeStorefrontCartSnapshot as makeServerCartSnapshot } from "../../helpers/storefront-chat-cart-fixtures";
+
+function makeStorefrontCartSnapshot(overrides: Parameters<typeof makeServerCartSnapshot>[0] = {}): StorefrontCartSnapshot {
+  const cart = makeServerCartSnapshot(overrides);
+  return { ...cart, items: cart.items.map((item) => {
+    if (!item.productId) throw new Error("Widget fixtures require a productId.");
+    return { ...item, productId: item.productId };
+  }) };
+}
 
 describe("storefront cart ajax action application", () => {
   it("normalizes Shopify variant gids for ajax cart endpoints", () => {
     expect(normalizeAjaxMerchandiseId("gid://shopify/ProductVariant/123456")).toBe("123456");
     expect(normalizeAjaxMerchandiseId("  987654  ")).toBe("987654");
+  });
+
+  it.each([11, 1])("verifies the actual swapped quantity (%s)", async (quantity) => {
+    const action = makeCartToolAction({ payload: {
+      actionType: "swap_variant", lineId: "pants-xs", newMerchandiseId: "442", quantity: 11,
+    } });
+    const currentCart = makeStorefrontCartSnapshot({ items: [{
+      lineId: "pants-xs", productId: "44", variantId: "441", quantity: 11,
+    }] });
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response("{}"))
+      .mockResolvedValueOnce(new Response("{}"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ currency: "EUR", items: [{
+        key: "pants-s", product_id: 44, variant_id: 442, quantity,
+      }] })));
+    const result = applyStorefrontCartAction(action, currentCart, fetchMock);
+    if (quantity === 11) {
+      expect((await result).items[0].quantity).toBe(11);
+    } else {
+      await expect(result).rejects.toThrow("verification failed");
+    }
+    expect(JSON.parse(fetchMock.mock.calls[1][1]?.body as string).quantity).toBe(11);
+  });
+
+  it("rejects failed Shopify HTTP responses", async () => {
+    const action = makeCartToolAction({ payload: { actionType: "remove", lineId: "line-1" } });
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response("{}", { status: 422 }));
+    await expect(applyStorefrontCartAction(action, makeStorefrontCartSnapshot(), fetchMock)).rejects.toThrow("mutation failed");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("applies change_quantity through Shopify ajax and returns the refreshed cart", async () => {
