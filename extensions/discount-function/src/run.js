@@ -16,7 +16,7 @@ const SUPPORTED_PROJECTION_VERSION = 1;
 
 /**
  * @param {object} input - The Shopify Function input
- * @returns {{ discounts: object[], discountApplicationStrategy: string }}
+ * @returns {{ operations: object[] }}
  */
 export function run(input) {
   try {
@@ -27,10 +27,7 @@ export function run(input) {
 }
 
 function noDiscount() {
-  return {
-    discounts: [],
-    discountApplicationStrategy: "FIRST",
-  };
+  return { operations: [] };
 }
 
 function getCartLines(input) {
@@ -103,7 +100,13 @@ function applyBundleDiscounts(input) {
   }
 
   return {
-    discounts,
-    discountApplicationStrategy: "FIRST",
+    operations: [
+      {
+        productDiscountsAdd: {
+          candidates: discounts,
+          selectionStrategy: "FIRST",
+        },
+      },
+    ],
   };
 }

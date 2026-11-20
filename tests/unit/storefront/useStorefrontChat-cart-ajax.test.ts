@@ -13,6 +13,34 @@ function makeStorefrontCartSnapshot(overrides: Parameters<typeof makeServerCartS
 }
 
 describe("storefront cart ajax action application", () => {
+  it.each(["success", "wrong-quantity", "stale"])("verifies budget plan application: %s", async (outcome) => {
+    const currentCart: StorefrontCartSnapshot = { currencyCode: "EUR", subtotal: "114.99", items: [
+      { lineId: "wraps", productId: "1", variantId: "11", quantity: 1, finalLinePrice: 14.99 },
+      { lineId: "rashguard", productId: "2", variantId: "22", quantity: 2, finalLinePrice: 60 },
+      { lineId: "gloves", productId: "3", variantId: "33", quantity: 1, finalLinePrice: 40 },
+    ] };
+    const action = makeCartToolAction({ toolName: "optimizeBudget", payload: {
+      actionType: "budget_optimization_select", optimizationContextId: "budget", candidateIds: ["rashguard"],
+      baselineCart: structuredClone(currentCart), changes: [{ lineId: "rashguard", quantity: 1 }],
+    } });
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response("{}"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ currency: "EUR", total_price: 8499,
+        items: currentCart.items.map((item) => ({ key: item.lineId, product_id: Number(item.productId), variant_id: Number(item.variantId),
+          quantity: item.lineId === "rashguard" && outcome === "success" ? 1 : item.quantity,
+          final_line_price: item.lineId === "rashguard" ? 3000 : item.finalLinePrice! * 100,
+        })),
+      })));
+    if (outcome === "stale") currentCart.items[1].quantity = 3;
+    const result = applyStorefrontCartAction(action, currentCart, fetchMock);
+    if (outcome === "success") {
+      expect((await result).subtotal).toBe("84.99");
+      expect(fetchMock).toHaveBeenNthCalledWith(1, "/cart/update.js", expect.objectContaining({ body: JSON.stringify({ updates: { rashguard: 1 } }) }));
+    } else {
+      await expect(result).rejects.toThrow(outcome === "stale" ? "cart changed" : "verification failed");
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(outcome === "stale" ? 0 : 2);
+  });
+
   it("normalizes Shopify variant gids for ajax cart endpoints", () => {
     expect(normalizeAjaxMerchandiseId("gid://shopify/ProductVariant/123456")).toBe("123456");
     expect(normalizeAjaxMerchandiseId("  987654  ")).toBe("987654");

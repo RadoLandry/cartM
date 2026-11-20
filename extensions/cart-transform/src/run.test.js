@@ -67,11 +67,11 @@ describe("cart-transform run()", () => {
 
     expect(result.operations).toHaveLength(1);
     const op = result.operations[0];
-    expect(op.merge).toBeDefined();
-    expect(op.merge.title).toBe("Starter Pack");
-    expect(op.merge.cartLines).toHaveLength(2);
-    expect(op.merge.cartLines.map((l) => l.cartLineId)).toContain("gid://shopify/CartLine/line-1");
-    expect(op.merge.cartLines.map((l) => l.cartLineId)).toContain("gid://shopify/CartLine/line-2");
+    expect(op.linesMerge).toBeDefined();
+    expect(op.linesMerge.title).toBe("Starter Pack");
+    expect(op.linesMerge.cartLines).toHaveLength(2);
+    expect(op.linesMerge.cartLines.map((line) => line.cartLineId)).toContain("gid://shopify/CartLine/line-1");
+    expect(op.linesMerge.cartLines.map((line) => line.cartLineId)).toContain("gid://shopify/CartLine/line-2");
   });
 
   it("returns no-op when lineMergeEligible is false", () => {

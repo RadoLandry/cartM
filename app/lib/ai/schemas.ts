@@ -25,14 +25,17 @@ export const StorefrontIntegrationLabelsSchema = z.object({
   fallbackMessage: z.string().min(1).optional(),
 });
 
+const emptyToUndefined = (value: unknown) => (value === "" || value === null ? undefined : value);
+
 export const StorefrontCartLineSchema = z.object({
-  lineId: z.string().min(1).optional(),
+  lineId: z.preprocess(emptyToUndefined, z.string().min(1).optional()),
   productId: z.string().min(1),
-  productTitle: z.string().min(1).optional(),
-  variantId: z.string().min(1).optional(),
-  variantTitle: z.string().min(1).optional(),
-  imageUrl: z.string().url().optional(),
-  discipline: z.string().min(1).optional(),
+  productTitle: z.preprocess(emptyToUndefined, z.string().min(1).optional()),
+  variantId: z.preprocess(emptyToUndefined, z.string().min(1).optional()),
+  variantTitle: z.preprocess(emptyToUndefined, z.string().min(1).optional()),
+  imageUrl: z.preprocess(emptyToUndefined, z.string().url().optional()),
+  discipline: z.preprocess(emptyToUndefined, z.string().min(1).optional()),
+  finalLinePrice: z.number().finite().nonnegative().optional(),
   quantity: z.coerce.number().int().min(1).default(1),
 });
 
@@ -419,6 +422,8 @@ export const CartToolActionPayloadSchema = z.discriminatedUnion("actionType", [
     actionType: z.literal("budget_optimization_select"),
     optimizationContextId: z.string().min(1),
     candidateIds: z.array(z.string().min(1)).default([]),
+    baselineCart: StorefrontCartSnapshotSchema.optional(),
+    changes: z.array(z.object({ lineId: z.string().min(1), quantity: z.number().int().nonnegative() })).optional(),
     projectedSubtotal: z.number().nonnegative().optional(),
     projectedGapAmount: z.number().nonnegative().optional(),
   }),

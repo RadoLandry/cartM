@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { CartToolAction } from "../../../app/lib/ai/schemas";
 
 import { action } from "../../../app/routes/api.ai.chat";
 import { action as confirmAction } from "../../../app/routes/api.ai.chat.actions.confirm";
@@ -28,14 +29,14 @@ describe("storefront chat budget optimization route", () => {
             lineId: "line_1",
             productId: "gid://shopify/Product/1",
             productTitle: "Safety Gloves",
-            variantId: "gid://shopify/ProductVariant/1",
+            finalLinePrice: 34,
             quantity: 1,
           },
           {
             lineId: "line_2",
             productId: "gid://shopify/Product/2",
             productTitle: "Optional Bag",
-            variantId: "gid://shopify/ProductVariant/2",
+            finalLinePrice: 16,
             quantity: 1,
           },
         ],
@@ -98,14 +99,14 @@ describe("storefront chat budget optimization route", () => {
             lineId: "line_1",
             productId: "gid://shopify/Product/1",
             productTitle: "Safety Gloves",
-            variantId: "gid://shopify/ProductVariant/1",
+            finalLinePrice: 34,
             quantity: 1,
           },
           {
             lineId: "line_2",
             productId: "gid://shopify/Product/2",
             productTitle: "Optional Bag",
-            variantId: "gid://shopify/ProductVariant/2",
+            finalLinePrice: 16,
             quantity: 1,
           },
         ],
@@ -154,19 +155,20 @@ describe("storefront chat budget optimization route", () => {
             lineId: "line_1",
             productId: "gid://shopify/Product/1",
             productTitle: "Safety Gloves",
-            variantId: "gid://shopify/ProductVariant/1",
+            finalLinePrice: 34,
             quantity: 1,
           },
           {
             lineId: "line_2",
             productId: "gid://shopify/Product/2",
             productTitle: "Optional Bag",
+            finalLinePrice: 48,
             variantId: "gid://shopify/ProductVariant/2",
-            quantity: 1,
+            quantity: 3,
           },
         ],
       },
-      messages: [{ role: "user", content: "Optimize my cart to budget $15" }],
+      messages: [{ role: "user", content: "Optimize my cart to budget $50" }],
     });
 
     const chatResponse = await action({
@@ -241,4 +243,48 @@ describe("storefront chat budget optimization route", () => {
     expect(confirmPayload.result.projectedSubtotal).not.toBe(result?.optimization.projectedSubtotal);
     expect(confirmPayload.result.projectedGapAmount).toBeGreaterThan(0);
   });
+  it.each(["proposal", "approve", "stale-price", "stale-quantity", "empty-selection"])("answers the French budget request without cross-sell: %s", async (scenario) => {
+    process.env.STOREFRONT_CHAT_SIGNING_SECRET = "test-signing-secret";
+    const input = makeStorefrontChatRequest({
+      cart: {
+        cartId: "gid://shopify/Cart/123", currencyCode: "EUR", subtotal: "114.99",
+        items: [
+          { lineId: "wraps", productId: "wraps", productTitle: "Bandes de Boxe Venum Kontact Evo Classic - Khaki", quantity: 1, finalLinePrice: 14.99 },
+          { lineId: "rashguard", productId: "rashguard", productTitle: "Rashguard À Manches Longues pour Hommes Venum Tempest", quantity: 2, finalLinePrice: 60 },
+          { lineId: "gloves", productId: "gloves", productTitle: "Gants de boxe Venum Contender 1.5 XT pour enfants", quantity: 1, finalLinePrice: 40 },
+        ],
+      },
+      messages: [{ role: "user", content: "Mon budget maximum est de 100 €. Propose des changements pour le respecter sans supprimer les protections nécessaires." }],
+    });
+    const response = await action({ request: new Request("http://localhost/api/ai/chat", {
+      method: "POST", headers: { "content-type": "application/json", origin: "https://test.myshopify.com" }, body: JSON.stringify(input),
+    }), params: {}, context: {} } as never);
+    const events = parseSseEvents(await response.text());
+    const result = events.find((event) => event.type === "budget-optimization.result");
+    expect(result?.optimization).toMatchObject({ projectedSubtotal: 84.99, candidates: [{ sourceLineId: "rashguard", changeType: "defer", estimatedSavings: 30 }] });
+    const text = events.filter((event) => event.type === "text-delta").map((event) => event.text).join("");
+    expect(text).toContain("84,99");
+    expect(text).toContain("2 -> 1");
+    expect(text).not.toContain("Je recommande");
+    expect(events.filter((event) => event.type === "tool-action-proposed")).toHaveLength(1);
+    expect(events.some((event) => event.type === "guidance-block")).toBe(false);
+    if (scenario === "proposal") return;
+    const proposal = events.find((event) => event.type === "tool-action-proposed")!.action as CartToolAction;
+    if (proposal.payload.actionType !== "budget_optimization_select") throw new Error("Expected budget plan");
+    const cart = structuredClone(input.cart);
+    if (scenario === "stale-price") cart.items[1].finalLinePrice = 70;
+    if (scenario === "stale-quantity") cart.items[1].quantity = 3;
+    const confirmation = await confirmAction({ request: new Request("http://localhost/api/ai/chat/actions/confirm", {
+      method: "POST", headers: { "content-type": "application/json", origin: "https://test.myshopify.com" },
+      body: JSON.stringify({ shop: input.shop, sessionKey: proposal.sessionKey, actionId: proposal.actionId,
+        confirmationToken: proposal.confirmationToken, decision: "approve", actionType: "budget_optimization_select",
+        optimizationContextId: proposal.payload.optimizationContextId,
+        candidateIds: scenario === "empty-selection" ? [] : proposal.payload.candidateIds, cart }),
+    }), params: {}, context: {} } as never);
+    expect(confirmation.status).toBe(scenario === "approve" ? 200 : scenario === "empty-selection" ? 422 : 409);
+    const confirmed = await confirmation.json();
+    if (scenario === "approve") expect(confirmed.result.changes).toEqual([{ lineId: "rashguard", quantity: 1 }]);
+    else expect(confirmed.ok).toBe(false);
+  });
+
 });

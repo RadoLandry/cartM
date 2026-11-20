@@ -53,10 +53,13 @@ describe("discount-function run()", () => {
   it("applies a percentage discount for selected qualified outcome", () => {
     const result = run(makeInput());
 
-    expect(result.discounts).toHaveLength(1);
-    expect(result.discounts[0].value).toEqual({ percentage: { value: 15 } });
-    expect(result.discounts[0].message).toBe("15% off");
-    expect(result.discounts[0].targets).toHaveLength(2);
+    expect(result.operations).toHaveLength(1);
+    const operation = result.operations[0].productDiscountsAdd;
+    expect(operation.selectionStrategy).toBe("FIRST");
+    expect(operation.candidates).toHaveLength(1);
+    expect(operation.candidates[0].value).toEqual({ percentage: { value: 15 } });
+    expect(operation.candidates[0].message).toBe("15% off");
+    expect(operation.candidates[0].targets).toHaveLength(2);
   });
 
   it("applies a fixed amount discount for fixed type outcome", () => {
@@ -87,9 +90,11 @@ describe("discount-function run()", () => {
 
     const result = run(makeInput(projection, ["gid://shopify/CartLine/line-1"]));
 
-    expect(result.discounts).toHaveLength(1);
-    expect(result.discounts[0].value).toEqual({ fixedAmount: { amount: "10" } });
-    expect(result.discounts[0].message).toBe("Save $10");
+    expect(result.operations).toHaveLength(1);
+    const operation = result.operations[0].productDiscountsAdd;
+    expect(operation.candidates).toHaveLength(1);
+    expect(operation.candidates[0].value).toEqual({ fixedAmount: { amount: "10" } });
+    expect(operation.candidates[0].message).toBe("Save $10");
   });
 
   it("applies no discount when outcome is not in selectedOutcomeIds", () => {
@@ -98,7 +103,7 @@ describe("discount-function run()", () => {
 
     const result = run(makeInput(projection));
 
-    expect(result.discounts).toHaveLength(0);
+    expect(result).toEqual({ operations: [] });
   });
 
   it("applies no discount for partial outcome", () => {
@@ -124,13 +129,13 @@ describe("discount-function run()", () => {
 
     const result = run(makeInput(projection, ["gid://shopify/CartLine/line-1"]));
 
-    expect(result.discounts).toHaveLength(0);
+    expect(result).toEqual({ operations: [] });
   });
 
   it("applies no discount when projectionVersion is unsupported", () => {
     const projection = makeProjection({ projectionVersion: 99 });
     const result = run(makeInput(projection));
-    expect(result.discounts).toHaveLength(0);
+    expect(result).toEqual({ operations: [] });
   });
 
   it("applies no discount when cart attribute is missing", () => {
@@ -140,7 +145,7 @@ describe("discount-function run()", () => {
         lines: { nodes: [] },
       },
     });
-    expect(result.discounts).toHaveLength(0);
+    expect(result).toEqual({ operations: [] });
   });
 
   it("applies no discount when cart attribute is malformed JSON", () => {
@@ -150,12 +155,12 @@ describe("discount-function run()", () => {
         lines: { nodes: [] },
       },
     });
-    expect(result.discounts).toHaveLength(0);
+    expect(result).toEqual({ operations: [] });
   });
 
   it("applies no discount when projection has no outcomes array", () => {
     const result = run(makeInput({ projectionVersion: SUPPORTED_VERSION, resolution: { selectedOutcomeIds: [], rejectedOutcomeIds: [] } }));
-    expect(result.discounts).toHaveLength(0);
+    expect(result).toEqual({ operations: [] });
   });
 
   it("filters out line IDs not present in the cart", () => {
@@ -165,9 +170,10 @@ describe("discount-function run()", () => {
 
     const result = run(input);
 
-    expect(result.discounts).toHaveLength(1);
-    expect(result.discounts[0].targets).toHaveLength(1);
-    expect(result.discounts[0].targets[0].cartLine.id).toBe("gid://shopify/CartLine/line-1");
+    expect(result.operations).toHaveLength(1);
+    const candidate = result.operations[0].productDiscountsAdd.candidates[0];
+    expect(candidate.targets).toHaveLength(1);
+    expect(candidate.targets[0].cartLine.id).toBe("gid://shopify/CartLine/line-1");
   });
 
   it("applies no discount when qualified lines are all absent from cart", () => {
@@ -176,6 +182,6 @@ describe("discount-function run()", () => {
 
     const result = run(input);
 
-    expect(result.discounts).toHaveLength(0);
+    expect(result).toEqual({ operations: [] });
   });
 });

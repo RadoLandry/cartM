@@ -13,6 +13,7 @@ describe("cart snapshot normalization from /cart.js payloads", () => {
     const cartJsPayload = {
       token: "abc-token-123",
       currency: "USD",
+      total_price: 1499,
       items: [
         {
           key: "line-key-1",
@@ -21,6 +22,7 @@ describe("cart snapshot normalization from /cart.js payloads", () => {
           variant_id: 200,
           variant_title: "12 oz / Black",
           quantity: 1,
+          final_line_price: 1499,
         },
       ],
     };
@@ -33,6 +35,7 @@ describe("cart snapshot normalization from /cart.js payloads", () => {
     expect(result).toMatchObject({
       cartId: "abc-token-123",
       currencyCode: "USD",
+      subtotal: "14.99",
       items: [
         {
           lineId: "line-key-1",
@@ -41,6 +44,7 @@ describe("cart snapshot normalization from /cart.js payloads", () => {
           variantId: "200",
           variantTitle: "12 oz / Black",
           quantity: 1,
+          finalLinePrice: 14.99,
         },
       ],
     });

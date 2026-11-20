@@ -135,13 +135,15 @@
     return {
       cartId: payload.token || fallback.cartId,
       currencyCode: payload.currency || fallback.currencyCode || "USD",
+      subtotal: typeof payload.total_price === "number" ? String(payload.total_price / 100) : undefined,
       items: payload.items
         .map((item) => ({
           lineId: item && item.key ? String(item.key) : undefined,
           productId: item && item.product_id ? String(item.product_id) : "",
-          productTitle: item && item.product_title ? String(item.product_title) : "",
+          productTitle: item && item.product_title ? String(item.product_title) : undefined,
+          finalLinePrice: item && typeof item.final_line_price === "number" ? item.final_line_price / 100 : undefined,
           variantId: item && item.variant_id ? String(item.variant_id) : undefined,
-          variantTitle: item && item.variant_title ? String(item.variant_title) : "",
+          variantTitle: item && item.variant_title ? String(item.variant_title) : undefined,
           imageUrl: normalizeStorefrontImageUrl(item && (item.image || (item.featured_image && (item.featured_image.url || item.featured_image.src)))) || undefined,
           quantity: item && Number(item.quantity || 0) > 0 ? Number(item.quantity) : 1,
         }))
@@ -153,8 +155,9 @@
     return [
       cart && cart.cartId ? cart.cartId : "",
       cart && cart.currencyCode ? cart.currencyCode : "",
+      cart && cart.subtotal !== undefined ? cart.subtotal : "",
       ...(cart && Array.isArray(cart.items)
-        ? cart.items.map((item) => [item.lineId || "", item.productId || "", item.variantId || "", String(item.quantity || 0)].join("|"))
+        ? cart.items.map((item) => [item.lineId || "", item.productId || "", item.variantId || "", String(item.quantity || 0), String(item.finalLinePrice ?? "")].join("|"))
         : []),
     ].join("::");
   }
@@ -1399,7 +1402,8 @@
       return "";
     }
 
-    const isCartAction = ["add", "remove", "change_quantity", "swap_variant"].indexOf(action.payload.actionType) >= 0;
+    const isBudgetAction = action.payload.actionType === "budget_optimization_select";
+    const isCartAction = isBudgetAction || ["add", "remove", "change_quantity", "swap_variant"].indexOf(action.payload.actionType) >= 0;
     if (!isCartAction) {
       return `
         <div class="cm-guidance-card">
@@ -1428,16 +1432,16 @@
 
     return `
       <div class="cm-action-card">
-        <strong>${escapeHtml(action.toolName || "Cart action")}</strong>
+        <strong>${escapeHtml(isBudgetAction ? "Confirmer le plan budgetaire" : action.toolName || "Cart action")}</strong>
         <p>${escapeHtml(describeCartAction(action))}</p>
         ${imageHtml}
         ${action.preview && action.preview.before ? `<p class="cm-action-preview">Before: ${escapeHtml(action.preview.before)}</p>` : ""}
-        ${action.preview && action.preview.after ? `<p class="cm-action-preview">After: ${escapeHtml(action.preview.after)}</p>` : ""}
+        ${!isBudgetAction && action.preview && action.preview.after ? `<p class="cm-action-preview">After: ${escapeHtml(action.preview.after)}</p>` : ""}
         ${previewHtml}
         ${renderActionStatus(action, state)}
         ${isResolved ? "" : `
           <div class="cm-action-buttons">
-            <button class="cm-action-button cm-action-button--approve" type="button" data-action="approve-cart-action" data-action-id="${escapeHtml(action.actionId)}" ${isPending ? "disabled" : ""}>${isPending ? "Ajout..." : action.payload.actionType === "add" ? "Ajouter au panier" : "Appliquer"}</button>
+            <button class="cm-action-button cm-action-button--approve" type="button" data-action="approve-cart-action" data-action-id="${escapeHtml(action.actionId)}" ${isPending ? "disabled" : ""}>${isPending ? "Application..." : action.payload.actionType === "add" ? "Ajouter au panier" : "Appliquer"}</button>
             <button class="cm-action-button cm-action-button--decline" type="button" data-action="decline-cart-action" data-action-id="${escapeHtml(action.actionId)}" ${isPending ? "disabled" : ""}>Ignorer</button>
           </div>
         `}
@@ -1493,14 +1497,16 @@
     state.cart = {
       cartId: cart.cartId || state.cart.cartId,
       currencyCode: cart.currencyCode || state.cart.currencyCode || "USD",
+      subtotal: cart.subtotal,
       items: cart.items.map((item) => ({
         lineId: item.lineId,
         productId: item.productId,
-        productTitle: item.productTitle || "",
+        productTitle: item.productTitle || undefined,
+        finalLinePrice: item.finalLinePrice,
         variantId: item.variantId,
-        variantTitle: item.variantTitle || "",
-        imageUrl: item.imageUrl || "",
-        discipline: item.discipline || "",
+        variantTitle: item.variantTitle || undefined,
+        imageUrl: item.imageUrl || undefined,
+        discipline: item.discipline || undefined,
         quantity: Number(item.quantity || 1),
       })),
     };
@@ -1695,6 +1701,18 @@
         break;
       }
 
+      case "budget_optimization_select": {
+        const changes = action.payload.changes;
+        if (!Array.isArray(changes) || !changes.length || !action.payload.baselineCart
+          || buildCartFingerprint(currentCart) !== buildCartFingerprint(action.payload.baselineCart)) {
+          throw new Error("Le panier a change. Demandez un nouveau plan budgetaire.");
+        }
+        await postStorefrontCartMutation("/cart/update.js", {
+          updates: Object.fromEntries(changes.map((change) => [change.lineId, change.quantity])),
+        });
+        break;
+      }
+
       case "remove": {
         await postStorefrontCartMutation("/cart/change.js", {
           id: action.payload.lineId,
@@ -1774,6 +1792,11 @@
         === variantQuantity(currentCart, payload.merchandiseId) + payload.quantity;
     } else if (payload.actionType === "remove") {
       verified = !nextCart.items.some((item) => item.lineId === payload.lineId);
+    } else if (payload.actionType === "budget_optimization_select") {
+      verified = payload.changes.every((change) => (nextCart.items.find((item) => item.lineId === change.lineId)?.quantity || 0) === change.quantity)
+        && currentCart.items.filter((item) => !payload.changes.some((change) => change.lineId === item.lineId))
+          .every((item) => nextCart.items.some((next) => next.lineId === item.lineId && next.quantity === item.quantity && next.variantId === item.variantId))
+        && nextCart.subtotal !== undefined;
     } else if (payload.actionType === "change_quantity") {
       const changes = payload.changes && payload.changes.length ? payload.changes : [payload];
       verified = changes.every((change) => (nextCart.items.find((item) => item.lineId === change.lineId)?.quantity || 0) === change.quantity);
@@ -1932,6 +1955,10 @@
       await ensureBootstrap(instance);
       if (decision === "approve") {
         const latestCart = await fetchLatestStorefrontCart(state.cart);
+        if (action.payload.actionType === "budget_optimization_select"
+          && (!action.payload.baselineCart || buildCartFingerprint(latestCart) !== buildCartFingerprint(action.payload.baselineCart))) {
+          throw new Error("Le panier ou ses prix ont change. Demandez un nouveau plan budgetaire.");
+        }
         if (action.payload.actionType === "swap_variant") {
           const line = latestCart.items.find((item) => item.lineId === action.payload.lineId);
           if (!line || (action.payload.quantity != null && line.quantity !== action.payload.quantity)) {
@@ -1952,7 +1979,11 @@
           actionId: action.actionId,
           confirmationToken: action.confirmationToken,
           decision,
-          actionType: "cart_tool",
+          actionType: action.payload.actionType === "budget_optimization_select" ? "budget_optimization_select" : "cart_tool",
+          ...(action.payload.actionType === "budget_optimization_select" ? {
+            optimizationContextId: action.payload.optimizationContextId,
+            candidateIds: action.payload.candidateIds,
+          } : {}),
           cart: state.cart,
         }),
       });
@@ -1969,11 +2000,16 @@
         if (payload.result.idempotentReplay || payload.result.status !== "executed") {
           throw new Error("This action is already resolved or was not approved. No Shopify mutation was replayed.");
         }
-        nextCart = await applyStorefrontCartAction(action, state.cart);
+        const approvedAction = action.payload.actionType === "budget_optimization_select"
+          ? { ...action, payload: { ...action.payload, changes: payload.result.changes } }
+          : action;
+        nextCart = await applyStorefrontCartAction(approvedAction, state.cart);
       }
 
       const summary = decision === "approve"
-        ? "Modification verifiee dans le panier Shopify."
+        ? (action.payload.actionType === "budget_optimization_select"
+          ? `Plan applique et verifie dans Shopify. Sous-total reel : ${new Intl.NumberFormat("fr-FR", { style: "currency", currency: nextCart.currencyCode }).format(Number(nextCart.subtotal))}.`
+          : "Modification verifiee dans le panier Shopify.")
         : "Modification annulee. Aucun changement du panier.";
       updateActionStatus(state, payload.result.actionId, payload.result.status, summary);
       if (nextCart) {
@@ -2588,8 +2624,8 @@
     if (part.type === "budget-optimization.result") {
       appendGuidanceBlock(message, {
         type: "budget_optimization",
-        title: "Budget optimization",
-        summary: part.optimization && part.optimization.summary ? part.optimization.summary : "Budget optimization completed.",
+        title: "Plan budgetaire",
+        summary: part.optimization && part.optimization.summary ? part.optimization.summary : "Consultez les changements proposes avant de confirmer.",
       });
       render(instance);
       return;
@@ -2796,6 +2832,9 @@
     render(instance);
 
     try {
+      if (/budget|optimi[sz]|maximum|plafond/i.test(draft)) {
+        applyUpdatedCart(state, await fetchLatestStorefrontCart(state.cart));
+      }
       await streamAssistantReply(instance, assistantMessage, draft);
       state.statusMessage = "Reply received.";
     } catch (error) {

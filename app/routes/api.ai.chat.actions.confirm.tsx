@@ -18,6 +18,8 @@ import {
 } from "../lib/ai/storefront-chat";
 import { storefrontCartMutationAdapter } from "../lib/shopify/storefront-cart";
 import { applyBudgetOptimizationSelectionToCart, applyComparisonSelectionToCart } from "../lib/shopify/cart";
+import { StorefrontCartSnapshotSchema } from "../lib/ai/schemas";
+import { budgetCartFingerprint } from "../lib/cart-intelligence/budget-optimization";
 
 const ConfirmCartActionRequestSchema = z.object({
   shop: z.string().min(1),
@@ -38,6 +40,7 @@ const ConfirmCartActionRequestSchema = z.object({
       lineId: z.string().min(1).optional(),
       productId: z.string().min(1),
       variantId: z.string().min(1).optional(),
+      finalLinePrice: z.number().finite().nonnegative().optional(),
       quantity: z.coerce.number().int().min(1),
     })).default([]),
     subtotal: z.string().min(1).optional(),
@@ -425,18 +428,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         actionType?: string;
         optimizationContextId?: string;
         candidateIds?: string[];
+        baselineCart?: unknown;
       };
 
-      const requestedCandidateIds = parsed.data.candidateIds?.length
-        ? parsed.data.candidateIds
-        : payload.candidateIds || [];
+      const baselineCart = StorefrontCartSnapshotSchema.safeParse(payload.baselineCart);
+      if (payload.actionType !== "budget_optimization_select" || payload.optimizationContextId !== parsed.data.optimizationContextId
+        || !baselineCart.success || !parsed.data.cart
+        || budgetCartFingerprint(baselineCart.data) !== budgetCartFingerprint(parsed.data.cart)) {
+        return Response.json({ ok: false, error: { code: "OPTIMIZATION_STALE", message: "The cart or its prices changed. Request a new budget plan." } }, { status: 409 });
+      }
+      const requestedCandidateIds = [...new Set(parsed.data.candidateIds ?? payload.candidateIds ?? [])];
       const availableCandidateIds = new Set(optimizationResult.candidates.map((candidate) => candidate.candidateId));
       const selectedCandidateIds = requestedCandidateIds.filter((candidateId) => availableCandidateIds.has(candidateId));
       const selectedCandidates = optimizationResult.candidates.filter((candidate) => (
         selectedCandidateIds.includes(candidate.candidateId)
       ));
 
-      if (selectedCandidateIds.length === 0 || selectedCandidates.length === 0) {
+      if (selectedCandidateIds.length === 0 || selectedCandidates.length === 0 || selectedCandidateIds.length !== requestedCandidateIds.length) {
         const failedTransition = transitionCartToolActionRecord({
           actionId: parsed.data.actionId,
           nextStatus: "failed",
@@ -461,7 +469,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         );
       }
 
-      const criticalRemoval = selectedCandidates.find((candidate) => candidate.safetyCriticalImpact === "critical_removal");
+      const criticalRemoval = selectedCandidates.find((candidate) => candidate.safetyCriticalImpact !== "none");
       if (criticalRemoval) {
         const failedTransition = transitionCartToolActionRecord({
           actionId: parsed.data.actionId,
@@ -548,6 +556,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           optimizationStatus: recomputed.status,
           projectedSubtotal: recomputed.projectedSubtotal,
           projectedGapAmount: recomputed.projectedGapAmount,
+          changes: parsed.data.cart.items.flatMap((item) => {
+            const lineId = item.lineId || item.productId;
+            const nextQuantity = mutationOutcome.cart.items.find((line) => line.lineId === lineId)?.quantity ?? 0;
+            return nextQuantity === item.quantity ? [] : [{ lineId, quantity: nextQuantity }];
+          }),
           cart: mutationOutcome.cart,
         },
       });

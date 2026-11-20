@@ -762,6 +762,8 @@ export function buildBudgetOptimizationSelectionActionProposal(input: {
   sessionKey: string;
   cartId?: string;
   optimization: BudgetOptimizationResult;
+  summary?: string;
+  cart: StorefrontChatRequest["cart"];
 }): CartToolAction | null {
   if (input.optimization.candidates.length === 0) {
     return null;
@@ -785,11 +787,17 @@ export function buildBudgetOptimizationSelectionActionProposal(input: {
       actionType: "budget_optimization_select",
       optimizationContextId: input.optimization.optimizationContextId,
       candidateIds: input.optimization.candidates.map((candidate) => candidate.candidateId),
+      baselineCart: input.cart,
+      changes: input.cart.items.flatMap((item) => {
+        const candidates = input.optimization.candidates.filter((candidate) => candidate.sourceLineId === (item.lineId || item.productId));
+        if (!candidates.length) return [];
+        return [{ lineId: item.lineId || item.productId, quantity: candidates.some((candidate) => candidate.changeType === "remove") ? 0 : Math.max(0, item.quantity - candidates.length) }];
+      }),
       projectedSubtotal: input.optimization.projectedSubtotal,
       projectedGapAmount: input.optimization.projectedGapAmount,
     },
     preview: {
-      after: `Apply budget plan (${input.optimization.candidates.length} change${input.optimization.candidates.length > 1 ? "s" : ""})`,
+      after: input.summary || `Apply budget plan (${input.optimization.candidates.length} change${input.optimization.candidates.length > 1 ? "s" : ""})`,
     },
     confirmationToken: token.token,
     expiresAt: token.expiresAt,

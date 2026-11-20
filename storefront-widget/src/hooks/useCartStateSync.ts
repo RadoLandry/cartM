@@ -14,18 +14,20 @@ export interface CartFetchInterceptorOptions {
 
 export function normalizeCartJsPayload(payload: unknown, fallback: StorefrontCartSnapshot): StorefrontCartSnapshot {
   if (!payload || typeof payload !== "object") return fallback;
-  const cart = payload as { token?: unknown; currency?: unknown; items?: unknown };
+  const cart = payload as { token?: unknown; currency?: unknown; items?: unknown; total_price?: unknown };
   if (!Array.isArray(cart.items)) return fallback;
 
   return {
     ...(typeof cart.token === "string" && cart.token ? { cartId: cart.token } : fallback.cartId ? { cartId: fallback.cartId } : {}),
     currencyCode: typeof cart.currency === "string" && cart.currency ? cart.currency : fallback.currencyCode,
+    ...(typeof cart.total_price === "number" ? { subtotal: String(cart.total_price / 100) } : {}),
     items: cart.items
       .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
       .filter((item) => Boolean(item.product_id))
       .map((item) => ({
         ...(typeof item.key === "string" && item.key ? { lineId: item.key } : {}),
         productId: String(item.product_id),
+        ...(typeof item.final_line_price === "number" ? { finalLinePrice: item.final_line_price / 100 } : {}),
         ...(typeof item.product_title === "string" && item.product_title ? { productTitle: item.product_title } : {}),
         ...(item.variant_id ? { variantId: String(item.variant_id) } : {}),
         ...(typeof item.variant_title === "string" && item.variant_title ? { variantTitle: item.variant_title } : {}),
@@ -36,9 +38,9 @@ export function normalizeCartJsPayload(payload: unknown, fallback: StorefrontCar
 
 export function buildCartSnapshotKey(cart: StorefrontCartSnapshot) {
   const lineKeys = cart.items
-    .map((item) => [item.lineId ?? "", item.productId, item.variantId ?? "", item.quantity].join(":"))
+    .map((item) => [item.lineId ?? "", item.productId, item.variantId ?? "", item.quantity, item.finalLinePrice ?? ""].join(":"))
     .sort();
-  return [cart.cartId ?? "", cart.currencyCode, ...lineKeys].join("|");
+  return [cart.cartId ?? "", cart.currencyCode, cart.subtotal ?? "", ...lineKeys].join("|");
 }
 
 export function isCartSnapshotStale(snapshot: CartSyncSnapshot, stalenessWindowMs: number) {

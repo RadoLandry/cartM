@@ -33,7 +33,7 @@ import {
   getBudgetOptimizationValidationError,
   getCompareProductsValidationError,
 } from "../lib/ai/tools";
-import { buildBudgetOptimizationProposal } from "../lib/cart-intelligence/budget-optimization";
+import { buildBudgetOptimizationProposal, buildBudgetOptimizationSummary } from "../lib/cart-intelligence/budget-optimization";
 import { fetchBudgetOptimizationCandidates, fetchComparisonProducts } from "../lib/shopify/cart";
 import {
   assertAllowedStorefrontOrigin,
@@ -302,14 +302,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     storedProfile,
   });
 
-  const compatibleActionProposals = await resolveCompatibleAddActionProposals(parsed.data);
-  const guidanceReply = await buildStorefrontChatReply(parsed.data, behaviorResolution.config);
+  const budgetValidationError = getBudgetOptimizationValidationError(parsed.data);
+  const budgetRequest = buildBudgetOptimizationToolRequest(parsed.data);
+  const isBudgetRequest = Boolean(budgetRequest || budgetValidationError);
+  const budgetFrench = /\b(mon|maximum|propose|sans|panier|euros)\b/i.test(parsed.data.messages.at(-1)?.content ?? "");
+  let budgetReplyText = budgetFrench ? "Le plan budgetaire ne peut pas etre calcule. Verifiez le budget et actualisez le panier." : "The budget plan could not be calculated. Check the target and refresh your cart.";
+  const compatibleActionProposals = isBudgetRequest ? [] : await resolveCompatibleAddActionProposals(parsed.data);
+  const guidanceReply = isBudgetRequest ? { text: "", guidanceBlocks: [] } : await buildStorefrontChatReply(parsed.data, behaviorResolution.config);
   const comparisonValidationError = getCompareProductsValidationError(parsed.data);
   const comparisonRequest = buildCompareProductsToolRequest(parsed.data);
   const comparisonParts = [] as Array<{ type: string; [key: string]: unknown }>;
   let comparisonActionProposal: ReturnType<typeof buildComparisonSelectionActionProposal> | null = null;
-  const budgetValidationError = getBudgetOptimizationValidationError(parsed.data);
-  const budgetRequest = buildBudgetOptimizationToolRequest(parsed.data);
   const budgetParts = [] as Array<{ type: string; [key: string]: unknown }>;
   let budgetActionProposal: ReturnType<typeof buildBudgetOptimizationSelectionActionProposal> | null = null;
 
@@ -360,13 +363,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       cart: parsed.data.cart,
     });
 
-    if (candidateFetch.items.length === 0) {
+    if (candidateFetch.pricingUnavailable || (candidateFetch.items.length === 0 && candidateFetch.baselineSubtotal > budgetRequest.targetBudgetAmount)) {
+      budgetReplyText = candidateFetch.pricingUnavailable
+        ? (budgetFrench ? "Les prix remises du panier sont absents ou incoherents. Actualisez le panier avant de demander un plan budgetaire. Aucun changement propose." : "Discounted cart prices are missing or inconsistent. Refresh the cart before requesting a budget plan. No changes proposed.")
+        : (budgetFrench ? "Aucun changement ne permet de respecter ce budget sans risquer de retirer une protection necessaire. Aucun changement propose." : "No eligible changes can meet this budget without risking necessary protection. No changes proposed.");
       const budgetError = {
         optimizationContextId,
         code: "NO_ELIGIBLE_CANDIDATES" as const,
-        message: "No eligible budget optimization candidates were found for this cart.",
+        message: budgetReplyText,
         retryable: true,
-        suggestedNextStep: "Try increasing your budget target or adding alternatives to your cart.",
+        suggestedNextStep: candidateFetch.pricingUnavailable ? "Refresh your cart to retrieve current prices." : "Review your budget or clarify which non-protective items are optional.",
       };
 
       setBudgetOptimizationContextError({
@@ -394,6 +400,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
 
       if (streamOutcome.kind === "error") {
+        budgetReplyText = budgetFrench ? "Le budget ne peut pas etre atteint avec les changements sans risque disponibles. Aucun changement propose." : streamOutcome.error.message;
         setBudgetOptimizationContextError({
           optimizationContextId,
           error: streamOutcome.error,
@@ -404,6 +411,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           error: streamOutcome.error,
         });
       } else {
+        budgetReplyText = buildBudgetOptimizationSummary(budgetResult, parsed.data.cart, budgetFrench);
         setBudgetOptimizationContextResult({
           optimizationContextId,
           result: budgetResult,
@@ -411,7 +419,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
         budgetParts.push({
           type: "budget-optimization.result",
-          optimization: budgetResult,
+          optimization: { ...budgetResult, summary: budgetReplyText },
         });
 
         budgetActionProposal = buildBudgetOptimizationSelectionActionProposal({
@@ -419,6 +427,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           sessionKey: parsed.data.sessionKey,
           cartId: parsed.data.cart.cartId,
           optimization: budgetResult,
+          summary: budgetReplyText,
+          cart: parsed.data.cart,
         });
       }
     }
@@ -506,7 +516,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
-  const cartResolution = compatibleActionProposals.length > 0
+  const cartResolution = isBudgetRequest || compatibleActionProposals.length > 0
     ? { status: "no_action" as const }
     : await resolveCartToolActionProposal(parsed.data);
   const cartClarification = cartResolution.status === "clarification" ? cartResolution.clarification : null;
@@ -541,16 +551,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // inferred straight from the shopper's own wording, as opposed to compatible-add
   // suggestions surfaced from catalog search.
   const hasDirectCartMutationProposal = !hasCompatibleActionProposals && cartActionProposals.length > 0;
-  const replyText = isConfirmationReply ? confirmationReply : hasCompatibleActionProposals
+  const replyText = isBudgetRequest ? budgetReplyText : isConfirmationReply ? confirmationReply : hasCompatibleActionProposals
     ? buildCompatibleActionIntro(latestMessage, compatibleActionProposals.length)
     : hasDirectCartMutationProposal
       ? buildCartMutationIntroText(cartActionProposals[0], conversationLanguageText)
       : cartClarification
         ? buildCartClarificationText(cartClarification, latestMessage)
         : guidanceReply.text;
-  const guidanceBlocks = (isConfirmationReply || hasCompatibleActionProposals || hasDirectCartMutationProposal || cartClarification) ? [] : guidanceReply.guidanceBlocks;
+  const guidanceBlocks = (isBudgetRequest || isConfirmationReply || hasCompatibleActionProposals || hasDirectCartMutationProposal || cartClarification) ? [] : guidanceReply.guidanceBlocks;
   const shouldBypassLLM = /\b(budget|optimi[sz]|compare|add|remove|swap|quantit|quantity|size|fit|sparring|combat|taille|pratique|adapt[eé]|muay\s*thai|tha[iï]|kick\s*boxing|kickboxing|boxe|boxing|mma|recommend|recommand|suggest|sugg[eè]re|conseil|propose|s['’]?accorde|accorde|va\s+bien|works?\s+well|goes?\s+well)\b/.test(latestMessage);
-  const shouldUseLLM = aiEnabled && !isConfirmationReply && !hasCompatibleActionProposals && !hasDirectCartMutationProposal && !cartClarification && !shouldBypassLLM;
+  const shouldUseLLM = aiEnabled && !isBudgetRequest && !isConfirmationReply && !hasCompatibleActionProposals && !hasDirectCartMutationProposal && !cartClarification && !shouldBypassLLM;
   const catalogContext = shouldUseLLM
     ? await retrieveCatalogContextForChat(parsed.data)
     : undefined;

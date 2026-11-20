@@ -271,6 +271,93 @@ test.describe('cart confirmation regression', () => {
   }
 });
 
+test.describe('budget plan regression', () => {
+  for (const outcome of ['success', 'wrong-quantity', 'replay', 'stale']) {
+    test(`applies only the confirmed budget plan: ${outcome}`, async ({ page }, testInfo) => {
+      let quantity = 2;
+      let mutations = 0;
+      const confirmations = [];
+      const cart = { cartId: 'preview', currencyCode: 'EUR', subtotal: '114.99', items: [
+        { lineId: 'wraps', productId: '1', variantId: '11', productTitle: 'Bandes de Boxe Venum Kontact', quantity: 1, finalLinePrice: 14.99 },
+        { lineId: 'rashguard', productId: '2', variantId: '22', productTitle: 'Rashguard Venum Tempest', quantity: 2, finalLinePrice: 60 },
+        { lineId: 'gloves', productId: '3', variantId: '33', productTitle: 'Gants de boxe Venum Contender', quantity: 1, finalLinePrice: 40 },
+      ] };
+      await mountConversationPreview(page, { cart });
+      await page.route('**/cart.js', (route) => route.fulfill({ json: {
+        token: 'preview', currency: 'EUR', total_price: 5499 + quantity * 3000,
+        items: cart.items.map((item) => ({ key: item.lineId, product_id: Number(item.productId), variant_id: Number(item.variantId),
+          product_title: item.productTitle, quantity: item.lineId === 'rashguard' ? quantity : item.quantity,
+          final_line_price: item.lineId === 'rashguard' ? quantity * 3000 : Math.round(item.finalLinePrice * 100),
+        })),
+      } }));
+      await page.route('**/apps/cartmind-chat/chat-bootstrap', (route) => route.fulfill({ json: {
+        ok: true, bootstrap: { sessionKey: 'budget-session', streamToken: 'test-token',
+          expiresAt: new Date(Date.now() + 60000).toISOString(), chatUrl: '/budget-stream' },
+      } }));
+      await page.route('**/budget-stream', (route) => {
+        const request = route.request().postDataJSON();
+        expect(request.cart.subtotal).toBe('114.99');
+        expect(request.cart.items[1].finalLinePrice).toBe(60);
+        const summary = 'Rashguard Venum Tempest : 2 -> 1. Economie : 30,00 €. Nouveau sous-total estime : 84,99 €. Protections conservees. Sous reserve du recalcul des promotions.';
+        const events = [
+          { type: 'text-delta', text: 'Voici le plan propose pour respecter votre budget de 100 €.' },
+          { type: 'budget-optimization.result', optimization: { summary } },
+          { type: 'tool-action-proposed', action: {
+            actionId: 'budget-action', toolName: 'optimizeBudget', shop: 'preview.myshopify.com', sessionKey: 'budget-session',
+            confirmationToken: 'test-confirmation', expiresAt: new Date(Date.now() + 60000).toISOString(),
+            payload: { actionType: 'budget_optimization_select', optimizationContextId: 'budget-context', candidateIds: ['rashguard-reduction'],
+              baselineCart: request.cart, changes: [{ lineId: 'rashguard', quantity: 1 }], projectedSubtotal: 84.99 },
+            preview: { after: summary },
+          } },
+        ];
+        return route.fulfill({ contentType: 'text/event-stream', body: events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join('') });
+      });
+      await page.route('**/apps/cartmind-chat/chat-actions-confirm', (route) => {
+        const request = route.request().postDataJSON();
+        confirmations.push(request);
+        expect(request.actionType).toBe('budget_optimization_select');
+        expect(request.optimizationContextId).toBe('budget-context');
+        expect(request.candidateIds).toEqual(['rashguard-reduction']);
+        return route.fulfill({ json: { ok: true, result: { actionId: 'budget-action', status: 'executed',
+          idempotentReplay: outcome === 'replay', changes: [{ lineId: 'rashguard', quantity: 1 }],
+        } } });
+      });
+      await page.route('**/cart/update.js', (route) => {
+        mutations += 1;
+        expect(route.request().postDataJSON()).toEqual({ updates: { rashguard: 1 } });
+        if (outcome !== 'wrong-quantity') quantity = 1;
+        return route.fulfill({ json: {} });
+      });
+      await page.locator('textarea').fill('Mon budget maximum est de 100 €. Propose des changements sans supprimer les protections nécessaires.');
+      await page.getByRole('button', { name: 'Send', exact: true }).click();
+      await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
+      await expect(page.locator('.cm-messages')).toContainText('84,99');
+      await expect(page.locator('.cm-messages')).not.toContainText('Budget optimization completed');
+      expect(mutations).toBe(0);
+      if (outcome === 'success') {
+        for (const viewport of [{ width: 1440, height: 900 }, { width: 360, height: 740 }]) {
+          await page.setViewportSize(viewport);
+          await expect(page.locator('[data-action="approve-cart-action"]')).toBeVisible();
+          expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
+          await page.screenshot({ path: testInfo.outputPath(`budget-${viewport.width}.png`), animations: 'disabled' });
+        }
+      }
+      if (outcome === 'stale') quantity = 3;
+      await page.locator('[data-action="approve-cart-action"]').click();
+      await expect(page.locator('.cm-action-status')).toContainText(outcome === 'success' ? 'Sous-total reel' : 'failed');
+      if (outcome === 'success') {
+        await expect(page.locator('.cm-action-status')).toContainText('84,99');
+        expect(quantity).toBe(1);
+      } else {
+        await expect(page.locator('.cm-action-status')).not.toContainText('Plan applique');
+      }
+      expect(mutations).toBe(outcome === 'success' || outcome === 'wrong-quantity' ? 1 : 0);
+      expect(confirmations).toHaveLength(outcome === 'stale' ? 0 : 1);
+      await expect(page.locator('[data-action="approve-cart-action"]')).toHaveCount(0);
+    });
+  }
+});
+
 test('custom drawer mounts CartMind on storefront', async ({ page }) => {
   await page.goto('https://landry-randrianandrasana.myshopify.com/products/fightshort_noir_pride_or_die_busted_knuckles_venum', {
     waitUntil: 'domcontentloaded',

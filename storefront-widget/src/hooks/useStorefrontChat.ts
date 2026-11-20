@@ -1,6 +1,6 @@
 import type { CartToolAction } from "../types";
 import type { ChatSessionAction, ChatSessionState } from "./useChatSessionState";
-import { normalizeCartJsPayload } from "./useCartStateSync";
+import { buildCartSnapshotKey, normalizeCartJsPayload } from "./useCartStateSync";
 import type { StorefrontCartSnapshot } from "../types";
 
 export function normalizeAjaxMerchandiseId(value: string) {
@@ -33,6 +33,16 @@ export async function applyStorefrontCartAction(
       credentials: "same-origin",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ id: normalizeAjaxMerchandiseId(payload.merchandiseId), quantity: payload.quantity }),
+    });
+  } else if (payload.actionType === "budget_optimization_select") {
+    if (!payload.changes?.length || !payload.baselineCart || buildCartSnapshotKey(currentCart) !== buildCartSnapshotKey(payload.baselineCart)) {
+      throw new Error("The cart changed. Request a new budget plan.");
+    }
+    await mutate("/cart/update.js", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ updates: Object.fromEntries(payload.changes.map((change) => [change.lineId, change.quantity])) }),
     });
   } else if (payload.actionType === "remove") {
     await mutate("/cart/change.js", {
@@ -97,6 +107,11 @@ export async function applyStorefrontCartAction(
       === variantQuantity(currentCart, payload.merchandiseId) + payload.quantity;
   } else if (payload.actionType === "remove") {
     verified = !nextCart.items.some((item) => item.lineId === payload.lineId);
+  } else if (payload.actionType === "budget_optimization_select") {
+    verified = Boolean(payload.changes?.every((change) => (nextCart.items.find((item) => item.lineId === change.lineId)?.quantity || 0) === change.quantity))
+      && currentCart.items.filter((item) => !payload.changes?.some((change) => change.lineId === item.lineId))
+        .every((item) => nextCart.items.some((next) => next.lineId === item.lineId && next.quantity === item.quantity && next.variantId === item.variantId))
+      && nextCart.subtotal !== undefined;
   } else if (payload.actionType === "change_quantity") {
     verified = (payload.changes ?? [payload]).every((change) =>
       (nextCart.items.find((item) => item.lineId === change.lineId)?.quantity || 0) === change.quantity);

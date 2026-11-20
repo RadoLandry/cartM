@@ -87,7 +87,7 @@ function applyBundlePresentation(input) {
     if (linesToMerge.length === 0) continue;
 
     operations.push({
-      merge: {
+      linesMerge: {
         parentVariantId: cartLineMap.get(presentLine).merchandise.id,
         cartLines: outcome.qualifiedLineIds
           .filter((id) => cartLineMap.has(id))

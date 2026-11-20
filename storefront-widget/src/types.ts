@@ -15,6 +15,7 @@ export interface StorefrontCartSnapshotItem {
   variantTitle?: string;
   imageUrl?: string;
   discipline?: string;
+  finalLinePrice?: number;
   quantity: number;
 }
 

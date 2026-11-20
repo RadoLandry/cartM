@@ -36,8 +36,9 @@ describe("budget optimization ranking", () => {
       ],
     });
 
-    expect(result.status).toBe("optimized");
-    expect(result.candidates.map((candidate) => candidate.candidateId)).toEqual(["c_safe", "c_reduced"]);
+    expect(result.status).toBe("constraint_blocked");
+    expect(result.projectedSubtotal).toBe(100);
+    expect(result.candidates.map((candidate) => candidate.candidateId)).toEqual(["c_safe"]);
   });
 
   it("computes projected subtotal and remaining gap for over-budget carts", () => {

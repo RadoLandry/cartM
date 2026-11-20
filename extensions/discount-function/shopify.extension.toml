@@ -1,4 +1,4 @@
-api_version = "2025-10"
+api_version = "2026-10"
 uid = "630829f6-2180-df6b-6a08-656aa871d3f31c3e344a"
 
 [[extensions]]
@@ -12,7 +12,7 @@ type = "function"
   export = "run"
 
   [extensions.build]
-  command = "node ./src/run.js"
+  command = ""
   path = "dist/function.wasm"
   watch = ["src/**/*.js"]
 

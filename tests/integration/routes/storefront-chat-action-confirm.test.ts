@@ -661,6 +661,7 @@ describe("storefront chat action confirmation route", () => {
             productId: "gid://shopify/Product/1",
             productTitle: "Safety Gloves",
             variantId: "gid://shopify/ProductVariant/1",
+            finalLinePrice: 34,
             quantity: 1,
           },
           {
@@ -668,6 +669,7 @@ describe("storefront chat action confirmation route", () => {
             productId: "gid://shopify/Product/2",
             productTitle: "Optional Bag",
             variantId: "gid://shopify/ProductVariant/2",
+            finalLinePrice: 16,
             quantity: 1,
           },
         ],

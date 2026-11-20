@@ -36,6 +36,7 @@ export interface FetchBudgetOptimizationCandidatesInput {
 export interface FetchBudgetOptimizationCandidatesResult {
   items: BudgetOptimizationCandidate[];
   baselineSubtotal: number;
+  pricingUnavailable?: boolean;
   fetchedAt: string;
 }
 
@@ -68,11 +69,6 @@ export interface ColorwayPreviewLineResolutionResult {
   valid: boolean;
   reason?: "line_not_found" | "same_variant" | "missing_variant" | "unavailable_variant";
   selectedLine?: ColorwayPreviewLineResolutionInput["cart"]["items"][number];
-}
-
-function estimateLinePrice(item: StorefrontChatRequest["cart"]["items"][number], index: number) {
-  const estimated = (index + 1) * 18;
-  return Math.round(estimated * Math.max(item.quantity, 1) * 100) / 100;
 }
 
 function roundCurrency(value: number) {
@@ -110,7 +106,7 @@ function parseCartSubtotal(subtotal?: string) {
   }
 
   const parsed = Number(normalized);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
+  if (!Number.isFinite(parsed) || parsed < 0 || subtotal.includes("-")) {
     return null;
   }
 
@@ -136,13 +132,14 @@ function assessLineUsefulness(item: StorefrontChatRequest["cart"]["items"][numbe
     "headgear",
     "helmet",
     "mouthguard",
-    "prot",
     "protect",
-    "guard",
     "shin",
     "coquille",
     "wrap",
     "bandage",
+    "bandes",
+    "protege",
+    "casque",
   ];
   const nonEssentialKeywords = [
     "bag",
@@ -162,7 +159,7 @@ function assessLineUsefulness(item: StorefrontChatRequest["cart"]["items"][numbe
   const hasSafetySignal = safetyCriticalKeywords.some((keyword) => text.includes(keyword));
   const hasNonEssentialSignal = nonEssentialKeywords.some((keyword) => text.includes(keyword));
 
-  if (hasSafetySignal && !hasNonEssentialSignal) {
+  if (hasSafetySignal) {
     return {
       priority: "essential" as const,
       safetyCriticalImpact: "reduced_protection" as const,
@@ -178,25 +175,12 @@ function assessLineUsefulness(item: StorefrontChatRequest["cart"]["items"][numbe
     };
   }
 
+  const isApparel = /rash\s*guard|short|shirt|t-shirt|pantalon|legging|maillot|veste|sweat|jogging/.test(text);
   return {
-    priority: "neutral" as const,
-    safetyCriticalImpact: "none" as const,
+    priority: isApparel ? "neutral" as const : "essential" as const,
+    safetyCriticalImpact: isApparel ? "none" as const : "reduced_protection" as const,
     disciplineFitScore: 0.65,
   };
-}
-
-function buildHeuristicLineUnitPrice(item: StorefrontChatRequest["cart"]["items"][number]) {
-  const usefulness = assessLineUsefulness(item);
-
-  if (usefulness.priority === "essential") {
-    return 34;
-  }
-
-  if (usefulness.priority === "optional") {
-    return 16;
-  }
-
-  return 24;
 }
 
 function findCartItemByRef(input: FetchComparisonProductsInput, ref: string) {
@@ -293,12 +277,13 @@ export async function fetchComparisonProducts(
 export async function fetchBudgetOptimizationCandidates(
   input: FetchBudgetOptimizationCandidatesInput,
 ): Promise<FetchBudgetOptimizationCandidatesResult> {
-  const heuristicBaselineSubtotal = input.cart.items.reduce((sum, item, index) => sum + estimateLinePrice(item, index), 0);
   const parsedSubtotal = parseCartSubtotal(input.cart.subtotal);
-  const baselineSubtotal = parsedSubtotal ?? heuristicBaselineSubtotal;
-  const scale = heuristicBaselineSubtotal > 0
-    ? baselineSubtotal / heuristicBaselineSubtotal
-    : 1;
+  const lineSubtotal = roundCurrency(input.cart.items.reduce((sum, item) => sum + (item.finalLinePrice ?? 0), 0));
+  const baselineSubtotal = parsedSubtotal ?? lineSubtotal;
+  if (input.cart.items.some((item) => item.finalLinePrice === undefined || !Number.isFinite(item.finalLinePrice) || item.finalLinePrice < 0)
+    || (parsedSubtotal !== null && Math.abs(parsedSubtotal - lineSubtotal) > 0.02)) {
+    return { items: [], baselineSubtotal, pricingUnavailable: true, fetchedAt: new Date().toISOString() };
+  }
 
   const items: BudgetOptimizationCandidate[] = [];
 
@@ -306,8 +291,10 @@ export async function fetchBudgetOptimizationCandidates(
     const sourceLineId = item.lineId || item.productId;
     const quantity = Math.max(1, item.quantity);
     const usefulness = assessLineUsefulness(item);
-    const estimatedUnitSavings = roundCurrency((buildHeuristicLineUnitPrice(item) * scale));
-    const estimatedLineSavings = roundCurrency(estimatedUnitSavings * quantity);
+    if (usefulness.safetyCriticalImpact !== "none") continue;
+    const estimatedLineSavings = item.finalLinePrice!;
+    const estimatedUnitSavings = Math.floor(estimatedLineSavings * 100 / quantity) / 100;
+    if (estimatedUnitSavings <= 0) continue;
     const title = item.productTitle || item.productId;
 
     if (quantity > 1) {
@@ -328,7 +315,7 @@ export async function fetchBudgetOptimizationCandidates(
       }
     }
 
-    if (usefulness.priority === "optional" || quantity === 1) {
+    if (quantity === 1) {
       items.push({
         candidateId: `candidate_${sourceLineId}_remove_${index}`,
         changeType: "remove",
