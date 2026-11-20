@@ -1,4 +1,4 @@
-import { PRODUCT_BY_ID_QUERY, PRODUCTS_QUERY } from "../shopify/graphql";
+import { PRODUCT_BY_ID_QUERY, PRODUCTS_COUNT_QUERY, PRODUCTS_QUERY } from "../shopify/graphql";
 import { normalizeProduct, ShopifyProductNode } from "./normalization";
 import {
   upsertProduct,
@@ -158,6 +158,18 @@ export async function runCatalogSync(admin: AdminGraphqlClient, shop: string): P
   console.log(`[Ingestion] Starting full catalog sync for ${shop} (Job: ${job.id})`);
 
   try {
+    // Total is needed for the progress bar; a failure here must not block the sync.
+    try {
+      const countResponse = await admin.graphql(PRODUCTS_COUNT_QUERY, { variables: {} });
+      const countData = (await countResponse.json()) as { data?: { productsCount?: { count?: number } } };
+      const total = countData?.data?.productsCount?.count;
+      if (typeof total === "number" && total > 0) {
+        await tracker.setTotal(total);
+      }
+    } catch (countError) {
+      console.warn(`[Ingestion] Could not fetch product count for ${shop}:`, (countError as Error).message);
+    }
+
     let hasNextPage = true;
     let after: string | null = null;
     const batchSize = 50;

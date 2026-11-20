@@ -624,6 +624,14 @@ function isRecommendationExplanationIntentMessage(message: string) {
   return /(why|pourquoi|explain|explique|recommend|recommand|suggest|conseil|propose|s['’]?accorde|accorde|va\s+bien|works?\s+well|goes?\s+well|pair)/i.test(message);
 }
 
+function isExplicitRecommendationRequest(message: string) {
+  return /(recommend|recommand|suggest|sugg[eè]re|conseil|propose|what\s+should\s+i\s+(?:add|buy)|que\s+(?:me\s+)?(?:conseill|propos))/i.test(message);
+}
+
+function isExplicitSizeRequest(message: string) {
+  return /(\b(?:size|sizes|sizing|fit)\b|taille|pointure)/i.test(message);
+}
+
 function isProactiveAnalysisPrompt(message: string) {
   return /^analyse\s+proactive/i.test(message);
 }
@@ -1258,11 +1266,16 @@ export async function buildStorefrontChatReply(
   const hasKitRecommendations = kitRecommendationItems.length > 0;
   const fallbackOnly = isFallbackOnlyRecommendations(intelligence.recommendationItems);
   const sizeGuidanceBlock = intelligence.sizeBlock || buildSizeBlock(lang);
+  const sizeRequested = isExplicitSizeRequest(latestMessage);
+  const optionalSizeBlocks = sizeRequested && intelligence.sizeBlock ? [intelligence.sizeBlock] : [];
 
   if (!proactive && (isSizeOrUseCaseIntentMessage(latestMessage) || isRecommendationExplanationIntentMessage(latestMessage))) {
     return buildFeatureAwareReply({
       text: buildCartAwareQuestionAnswer(input, intelligence, lang),
-      guidanceBlocks: [sizeGuidanceBlock, recommendationBlock],
+      guidanceBlocks: [
+        ...(sizeRequested ? [sizeGuidanceBlock] : []),
+        ...(isExplicitRecommendationRequest(latestMessage) ? [recommendationBlock] : []),
+      ],
     }, features);
   }
 
@@ -1276,7 +1289,7 @@ export async function buildStorefrontChatReply(
           : summaryParts.length > 0
             ? `Here is what is still missing to complete your kit, prioritized by required essentials first. ${summaryParts.join(" ")}`
             : "Here is what is still missing to complete your kit, prioritized by required essentials first.",
-        guidanceBlocks: [buildRecommendationBlock(kitRecommendationItems, lang), ...(intelligence.sizeBlock ? [intelligence.sizeBlock] : [])],
+        guidanceBlocks: [buildRecommendationBlock(kitRecommendationItems, lang), ...optionalSizeBlocks],
       }, features);
     }
 
@@ -1292,7 +1305,7 @@ export async function buildStorefrontChatReply(
               : "No complete kit baseline was detected for these cart lines. Ask again after adding a core discipline item, and I will return missing essentials first.",
             lang,
           ),
-          ...(intelligence.sizeBlock ? [intelligence.sizeBlock] : []),
+          ...optionalSizeBlocks,
         ],
       }, features);
     }
@@ -1305,7 +1318,7 @@ export async function buildStorefrontChatReply(
         : summaryParts.length > 0
           ? `Here are the highest-priority gaps I can infer from your current cart. ${summaryParts.join(" ")}`
           : "Here are the highest-priority gaps I can infer from your current cart.",
-      guidanceBlocks: [recommendationBlock, ...(intelligence.sizeBlock ? [intelligence.sizeBlock] : [])],
+      guidanceBlocks: [recommendationBlock, ...optionalSizeBlocks],
     }, features);
   }
 
@@ -1340,7 +1353,7 @@ export async function buildStorefrontChatReply(
         : intelligence.sizeIssueCount > 0
           ? "Here is fit guidance from stored size rules, profile signals, and cart-level consistency checks."
           : "Here is the fit guidance I can infer from the current cart.",
-      guidanceBlocks: [sizeGuidanceBlock, recommendationBlock],
+      guidanceBlocks: [sizeGuidanceBlock, ...(isExplicitRecommendationRequest(latestMessage) ? [recommendationBlock] : [])],
     }, features);
   }
 
@@ -1352,7 +1365,7 @@ export async function buildStorefrontChatReply(
       : summaryParts.length > 0
         ? `Here are cart-specific recommendations grounded in your shop data. ${summaryParts.join(" ")}`
         : "Here is a relevant, cart-specific recommendation based on your current items.",
-    guidanceBlocks: [recommendationBlock, ...(intelligence.sizeBlock ? [intelligence.sizeBlock] : [])],
+    guidanceBlocks: [recommendationBlock, ...optionalSizeBlocks],
   }, features);
 }
 

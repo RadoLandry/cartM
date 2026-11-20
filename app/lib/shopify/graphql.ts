@@ -78,6 +78,14 @@ export const PRODUCTS_QUERY = `#graphql
   }
 `;
 
+export const PRODUCTS_COUNT_QUERY = `#graphql
+  query getProductsCount {
+    productsCount {
+      count
+    }
+  }
+`;
+
 export const PRODUCT_BY_ID_QUERY = `#graphql
   ${PRODUCT_FRAGMENT}
   ${VARIANT_FRAGMENT}

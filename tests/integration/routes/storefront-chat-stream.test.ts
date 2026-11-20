@@ -102,8 +102,8 @@ describe("storefront chat stream route", () => {
     // Response should be in French because the question is in French
     expect(body).toContain("sparring");
     expect(body).toContain("confirmez le poids des gants");
-    expect(body).toContain('"type":"size_summary"');
-    expect(body).toContain("R\u00e9sum\u00e9 des tailles");
+    expect(body).not.toContain('"type":"size_summary"');
+    expect(body).not.toContain("R\u00e9sum\u00e9 des tailles");
   });
 
   it("answers discipline compatibility questions like a cart-aware coach", async () => {
@@ -143,7 +143,7 @@ describe("storefront chat stream route", () => {
     expect(body).toContain("Muay Thai");
     expect(body).toContain("10 oz");
     expect(body).toContain("v\u00e9rifiez aussi le rembourrage");
-    expect(body).toContain('"type":"size_summary"');
+    expect(body).not.toContain('"type":"size_summary"');
   });
 
   it("honors storefront feature flags when streaming guidance blocks", async () => {

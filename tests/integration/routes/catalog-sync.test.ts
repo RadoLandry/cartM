@@ -52,6 +52,9 @@ describe("Ingestion: runCatalogSync", () => {
     const mockAdmin = {
       graphql: vi.fn()
         .mockResolvedValueOnce({
+          json: () => Promise.resolve({ data: { productsCount: { count: 3 } } })
+        })
+        .mockResolvedValueOnce({
           json: () => Promise.resolve({
             data: {
               products: {
@@ -81,7 +84,8 @@ describe("Ingestion: runCatalogSync", () => {
     await runCatalogSync(mockAdmin as any, "test.myshopify.com");
 
     expect(dbQueries.createSyncJob).toHaveBeenCalledWith("test.myshopify.com");
-    expect(mockAdmin.graphql).toHaveBeenCalledTimes(2);
+    expect(mockAdmin.graphql).toHaveBeenCalledTimes(3);
+    expect(dbQueries.updateSyncJobProgress).toHaveBeenCalledWith("job_123", 0, 0, 3);
     expect(dbQueries.upsertProduct).toHaveBeenCalledTimes(2); // Only Active products
     expect(dbQueries.updateProductEmbedding).toHaveBeenCalledTimes(2);
     expect(dbQueries.completeSyncJob).toHaveBeenCalledWith("job_123");
@@ -134,7 +138,11 @@ describe("Ingestion: relationship candidate generation after sync [US1]", () => 
     vi.mocked(dbQueries.getActiveSyncJob).mockResolvedValueOnce(null);
 
     const mockAdmin = {
-      graphql: vi.fn().mockResolvedValueOnce({
+      graphql: vi.fn()
+        .mockResolvedValueOnce({
+          json: () => Promise.resolve({ data: { productsCount: { count: 1 } } }),
+        })
+        .mockResolvedValueOnce({
         json: () => Promise.resolve({
           data: {
             products: {
