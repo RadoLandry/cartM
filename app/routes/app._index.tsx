@@ -1,34 +1,48 @@
 import { useEffect, useRef, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { useFetcher, useLoaderData, useRevalidator } from "react-router";
+import { Link, useFetcher, useLoaderData, useRevalidator } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import {
   countProductsForShop,
   countProductVariantsForShop,
   getActiveSyncJob,
+  getCatalogIntelligenceStats,
   getLatestSyncJob,
   getProductsNotYetSynced,
+  getRecentSyncJobs,
 } from "../lib/db/queries";
 import { runCatalogSync } from "../lib/knowledge-graph/ingestion";
 import { authenticate } from "../shopify.server";
-import { SyncStatusCard } from "../components/admin/SyncStatusCard";
+import { SyncHistoryTable, SyncStatusCard } from "../components/admin/SyncStatusCard";
 import { SyncFailureTable } from "../components/admin/SyncFailureTable";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
 
-  const [latestJob, productCount, variantCount, unsyncedProducts] = await Promise.all([
+  const [latestJob, productCount, variantCount, unsyncedProducts, recentJobs, intelligence] = await Promise.all([
     getLatestSyncJob(session.shop),
     countProductsForShop(session.shop),
     countProductVariantsForShop(session.shop),
     getProductsNotYetSynced(session.shop),
+    getRecentSyncJobs(session.shop, 8),
+    getCatalogIntelligenceStats(session.shop),
   ]);
 
   return {
     shop: session.shop,
     productCount,
     variantCount,
+    intelligence,
+    recentJobs: recentJobs.map((job) => ({
+      id: job.id,
+      status: job.status,
+      syncedCount: job.syncedCount,
+      failedCount: job.failedCount,
+      totalCount: job.totalCount,
+      startedAt: job.startedAt.toISOString(),
+      completedAt: job.completedAt?.toISOString() ?? null,
+    })),
     latestJob: latestJob
       ? {
           id: latestJob.id,
@@ -78,11 +92,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function Index() {
-  const { shop, productCount, variantCount, latestJob, unsyncedProducts } = useLoaderData<typeof loader>();
+  const { shop, productCount, variantCount, latestJob, unsyncedProducts, recentJobs, intelligence } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const shopify = useAppBridge();
   const [syncRequested, setSyncRequested] = useState(false);
+  const [now, setNow] = useState<number | null>(null);
   const hasShownStartedToast = useRef(false);
   const lastCompletionToastJobId = useRef<string | null>(null);
   const lastErrorToast = useRef<string | null>(null);
@@ -120,7 +135,11 @@ export default function Index() {
     }
 
     const intervalId = window.setInterval(() => {
-      revalidator.revalidate();
+      setNow(Date.now());
+      // Skip server polling while the tab is hidden.
+      if (document.visibilityState === "visible") {
+        revalidator.revalidate();
+      }
     }, 1500);
 
     return () => {
@@ -165,15 +184,22 @@ export default function Index() {
       </s-button>
 
       <s-section heading="Catalog overview">
-        <s-stack direction="block" gap="base">
-          <s-paragraph>Shop: {shop}</s-paragraph>
-          <s-paragraph>Products synced: {productCount}</s-paragraph>
-          <s-paragraph>Variants synced: {variantCount}</s-paragraph>
-        </s-stack>
+        {productCount === 0 ? (
+          <s-paragraph>
+            No products synced yet. Click “Run catalog sync” to import your Shopify catalog so CartMind can build recommendations.
+          </s-paragraph>
+        ) : (
+          <s-stack direction="block" gap="base">
+            <s-paragraph>Shop: {shop}</s-paragraph>
+            <s-paragraph>Products synced: {productCount}</s-paragraph>
+            <s-paragraph>Variants synced: {variantCount}</s-paragraph>
+          </s-stack>
+        )}
       </s-section>
 
       <s-section heading="Latest sync job">
         <SyncStatusCard
+          now={now ?? (latestJob ? new Date(latestJob.startedAt).getTime() : 0)}
           job={latestJob ? {
             id: latestJob.id,
             status: latestJob.status as "PENDING" | "IN_PROGRESS" | "COMPLETED" | "FAILED",
@@ -183,6 +209,31 @@ export default function Index() {
             startedAt: latestJob.startedAt,
             completedAt: latestJob.completedAt,
           } : null}
+        />
+      </s-section>
+
+      {productCount > 0 && (
+        <s-section heading="Catalog intelligence">
+          <s-stack direction="block" gap="base">
+            <s-paragraph>Classified by discipline: {intelligence.classified} / {productCount}</s-paragraph>
+            <s-paragraph>With embeddings: {intelligence.withEmbedding} / {productCount}</s-paragraph>
+            <s-paragraph>Active product relationships: {intelligence.relationships}</s-paragraph>
+            {intelligence.lowConfidence > 0 && (
+              <s-paragraph>
+                {intelligence.lowConfidence} product{intelligence.lowConfidence > 1 ? "s" : ""} with low classification
+                confidence — <Link to="/app/knowledge-graph">review in the knowledge graph</Link>.
+              </s-paragraph>
+            )}
+          </s-stack>
+        </s-section>
+      )}
+
+      <s-section heading="Sync history">
+        <SyncHistoryTable
+          jobs={recentJobs.map((job) => ({
+            ...job,
+            status: job.status as "PENDING" | "IN_PROGRESS" | "COMPLETED" | "FAILED",
+          }))}
         />
       </s-section>
 
@@ -200,6 +251,16 @@ export default function Index() {
           If the app was installed before the initial catalog sync completed,
           use the manual action to repopulate the local product tables.
         </s-paragraph>
+      </s-section>
+
+      <s-section slot="aside" heading="Shortcuts">
+        <s-stack direction="block" gap="small-300">
+          <Link to="/app/knowledge-graph">Knowledge graph</Link>
+          <Link to="/app/bundles">Bundle manager</Link>
+          <Link to="/app/thresholds">Threshold manager</Link>
+          <Link to="/app/settings">AI settings</Link>
+          <Link to="/app/analytics">Analytics</Link>
+        </s-stack>
       </s-section>
     </s-page>
   );

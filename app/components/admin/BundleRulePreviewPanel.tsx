@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { Form } from "react-router";
-import { Banner, BlockStack, Button, InlineStack, List, Text } from "@shopify/polaris";
+import { Banner, BlockStack, Button, FormLayout, InlineStack, List, Select, Text, TextField } from "@shopify/polaris";
 
 type PreviewBundleRuleOption = {
   id: string;
@@ -37,6 +38,39 @@ const DEFAULT_CART_FIXTURE = JSON.stringify(
   2,
 );
 
+function PreviewFields({ bundleRules }: { bundleRules: PreviewBundleRuleOption[] }) {
+  const [ruleId, setRuleId] = useState("");
+  const [fixture, setFixture] = useState(DEFAULT_CART_FIXTURE);
+
+  return (
+    <FormLayout>
+      <Select
+        label="Bundle rule"
+        name="bundleRuleId"
+        value={ruleId}
+        onChange={setRuleId}
+        options={[
+          { label: "Select a rule", value: "" },
+          ...bundleRules.map((rule) => ({ label: `${rule.label} (${rule.status})`, value: rule.id })),
+        ]}
+      />
+      <TextField
+        label="Cart fixture"
+        helpText="JSON array of productId / variantId / quantity."
+        name="cartFixture"
+        value={fixture}
+        onChange={setFixture}
+        autoComplete="off"
+        multiline={6}
+        monospaced
+      />
+      <InlineStack align="start">
+        <Button submit variant="primary" disabled={!ruleId}>Run preview</Button>
+      </InlineStack>
+    </FormLayout>
+  );
+}
+
 export function BundleRulePreviewPanel({
   productCount,
   categoryCount,
@@ -63,27 +97,7 @@ export function BundleRulePreviewPanel({
       <Form method="post">
         <BlockStack gap="300">
           <input type="hidden" name="intent" value="preview-bundle-rule" />
-
-          <label>
-            Bundle rule
-            <select name="bundleRuleId" required>
-              <option value="">Select a rule</option>
-              {bundleRules.map((rule) => (
-                <option key={rule.id} value={rule.id}>
-                  {rule.label} ({rule.status})
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label>
-            Cart fixture (JSON array of productId/variantId/quantity)
-            <textarea name="cartFixture" rows={6} defaultValue={DEFAULT_CART_FIXTURE} />
-          </label>
-
-          <InlineStack align="start">
-            <Button submit variant="primary">Run preview</Button>
-          </InlineStack>
+          <PreviewFields bundleRules={bundleRules} />
         </BlockStack>
       </Form>
 

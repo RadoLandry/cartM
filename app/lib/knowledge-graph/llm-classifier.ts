@@ -8,9 +8,9 @@ import {
   normalizeCategories,
 } from "./taxonomy";
 import type { Discipline, Category } from "./taxonomy";
+import { CONFIDENCE_THRESHOLD } from "./taxonomy.constants";
 
-/** Minimum confidence to auto-accept a classification without merchant review */
-export const CONFIDENCE_THRESHOLD = 0.8;
+export { CONFIDENCE_THRESHOLD };
 
 /** Fallback values when the LLM produces no valid output */
 const FALLBACK_DISCIPLINES: Discipline[] = [];

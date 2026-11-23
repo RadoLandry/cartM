@@ -14,7 +14,21 @@ import type {
   StorefrontChatStreamPart,
   StructuredGuidanceBlock,
 } from "./schemas";
-import { buildStorefrontChatSystemPrompt } from "./prompts";
+import {
+  buildGeneralShopReply,
+  detectMessageLocale,
+  isGeneralShopIntent,
+  toCopyLang,
+  type ChatLocale,
+} from "./chat-intent";
+import {
+  analyzeApparelSizes,
+  buildSizeConsistencyAnswer,
+  buildSizeConsistencyHighlights,
+  buildSizeConsistencySummary,
+  extractShopperMeasurements,
+  providesShopperMeasurements,
+} from "./size-consistency";
 import {
   getActiveAIBehaviorConfigWithFallback,
   getActiveRelationshipsForProduct,
@@ -617,7 +631,8 @@ function isCartContentsIntentMessage(message: string) {
 }
 
 function isSizeOrUseCaseIntentMessage(message: string) {
-  return /(size|fit|sizing|taille|pointure|oz\b|ounce|sparring|combat|entrainement|entra[iî]nement|training|pratique|adapt[eé]|convient|compatible|suitable|muay\s*thai|tha[iï]|kick\s*boxing|kickboxing|boxe|boxing|mma)/i.test(message);
+  return providesShopperMeasurements(message)
+    || /(size|fit|sizing|taille|pointure|oz\b|ounce|sparring|combat|entrainement|entra[iî]nement|training|pratique|adapt[eé]|convient|compatible|suitable)/i.test(message);
 }
 
 function isRecommendationExplanationIntentMessage(message: string) {
@@ -629,7 +644,7 @@ function isExplicitRecommendationRequest(message: string) {
 }
 
 function isExplicitSizeRequest(message: string) {
-  return /(\b(?:size|sizes|sizing|fit)\b|taille|pointure)/i.test(message);
+  return providesShopperMeasurements(message) || /(\b(?:size|sizes|sizing|fit)\b|taille|pointure)/i.test(message);
 }
 
 function isProactiveAnalysisPrompt(message: string) {
@@ -637,7 +652,20 @@ function isProactiveAnalysisPrompt(message: string) {
 }
 
 function detectMessageLanguage(message: string): "fr" | "en" {
-  return /\b(est|ce|cette|les|des|pour|dans|avec|sont|vous|moi|mon|ma|du|au|que|qui|je|il|elle|ils|nous|votre|notre|adapt[eé]s?|gants|taille|boxe|sparring|entrainement|entra[iî]nement|bonjour|merci|pourquoi|comment|aussi|quel|quelle|quels|quelles|convient|adapté)\b/i.test(message) ? "fr" : "en";
+  return toCopyLang(detectMessageLocale(message));
+}
+
+function detectConversationLocale(messages: StorefrontChatRequest["messages"], latestMessage: string): ChatLocale {
+  const latest = detectMessageLocale(latestMessage);
+  if (latest !== "en" || !providesShopperMeasurements(latestMessage)) return latest;
+
+  // a bare "2m, 90kg" reply carries no language signal, so fall back to the earlier user turns
+  const earlierUserText = messages.slice(0, -1).filter((message) => message.role === "user").map((message) => message.content).join(" ");
+  return detectMessageLocale(earlierUserText);
+}
+
+function detectConversationLanguage(messages: StorefrontChatRequest["messages"], latestMessage: string): "fr" | "en" {
+  return toCopyLang(detectConversationLocale(messages, latestMessage));
 }
 
 function formatCartItemForAnswer(item: StorefrontChatRequest["cart"]["items"][number]) {
@@ -677,14 +705,20 @@ function inferUseCaseEvidence(label: string, message: string, lang: "fr" | "en")
   return evidence;
 }
 
-function buildCartAwareQuestionAnswer(input: StorefrontChatRequest, intelligence: ChatIntelligenceSnapshot, lang: "fr" | "en" = "en") {
+function buildCartAwareQuestionAnswer(
+  input: StorefrontChatRequest,
+  intelligence: ChatIntelligenceSnapshot,
+  lang: "fr" | "en" = "en",
+  options: { sizeDetailsInBlock?: boolean } = {},
+) {
   const latestMessage = input.messages[input.messages.length - 1]?.content.toLowerCase() ?? "";
   const primaryItem = input.cart.items[0];
   const primaryLabel = primaryItem ? formatCartItemForAnswer(primaryItem) : (lang === "fr" ? "ce produit" : "this cart item");
   const discipline = detectDisciplineIntent(latestMessage, lang);
   const useCaseEvidence = inferUseCaseEvidence(primaryLabel, latestMessage, lang);
   const asksAboutSparring = /(sparring|combat)/i.test(latestMessage);
-  const asksAboutSize = /(size|fit|sizing|taille|pointure|oz\b|ounce)/i.test(latestMessage);
+  const asksAboutSize = providesShopperMeasurements(latestMessage) || /(size|fit|sizing|taille|pointure|oz\b|ounce)/i.test(latestMessage);
+  const apparelAnalysis = analyzeApparelSizes(input.cart.items, extractShopperMeasurements(input.messages));
   const safetyRecommendation = intelligence.recommendationItems.find((item) => item.safetyCritical);
   const usefulRecommendation = safetyRecommendation || intelligence.recommendationItems[0];
   const recommendationReason = usefulRecommendation?.reason
@@ -693,7 +727,9 @@ function buildCartAwareQuestionAnswer(input: StorefrontChatRequest, intelligence
         : ` Recommendation context: ${usefulRecommendation.title} because ${usefulRecommendation.reason}`)
     : "";
 
-  if (discipline) {
+  const asksAboutCompatibility = /(compatible|convient|adapt[eé]|suitable|suits?|pratique|good\s+for|ok\s+pour|bon\s+pour)/i.test(latestMessage);
+
+  if (discipline && asksAboutCompatibility) {
     const evidenceSentence = useCaseEvidence.length > 0
       ? (lang === "fr"
           ? ` Les signaux disponibles: ${useCaseEvidence.join(", ")}.`
@@ -714,14 +750,17 @@ function buildCartAwareQuestionAnswer(input: StorefrontChatRequest, intelligence
   }
 
   if (asksAboutSize) {
+    if (apparelAnalysis) {
+      return buildSizeConsistencyAnswer(apparelAnalysis, lang, { detailsInBlock: options.sizeDetailsInBlock ?? false });
+    }
     if (lang === "fr") {
       return intelligence.sizeIssueCount > 0
-        ? `**${primaryLabel}** : j'ai détecté un risque possible de taille ou de fit dans ce panier. Consultez le guide des tailles ci-dessous avant de commander.${recommendationReason}`
-        : `**${primaryLabel}** : la variante sélectionnée ne présente pas de conflit de taille évident. Confirmez quand même le guide des tailles de la marque, surtout si vous portez des protections en dessous.${recommendationReason}`;
+        ? `**${primaryLabel}** : j'ai détecté un risque possible de taille ou de fit dans ce panier. Consultez le guide des tailles ci-dessous avant de commander.`
+        : `**${primaryLabel}** : je n'ai pas assez d'informations pour valider la taille. Indiquez votre taille (cm) et votre poids (kg), et vérifiez le guide des tailles de la marque, surtout si vous portez des protections en dessous.`;
     }
     return intelligence.sizeIssueCount > 0
-      ? `${primaryLabel}: I found a possible fit or size risk in this cart. Review the size guidance below before checkout.${recommendationReason}`
-      : `${primaryLabel}: the selected variant does not show an obvious cart-level size conflict. Still confirm the brand size chart and intended use, especially if you need room for wraps or protective layers.${recommendationReason}`;
+      ? `${primaryLabel}: I found a possible fit or size risk in this cart. Review the size guidance below before checkout.`
+      : `${primaryLabel}: I do not have enough information to validate the size. Share your height (cm) and weight (kg), and confirm the brand size chart, especially if you need room for wraps or protective layers.`;
   }
 
   if (isRecommendationExplanationIntentMessage(latestMessage) && usefulRecommendation) {
@@ -1196,18 +1235,15 @@ async function buildIntelligentSnapshotWithTimeout(input: StorefrontChatRequest,
 
 export async function buildStorefrontChatReply(
   input: StorefrontChatRequest,
-  behavior?: AIBehaviorDraftPayload,
+  _behavior?: AIBehaviorDraftPayload,
 ) {
   const rawMessage = input.messages[input.messages.length - 1]?.content ?? "";
   const latestMessage = rawMessage.toLowerCase();
-  const lang = detectMessageLanguage(latestMessage);
+  const locale = detectConversationLocale(input.messages, latestMessage);
+  const lang = toCopyLang(locale);
   const proactive = isProactiveAnalysisPrompt(latestMessage);
   const kitIntent = !proactive && isKitIntentMessage(latestMessage);
 
-  const systemPrompt = buildStorefrontChatSystemPrompt({
-    ...input,
-    ...(behavior ? { behavior } : {}),
-  });
   const features = input.features ?? {
     showRecommendations: true,
     showKitCompleteness: true,
@@ -1216,11 +1252,19 @@ export async function buildStorefrontChatReply(
     showReasonTags: true,
   };
 
+  // Greetings and shop-level questions are not about a cart item: no cart-specific cards.
+  if (!proactive && isGeneralShopIntent(rawMessage)) {
+    return buildFeatureAwareReply({
+      text: buildGeneralShopReply(locale, input.cart.items.length > 0),
+      guidanceBlocks: [],
+    }, features);
+  }
+
   if (input.cart.items.length === 0) {
     return buildFeatureAwareReply({
       text: lang === "fr"
-        ? `${systemPrompt} Votre panier est vide. Ajoutez au moins un article pour que je puisse vous donner des conseils personnalisés (garder/ajouter/retirer/échanger/taille).`
-        : `${systemPrompt} Your cart is empty right now, so I can only give general guidance. Add at least one item and I can give specific keep/add/remove/swap/size advice.`,
+        ? "Votre panier est vide. Ajoutez au moins un article pour que je puisse vous donner des conseils personnalisés (garder/ajouter/retirer/échanger/taille)."
+        : "Your cart is empty right now, so I can only give general guidance. Add at least one item and I can give specific keep/add/remove/swap/size advice.",
       guidanceBlocks: [buildFallbackBlock(
         lang === "fr"
           ? "Ajoutez au moins un article au panier pour obtenir des conseils personnalisés."
@@ -1265,13 +1309,27 @@ export async function buildStorefrontChatReply(
   const kitRecommendationItems = intelligence.recommendationItems.filter((item) => hasEvidenceTag(item, "kit"));
   const hasKitRecommendations = kitRecommendationItems.length > 0;
   const fallbackOnly = isFallbackOnlyRecommendations(intelligence.recommendationItems);
-  const sizeGuidanceBlock = intelligence.sizeBlock || buildSizeBlock(lang);
+  const sizeAnalysis = analyzeApparelSizes(input.cart.items, extractShopperMeasurements(input.messages));
+  const analysisSizeBlock: StructuredGuidanceBlock | undefined = sizeAnalysis
+    ? {
+        blockId: "size-analysis-1",
+        type: "size_summary",
+        ...buildSizeConsistencySummary(sizeAnalysis, lang),
+        priority: 1,
+        confidence: sizeAnalysis.confidence,
+        highlights: buildSizeConsistencyHighlights(sizeAnalysis, lang),
+      }
+    : undefined;
+  const realSizeBlock = analysisSizeBlock || intelligence.sizeBlock;
+  const sizeGuidanceBlock = realSizeBlock || buildSizeBlock(lang);
   const sizeRequested = isExplicitSizeRequest(latestMessage);
-  const optionalSizeBlocks = sizeRequested && intelligence.sizeBlock ? [intelligence.sizeBlock] : [];
+  const optionalSizeBlocks = sizeRequested && realSizeBlock ? [realSizeBlock] : [];
 
   if (!proactive && (isSizeOrUseCaseIntentMessage(latestMessage) || isRecommendationExplanationIntentMessage(latestMessage))) {
     return buildFeatureAwareReply({
-      text: buildCartAwareQuestionAnswer(input, intelligence, lang),
+      text: buildCartAwareQuestionAnswer(input, intelligence, lang, {
+        sizeDetailsInBlock: sizeRequested && features.showSizeWarnings !== false,
+      }),
       guidanceBlocks: [
         ...(sizeRequested ? [sizeGuidanceBlock] : []),
         ...(isExplicitRecommendationRequest(latestMessage) ? [recommendationBlock] : []),
@@ -1879,7 +1937,7 @@ function extractCompatibleTargetTokens(text: string) {
     .filter((token) => token.length >= 3 && !genericWords.has(token));
 }
 
-function buildCompatibleAddToCartAction(input: StorefrontChatRequest, productTitle: string, variantId: string, variantTitle?: string, imageUrl?: string, productHandle?: string): CartToolAction {
+export function buildCompatibleAddToCartAction(input: StorefrontChatRequest, productTitle: string, variantId: string, variantTitle?: string, imageUrl?: string, productHandle?: string): CartToolAction {
   const actionId = crypto.randomUUID();
   const token = issueActionConfirmationToken({
     actionId,

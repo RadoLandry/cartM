@@ -22,6 +22,13 @@ vi.mock("../../../app/lib/db/queries", () => ({
   getLatestSyncJob: vi.fn(),
   getActiveSyncJob: vi.fn(),
   getProductsNotYetSynced: vi.fn(),
+  getRecentSyncJobs: vi.fn().mockResolvedValue([]),
+  getCatalogIntelligenceStats: vi.fn().mockResolvedValue({
+    classified: 0,
+    lowConfidence: 0,
+    withEmbedding: 0,
+    relationships: 0,
+  }),
 }));
 
 vi.mock("../../../app/lib/knowledge-graph/ingestion", () => ({
@@ -63,6 +70,8 @@ describe("app._index catalog sync route", () => {
       shop: "test.myshopify.com",
       productCount: 12,
       variantCount: 18,
+      intelligence: { classified: 0, lowConfidence: 0, withEmbedding: 0, relationships: 0 },
+      recentJobs: [],
       latestJob: {
         id: "job_1",
         status: "FAILED",

@@ -367,6 +367,27 @@ export async function getLatestSyncJob(shop: string) {
   return job;
 }
 
+export async function getRecentSyncJobs(shop: string, limit = 8) {
+  return await db.syncJob.findMany({
+    where: { shop },
+    orderBy: { startedAt: "desc" },
+    take: limit,
+  });
+}
+
+export async function getCatalogIntelligenceStats(shop: string) {
+  const [classified, lowConfidence, withEmbedding, relationships] = await Promise.all([
+    db.product.count({ where: { shop, NOT: { disciplineTags: { isEmpty: true } } } }),
+    db.product.count({ where: { shop, isManuallyClassified: false, classificationConfidence: { lt: 0.6 } } }),
+    db.$queryRaw<{ count: bigint }[]>`SELECT COUNT(*) AS count FROM "Product" WHERE "shop" = ${shop} AND "embedding" IS NOT NULL`
+      .then((rows) => Number(rows[0]?.count ?? 0))
+      .catch(() => 0),
+    db.productRelationship.count({ where: { shop, invalidatedAt: null } }),
+  ]);
+
+  return { classified, lowConfidence, withEmbedding, relationships };
+}
+
 export async function countProductsForShop(shop: string) {
   return await db.product.count({
     where: { shop },
@@ -544,6 +565,64 @@ export interface SimilarProduct {
   shopifyVariantId: string | null;
   variantTitle: string | null;
   variantImageUrl: string | null;
+  price?: number | null;
+}
+
+// Returns one in-stock product per product type/category so a general "what do you sell?"
+// answer can describe the whole shop instead of the nearest vector neighbours.
+export async function listCatalogOverviewProducts(
+  shop: string,
+  options: { maxGroups?: number } = {},
+): Promise<SimilarProduct[]> {
+  const maxGroups = options.maxGroups ?? 6;
+  const rows = await db.product.findMany({
+    where: {
+      shop,
+      status: "ACTIVE",
+      variants: { some: { inventoryQuantity: { gt: 0 } } },
+    },
+    orderBy: { updatedAt: "desc" },
+    take: 200,
+    select: {
+      shopifyProductId: true,
+      title: true,
+      description: true,
+      handle: true,
+      disciplineTags: true,
+      categoryTags: true,
+      productType: true,
+      variants: {
+        where: { inventoryQuantity: { gt: 0 } },
+        orderBy: { inventoryQuantity: "desc" },
+        take: 1,
+        select: { shopifyVariantId: true, title: true, imageUrl: true, price: true },
+      },
+    },
+  });
+
+  const byGroup = new Map<string, SimilarProduct>();
+  for (const row of rows) {
+    const variant = row.variants[0];
+    if (!variant) continue;
+    const group = (row.productType?.trim() || row.categoryTags[0] || "other").toLowerCase();
+    if (byGroup.has(group)) continue;
+    byGroup.set(group, {
+      shopifyProductId: row.shopifyProductId,
+      title: row.title,
+      description: row.description,
+      handle: row.handle,
+      disciplineTags: row.disciplineTags,
+      categoryTags: row.categoryTags,
+      productType: row.productType,
+      shopifyVariantId: variant.shopifyVariantId,
+      variantTitle: variant.title,
+      variantImageUrl: variant.imageUrl,
+      price: variant.price === null || variant.price === undefined ? null : Number(variant.price),
+    });
+    if (byGroup.size >= maxGroups) break;
+  }
+
+  return Array.from(byGroup.values());
 }
 
 // Returns the top-k products nearest to the query vector using cosine distance (<=>).
@@ -588,7 +667,14 @@ export async function findSimilarProducts(
         WHERE v."productId" = p.id AND COALESCE(v."inventoryQuantity", 0) > 0
         ORDER BY v."inventoryQuantity" DESC NULLS LAST
         LIMIT 1
-      ) AS "variantImageUrl"
+      ) AS "variantImageUrl",
+      (
+        SELECT v.price::float8
+        FROM "ProductVariant" v
+        WHERE v."productId" = p.id AND COALESCE(v."inventoryQuantity", 0) > 0
+        ORDER BY v."inventoryQuantity" DESC NULLS LAST
+        LIMIT 1
+      ) AS "price"
     FROM "Product" p
     WHERE p.shop = ${shop}
       AND p.embedding IS NOT NULL

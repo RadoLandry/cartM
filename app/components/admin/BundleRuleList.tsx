@@ -1,5 +1,6 @@
-import { BlockStack, Button, Card, EmptyState, InlineStack, List, Text } from "@shopify/polaris";
-import { Form } from "react-router";
+import { useState } from "react";
+import { Badge, BlockStack, Button, Card, Checkbox, EmptyState, InlineStack, List, Text, TextField } from "@shopify/polaris";
+import { Form, useNavigate } from "react-router";
 
 type BundleRuleListItem = {
   id: string;
@@ -21,7 +22,7 @@ type BundleRuleListProps = {
   search?: string;
 };
 
-function statusTone(status: string): "success" | "critical" | "subdued" {
+function statusTone(status: string): "success" | "critical" | "info" {
   if (status === "ACTIVE") {
     return "success";
   }
@@ -30,7 +31,7 @@ function statusTone(status: string): "success" | "critical" | "subdued" {
     return "critical";
   }
 
-  return "subdued";
+  return "info";
 }
 
 export function BundleRuleList({
@@ -40,19 +41,35 @@ export function BundleRuleList({
   includeArchived = false,
   search = "",
 }: BundleRuleListProps) {
+  const [query, setQuery] = useState(search);
+  const [showArchived, setShowArchived] = useState(includeArchived);
+  const navigate = useNavigate();
+
   return (
-    <BlockStack gap="300">
+    <BlockStack gap="400">
       <Form method="get">
-        <InlineStack gap="300" align="start" blockAlign="center">
-          <label>
-            Search rules
-            <input type="search" name="q" defaultValue={search} autoComplete="off" />
-          </label>
-          <label>
-            <input type="checkbox" name="includeArchived" value="true" defaultChecked={includeArchived} />
-            {" "}Show archived
-          </label>
-          <Button submit size="micro">Apply filters</Button>
+        <InlineStack gap="300" align="start" blockAlign="end">
+          <div style={{ minWidth: "16rem", flex: "1 1 16rem" }}>
+            <TextField
+              label="Search rules"
+              type="search"
+              name="q"
+              value={query}
+              onChange={setQuery}
+              autoComplete="off"
+              placeholder="Key or label"
+              clearButton
+              onClearButtonClick={() => setQuery("")}
+            />
+          </div>
+          <Checkbox
+            label="Show archived"
+            name="includeArchived"
+            value="true"
+            checked={showArchived}
+            onChange={setShowArchived}
+          />
+          <Button submit>Apply filters</Button>
         </InlineStack>
       </Form>
 
@@ -66,7 +83,7 @@ export function BundleRuleList({
       ) : (
         bundleRules.map((rule) => (
         <Card key={rule.id}>
-          <div style={{ display: "grid", gap: "0.75rem" }}>
+          <BlockStack gap="300">
             <InlineStack align="space-between">
               <div>
                 <Text as="h3" variant="headingSm">
@@ -77,16 +94,14 @@ export function BundleRuleList({
                 </Text>
               </div>
               <InlineStack gap="300" align="end" blockAlign="center">
-                <Text as="span" variant="bodySm" tone={statusTone(rule.status)}>
-                  {rule.status}
-                </Text>
+                <Badge tone={statusTone(rule.status)}>{rule.status}</Badge>
                 <Text as="span" variant="bodySm" tone="subdued">
                   Priority {rule.priority}
                 </Text>
                 <Button
                   size="micro"
                   variant={selectedRuleId === rule.id ? "primary" : "secondary"}
-                  url={`/app/bundles?ruleId=${encodeURIComponent(rule.id)}`}
+                  onClick={() => navigate(`/app/bundles?ruleId=${encodeURIComponent(rule.id)}`)}
                 >
                   {selectedRuleId === rule.id ? "Editing" : "Edit"}
                 </Button>
@@ -146,7 +161,7 @@ export function BundleRuleList({
                 <Button submit size="micro">Duplicate</Button>
               </Form>
             </InlineStack>
-          </div>
+          </BlockStack>
         </Card>
         ))
       )}

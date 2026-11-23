@@ -146,6 +146,46 @@ describe("storefront chat stream route", () => {
     expect(body).not.toContain('"type":"size_summary"');
   });
 
+  it("flags inconsistent apparel sizes and uses the shopper height on follow-up", async () => {
+    process.env.STOREFRONT_CHAT_SIGNING_SECRET = "test-signing-secret";
+    const cart = {
+      cartId: "gid://shopify/Cart/123",
+      currencyCode: "EUR",
+      items: [
+        { productId: "gid://shopify/Product/71", productTitle: "T-shirt Dry-Tech pour Hommes Venum Tempest - Noir/Gris", variantId: "gid://shopify/ProductVariant/711", variantTitle: "L", quantity: 3 },
+        { productId: "gid://shopify/Product/72", productTitle: "Short D'entraînement pour Hommes Venum Tempest - Beige/Sable", variantId: "gid://shopify/ProductVariant/721", variantTitle: "XS", quantity: 5 },
+      ],
+    };
+    const send = async (messages: Array<{ role: "user" | "assistant"; content: string }>) => {
+      const response = await action({
+        request: new Request("http://localhost/api/ai/chat", {
+          method: "POST",
+          headers: { "content-type": "application/json", origin: "https://test.myshopify.com" },
+          body: JSON.stringify(makeStorefrontChatRequest({ cart, messages })),
+        }),
+        params: {},
+        context: {},
+      } as never);
+      return await readResponseText(response);
+    };
+
+    const first = await send([{ role: "user", content: "Vérifie la cohérence de mes tailles" }]);
+    expect(first).toContain("3 tailles d'écart");
+
+    const followUp = await send([
+      { role: "user", content: "Vérifie la cohérence de mes tailles" },
+      { role: "assistant", content: "Pouvez-vous me donner votre taille ?" },
+      { role: "user", content: "ma taille est 2m" },
+    ]);
+    expect(followUp).toContain("200 cm");
+    expect(followUp).toContain("trop petit");
+    expect(followUp).toContain("Short D");
+    expect(followUp).not.toContain("conflit de taille évident");
+    expect(followUp).not.toContain("Contexte");
+    expect(followUp).toContain("Pour corriger, dites par exemple");
+    expect(followUp).not.toContain("Je peux vous proposer");
+  });
+
   it("honors storefront feature flags when streaming guidance blocks", async () => {
     process.env.STOREFRONT_CHAT_SIGNING_SECRET = "test-signing-secret";
     const input = makeStorefrontChatRequest({

@@ -40,8 +40,8 @@ import {
   type SizeBreakpointRow,
   type RelationshipAdminRow,
 } from "../lib/db/queries";
-import { CONFIDENCE_THRESHOLD } from "../lib/knowledge-graph/llm-classifier";
-import { DISCIPLINES, CATEGORIES } from "../lib/knowledge-graph/taxonomy";
+import { CONFIDENCE_THRESHOLD } from "../lib/knowledge-graph/taxonomy.constants";
+import { DISCIPLINES, CATEGORIES } from "../lib/knowledge-graph/taxonomy.constants";
 import {
   normalizeColorToken,
   resolveEffectiveVisualProfile,
@@ -85,13 +85,15 @@ import {
 import { useState, useCallback } from "react";
 import { KnowledgeGraphEditorShell } from "../components/admin/KnowledgeGraphEditorShell";
 import {
-  createKnowledgeGraphEditorSnapshot,
-  createKnowledgeGraphRouteScaffold,
-  KNOWLEDGE_GRAPH_EDITOR_ROUTE_INTENTS,
   markProductAsReviewed,
   reflagProductForReview,
   getKnowledgeGraphChangeHistory,
 } from "../lib/knowledge-graph/editor";
+import {
+  createKnowledgeGraphEditorSnapshot,
+  createKnowledgeGraphRouteScaffold,
+  KNOWLEDGE_GRAPH_EDITOR_ROUTE_INTENTS,
+} from "../lib/knowledge-graph/editor.shared";
 import {
   UpsertSizeMappingRuleSchema,
   DeactivateSizeMappingRuleSchema,

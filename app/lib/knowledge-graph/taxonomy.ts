@@ -5,23 +5,11 @@
  * LLM outputs are validated and normalized against these arrays before persisting.
  */
 
-export const DISCIPLINES = [
-  "Boxing",
-  "Muay Thai",
-  "BJJ",
-  "MMA",
-  "Fitness",
-] as const;
+import { DISCIPLINES, CATEGORIES } from "./taxonomy.constants";
+import type { Discipline, Category } from "./taxonomy.constants";
 
-export const CATEGORIES = [
-  "Protection",
-  "Apparel",
-  "Accessories",
-  "Equipment",
-] as const;
-
-export type Discipline = (typeof DISCIPLINES)[number];
-export type Category = (typeof CATEGORIES)[number];
+export { DISCIPLINES, CATEGORIES };
+export type { Discipline, Category };
 
 import {
   applyMerchantTaxonomyOverride,

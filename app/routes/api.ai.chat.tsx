@@ -8,6 +8,7 @@ import {
   buildStorefrontChatReply,
   createBudgetOptimizationContext,
   rememberCatalogActionCandidates,
+  buildCompatibleAddToCartAction,
   resolveStorefrontChatBehavior,
   resolveCompatibleAddActionProposals,
   createProductComparisonContext,
@@ -20,6 +21,16 @@ import {
   setProductComparisonContextResult,
 } from "../lib/ai/storefront-chat";
 import { buildStorefrontChatSystemPrompt } from "../lib/ai/prompts";
+import {
+  CHAT_INTL_LOCALES,
+  CHAT_LOCALE_NAMES,
+  detectLocaleSignal,
+  detectMessageLocale,
+  isGeneralShopIntent,
+  isRuleEngineIntent,
+  isShopOverviewIntent,
+} from "../lib/ai/chat-intent";
+import { providesShopperMeasurements } from "../lib/ai/size-consistency";
 import { getPrimaryModel, isAIAvailable } from "../lib/ai/providers";
 import {
   buildBudgetOptimizationSelectionActionProposal,
@@ -39,7 +50,7 @@ import {
   assertAllowedStorefrontOrigin,
   verifyStorefrontChatToken,
 } from "../lib/shopify/app-proxy";
-import { findSimilarProducts, getCustomerProfile } from "../lib/db/queries";
+import { findSimilarProducts, getCustomerProfile, listCatalogOverviewProducts } from "../lib/db/queries";
 import { resolveCustomerProfile, buildProfileKey } from "../lib/cart-intelligence/customer-profile";
 import { generateEmbedding } from "../lib/knowledge-graph/embeddings";
 
@@ -116,11 +127,16 @@ function buildCartClarificationText(clarification: CartToolClarification, latest
   }
 }
 
-function formatCatalogContextProduct(product: Awaited<ReturnType<typeof findSimilarProducts>>[number]) {
+type CatalogProduct = Awaited<ReturnType<typeof findSimilarProducts>>[number];
+
+function formatCatalogContextProduct(product: CatalogProduct, currencyCode: string, formatLocale: string) {
   const parts: string[] = [product.title, `ProductRef: ${product.shopifyProductId}`];
   if (product.productType) parts.push(`Type: ${product.productType}`);
   if (product.disciplineTags.length > 0) parts.push(`Discipline: ${product.disciplineTags.join(", ")}`);
   if (product.categoryTags.length > 0) parts.push(`Category: ${product.categoryTags.join(", ")}`);
+  if (product.price && product.price > 0) {
+    parts.push(`Price: ${new Intl.NumberFormat(formatLocale, { style: "currency", currency: currencyCode }).format(product.price)}`);
+  }
   if (product.shopifyVariantId) parts.push(`VariantRef: ${product.shopifyVariantId}`);
   if (product.description) parts.push(product.description.slice(0, 200));
   return parts.join(" | ");
@@ -183,10 +199,19 @@ async function retrieveCatalogContextForChat(input: StorefrontChatRequest) {
   const cartProductIds = input.cart.items.map((item) => item.productId);
 
   try {
-    const queryEmbedding = await generateEmbedding(`${latestMessage}\nCart: ${cartContextText}`);
-    const similarProducts = (await findSimilarProducts(input.shop, queryEmbedding, 8, cartProductIds))
+    let candidates: CatalogProduct[];
+    if (isShopOverviewIntent(latestMessage)) {
+      candidates = await listCatalogOverviewProducts(input.shop);
+    } else {
+      const searchText = isGeneralShopIntent(latestMessage)
+        ? latestMessage
+        : `${latestMessage}\nCart: ${cartContextText}`;
+      const queryEmbedding = await generateEmbedding(searchText);
+      candidates = await findSimilarProducts(input.shop, queryEmbedding, 8, cartProductIds);
+    }
+    const similarProducts = candidates
       .filter((product) => !isLikelyAlreadyInCart(product, input.cart.items))
-      .slice(0, 5);
+      .slice(0, 6);
     rememberCatalogActionCandidates({
       shop: input.shop,
       sessionKey: input.sessionKey,
@@ -201,8 +226,12 @@ async function retrieveCatalogContextForChat(input: StorefrontChatRequest) {
           ...(product.handle ? { productHandle: product.handle } : {}),
         })),
     });
+    const formatLocale = CHAT_INTL_LOCALES[detectMessageLocale(latestMessage)];
     return similarProducts.length > 0
-      ? similarProducts.map(formatCatalogContextProduct)
+      ? {
+          lines: similarProducts.map((product) => formatCatalogContextProduct(product, input.cart.currencyCode, formatLocale)),
+          products: similarProducts,
+        }
       : undefined;
   } catch {
     return undefined;
@@ -559,11 +588,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         ? buildCartClarificationText(cartClarification, latestMessage)
         : guidanceReply.text;
   const guidanceBlocks = (isBudgetRequest || isConfirmationReply || hasCompatibleActionProposals || hasDirectCartMutationProposal || cartClarification) ? [] : guidanceReply.guidanceBlocks;
-  const shouldBypassLLM = /\b(budget|optimi[sz]|compare|add|remove|swap|quantit|quantity|size|fit|sparring|combat|taille|pratique|adapt[eé]|muay\s*thai|tha[iï]|kick\s*boxing|kickboxing|boxe|boxing|mma|recommend|recommand|suggest|sugg[eè]re|conseil|propose|s['’]?accorde|accorde|va\s+bien|works?\s+well|goes?\s+well)\b/.test(latestMessage);
+  const shouldBypassLLM = providesShopperMeasurements(latestMessage) || isRuleEngineIntent(latestMessage);
   const shouldUseLLM = aiEnabled && !isBudgetRequest && !isConfirmationReply && !hasCompatibleActionProposals && !hasDirectCartMutationProposal && !cartClarification && !shouldBypassLLM;
-  const catalogContext = shouldUseLLM
+  // Rule-based cart cards would contradict a free-form LLM answer to a general question.
+  const visibleGuidanceBlocks = shouldUseLLM && !/^analyse\s+proactive/i.test(latestRawMessage.trim()) ? [] : guidanceBlocks;
+  const replyLocaleSignal = detectLocaleSignal(latestRawMessage);
+  const catalogRetrieval = shouldUseLLM
     ? await retrieveCatalogContextForChat(parsed.data)
     : undefined;
+  const catalogContext = catalogRetrieval?.lines;
+  const shouldProposeCatalogCards = shouldUseLLM && isGeneralShopIntent(latestRawMessage);
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream<Uint8Array>({
@@ -571,6 +605,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const emit = (payload: unknown) => {
         controller.enqueue(encoder.encode(encodeSseEvent(payload)));
       };
+      let streamedText = "";
 
       // 1. Texte — LLM réel ou fallback rule-based
       if (shouldUseLLM) {
@@ -582,6 +617,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               cart: parsed.data.cart,
               behavior: behaviorResolution.config,
               profile: resolvedProfile,
+              ...(replyLocaleSignal ? { locale: CHAT_LOCALE_NAMES[replyLocaleSignal] } : {}),
               ...(catalogContext ? { catalogContext } : {}),
             }),
             messages: parsed.data.messages
@@ -591,6 +627,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             temperature: 0.4,
           });
           for await (const chunk of result.textStream) {
+            streamedText += chunk;
             emit({ type: "text-delta", text: chunk });
           }
         } catch {
@@ -600,8 +637,26 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         emit({ type: "text-delta", text: replyText });
       }
 
+      // Cards only for the catalog products the LLM actually named in its answer.
+      const catalogCardEvents = shouldProposeCatalogCards
+        ? (catalogRetrieval?.products ?? [])
+          .filter((product) => product.shopifyVariantId && streamedText.toLowerCase().includes(product.title.toLowerCase()))
+          .slice(0, 4)
+          .map((product) => ({
+            type: "tool-action-proposed" as const,
+            action: buildCompatibleAddToCartAction(
+              parsed.data,
+              product.title,
+              product.shopifyVariantId!,
+              product.variantTitle ?? undefined,
+              product.variantImageUrl ?? undefined,
+              product.handle,
+            ),
+          }))
+        : [];
+
       // 2. Guidance blocks structurés (cart-aware, rule-based)
-      for (const block of guidanceBlocks) {
+      for (const block of visibleGuidanceBlocks) {
         emit({ type: "guidance-block", block });
       }
 
@@ -610,8 +665,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       for (const part of budgetParts) { emit(part); }
 
       // 4. Propositions d'action panier
-      for (const event of toolActionEvents) { emit(event); }
-      for (const statusEvent of toolActionStatusEvents) { emit(statusEvent); }
+      for (const event of [...toolActionEvents, ...catalogCardEvents]) { emit(event); }
+      for (const statusEvent of [
+        ...toolActionStatusEvents,
+        ...catalogCardEvents.map((event) => ({
+          type: "tool-action-status" as const,
+          actionId: event.action.actionId,
+          status: "proposed" as const,
+          summary: "Awaiting shopper confirmation.",
+        })),
+      ]) { emit(statusEvent); }
 
       // 5. Fin de stream
       emit({ type: "message-complete", messageId });
