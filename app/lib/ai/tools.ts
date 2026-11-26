@@ -279,7 +279,7 @@ function resolveExplicitQuantityTargets(input: StorefrontChatRequest, normalized
 // Regex that captures a reference-relation phrase immediately before a cart-item name
 // e.g. "compatible with", "for", "pour", "avec", "qui va avec", "à ce", "that goes with"
 const REFERENCE_RELATION_PATTERN =
-  /\b(?:compatible\s+(?:with|avec|a|au)?|(?:for|pour|for\s+this|pour\s+ce[tte]?|for\s+my|pour\s+mon(?:ma)?)|(?:with|avec)|(?:that\s+goes?\s+with|qui\s+va\s+avec)|(?:to\s+use\s+with|a\s+utiliser\s+avec))\s+/i;
+  /\b(?:compatibles?\s+(?:with|avec|a|au)?|(?:for|pour|for\s+this|pour\s+ce[tte]?|for\s+my|pour\s+mon(?:ma)?)|(?:with|avec)|(?:that\s+goes?\s+with|qui\s+va\s+avec)|(?:to\s+use\s+with|a\s+utiliser\s+avec))(?:\s+|(?=[\s?!.,;]*$))/i;
 
 function resolveAddMerchandiseId(input: StorefrontChatRequest, normalizedMessage: string) {
   const gidMatch = normalizedMessage.match(/gid:\/\/shopify\/productvariant\/\d+/i);

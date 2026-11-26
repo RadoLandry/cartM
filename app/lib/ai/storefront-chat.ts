@@ -36,6 +36,7 @@ import {
   listActiveKitDefinitions,
   listActiveReplenishmentLifecycleRules,
   listCustomerPurchaseSnapshots,
+  type SimilarProduct,
 } from "../db/queries";
 import db from "../../db.server";
 import { AI_BEHAVIOR_DEFAULTS, resolveBehaviorPolicyConflict, type AIBehaviorDraftPayload } from "./behavior-config";
@@ -158,6 +159,11 @@ export function rememberCatalogActionCandidates(input: {
   }
 
   catalogActionCandidateStore.set(key, Array.from(byProductId.values()).slice(-20));
+}
+
+export function listRememberedCatalogTitles(shop: string, sessionKey: string) {
+  return (catalogActionCandidateStore.get(catalogActionCandidateStoreKey(shop, sessionKey)) ?? [])
+    .map((candidate) => candidate.title);
 }
 
 export interface ProductComparisonContextRecord {
@@ -1432,7 +1438,7 @@ export async function buildStorefrontChatReply(
 // Detects add-intent messages that reference a cart item as context
 // (mirrors the REFERENCE_RELATION_PATTERN guard in tools.ts — keep in sync).
 const COMPATIBLE_RELATION_PHRASE_RE =
-  /\b(?:compatible\s+(?:with|avec|a|au)?|(?:for|pour|for\s+this|pour\s+ce[tte]?|for\s+my|pour\s+mon(?:ma)?)|(?:with|avec)|(?:that\s+goes?\s+with|qui\s+va\s+avec)|(?:qui\s+correspond\s+(?:a|au|avec)|correspond\s+(?:a|au|avec))|(?:to\s+use\s+with|a\s+utiliser\s+avec))\s+/i;
+  /\b(?:compatibles?\s+(?:with|avec|a|au)?|(?:for|pour|for\s+this|pour\s+ce[tte]?|for\s+my|pour\s+mon(?:ma)?)|(?:with|avec)|(?:that\s+goes?\s+with|qui\s+va\s+avec)|(?:qui\s+correspond\s+(?:a|au|avec)|correspond\s+(?:a|au|avec))|(?:to\s+use\s+with|a\s+utiliser\s+avec))(?:\s+|(?=[\s?!.,;]*$))/i;
 
 function normalizeForCompatSearch(text: string) {
   return text
@@ -1758,8 +1764,22 @@ async function buildDatabaseComplementRecommendations(
     ));
 }
 
+// Interrogative phrasing ("Quels accessoires sont compatibles avec cet article ?") has no
+// action verb but still asks for knowledge-graph complements of a cart item.
+const COMPATIBLE_QUESTION_RE = new RegExp([
+  "\\b(?:quels?|quelles?|which|what)\\b[^?]*\\b(?:accessoires?|accessor(?:y|ies)|articles?|produits?|products?|items?|gear|equipements?|complements?)\\b",
+  // "Qu'est-ce qui va avec eux ?" / "Qu'est-ce qui s'accorde avec ça ?"
+  "\\bqu\\W*est\\W*ce\\s+qui\\s+(?:va|vont|irait|ira|correspond|convient|s\\W*accorde)\\b",
+].join("|"));
+
+export function isCompatibleDiscoveryQuestion(message: string) {
+  const normalized = normalizeForCompatSearch(message);
+  return COMPATIBLE_QUESTION_RE.test(normalized) && COMPATIBLE_RELATION_PHRASE_RE.test(normalized);
+}
+
 function isCompatibleDiscoveryIntent(message: string) {
-  return /\b(add|ajoute|donne|insert|include|find|cherche|trouve|recommend|recommande|suggest|suggere|propose|show|affiche|montre|help|accorde|accordent|associe|associer|complete|completer|works|goes|pair)\b/.test(message);
+  return /\b(add|ajoute|donne|insert|include|find|cherche|trouve|recommend|recommande|suggest|suggere|propose|show|affiche|montre|help|accorde|accordent|associe|associer|complete|completer|works|goes|pair)\b/.test(message)
+    || COMPATIBLE_QUESTION_RE.test(message);
 }
 
 function isDisplayRequestedProductIntent(message: string) {
@@ -1909,8 +1929,25 @@ function extractCompatibleTargetTokens(text: string) {
     "item",
     "items",
     "accessory",
+    "accessories",
     "accessoire",
+    "accessoires",
     "compatible",
+    "compatibles",
+    "quel",
+    "quels",
+    "quelle",
+    "quelles",
+    "sont",
+    "which",
+    "what",
+    "are",
+    "can",
+    "peut",
+    "peuvent",
+    "gear",
+    "equipement",
+    "equipements",
     "correspond",
     "correspondre",
     "accorde",
@@ -2202,6 +2239,79 @@ export async function resolveCompatibleAddActionProposals(
   }
 
   return explicitActions;
+}
+
+// Knowledge-graph COMPLEMENTS of the cart items (strongest first, in stock, not already in
+// the cart), used to ground free-form LLM answers about compatible accessories.
+export async function listCartComplementProducts(
+  input: StorefrontChatRequest,
+  limit = 6,
+): Promise<SimilarProduct[]> {
+  const lines = (await resolveCartLines(input).catch(() => [] as ResolvedCartLine[]))
+    .filter((line): line is ResolvedCartLine & { productRow: NonNullable<ResolvedCartLine["productRow"]> } => Boolean(line.productRow));
+  if (lines.length === 0) return [];
+
+  const cartProductIds = new Set(lines.map((line) => line.productRow.id));
+  const relationshipSets = await Promise.all(
+    lines.map((line) => getActiveRelationshipsForProduct(input.shop, line.productRow.id).catch(() => [])),
+  );
+
+  const strengthById = new Map<string, number>();
+  relationshipSets.forEach((rows, index) => {
+    const sourceId = lines[index]!.productRow.id;
+    for (const row of rows) {
+      if (row.relationshipType !== "COMPLEMENTS") continue;
+      const complementId = row.sourceProductId === sourceId ? row.targetProductId : row.sourceProductId;
+      if (cartProductIds.has(complementId)) continue;
+      strengthById.set(complementId, Math.max(strengthById.get(complementId) ?? 0, row.strength ?? 0));
+    }
+  });
+  if (strengthById.size === 0) return [];
+
+  const rows = await db.product.findMany({
+    where: {
+      shop: input.shop,
+      id: { in: Array.from(strengthById.keys()) },
+      status: "ACTIVE",
+      variants: { some: { inventoryQuantity: { gt: 0 } } },
+    },
+    select: {
+      id: true,
+      shopifyProductId: true,
+      title: true,
+      description: true,
+      handle: true,
+      disciplineTags: true,
+      categoryTags: true,
+      productType: true,
+      variants: {
+        where: { inventoryQuantity: { gt: 0 } },
+        orderBy: { inventoryQuantity: "desc" },
+        take: 1,
+        select: { shopifyVariantId: true, title: true, imageUrl: true, price: true },
+      },
+    },
+  }).catch(() => []);
+
+  return rows
+    .sort((a, b) => (strengthById.get(b.id) ?? 0) - (strengthById.get(a.id) ?? 0))
+    .slice(0, limit)
+    .map((row) => {
+      const variant = row.variants[0];
+      return {
+        shopifyProductId: row.shopifyProductId,
+        title: row.title,
+        description: row.description,
+        handle: row.handle,
+        disciplineTags: row.disciplineTags,
+        categoryTags: row.categoryTags,
+        productType: row.productType,
+        shopifyVariantId: variant?.shopifyVariantId ?? null,
+        variantTitle: variant?.title ?? null,
+        variantImageUrl: variant?.imageUrl ?? null,
+        price: variant?.price === null || variant?.price === undefined ? null : Number(variant.price),
+      };
+    });
 }
 
 export async function resolveCompatibleAddActionProposal(

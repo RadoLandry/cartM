@@ -11,6 +11,9 @@ import {
   buildCompatibleAddToCartAction,
   resolveStorefrontChatBehavior,
   resolveCompatibleAddActionProposals,
+  isCompatibleDiscoveryQuestion,
+  listCartComplementProducts,
+  listRememberedCatalogTitles,
   createProductComparisonContext,
   normalizeBudgetOptimizationResult,
   resolveBudgetOptimizationStreamOutcome,
@@ -21,6 +24,7 @@ import {
   setProductComparisonContextResult,
 } from "../lib/ai/storefront-chat";
 import { buildStorefrontChatSystemPrompt } from "../lib/ai/prompts";
+import { buildUngroundedProductFallback, findUngroundedProductMentions } from "../lib/ai/product-grounding";
 import {
   CHAT_INTL_LOCALES,
   CHAT_LOCALE_NAMES,
@@ -207,7 +211,16 @@ async function retrieveCatalogContextForChat(input: StorefrontChatRequest) {
         ? latestMessage
         : `${latestMessage}\nCart: ${cartContextText}`;
       const queryEmbedding = await generateEmbedding(searchText);
-      candidates = await findSimilarProducts(input.shop, queryEmbedding, 8, cartProductIds);
+      const vectorCandidates = await findSimilarProducts(input.shop, queryEmbedding, 8, cartProductIds);
+      const complements = isCompatibleDiscoveryQuestion(latestMessage)
+        ? await listCartComplementProducts(input)
+        : [];
+      const seenProductIds = new Set<string>();
+      candidates = [...complements, ...vectorCandidates].filter((product) => {
+        if (seenProductIds.has(product.shopifyProductId)) return false;
+        seenProductIds.add(product.shopifyProductId);
+        return true;
+      });
     }
     const similarProducts = candidates
       .filter((product) => !isLikelyAlreadyInCart(product, input.cart.items))
@@ -597,7 +610,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     ? await retrieveCatalogContextForChat(parsed.data)
     : undefined;
   const catalogContext = catalogRetrieval?.lines;
-  const shouldProposeCatalogCards = shouldUseLLM && isGeneralShopIntent(latestRawMessage);
+  const shouldProposeCatalogCards = shouldUseLLM
+    && (isGeneralShopIntent(latestRawMessage) || isCompatibleDiscoveryQuestion(latestRawMessage));
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream<Uint8Array>({
@@ -607,7 +621,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       };
       let streamedText = "";
 
-      // 1. Texte — LLM réel ou fallback rule-based
+      // 1. Texte — LLM réel ou fallback rule-based. The LLM text is buffered so that
+      // product names absent from the catalog never reach the shopper.
       if (shouldUseLLM) {
         try {
           const result = streamText({
@@ -626,16 +641,33 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             maxOutputTokens: 600,
             temperature: 0.4,
           });
+          let llmText = "";
           for await (const chunk of result.textStream) {
-            streamedText += chunk;
-            emit({ type: "text-delta", text: chunk });
+            llmText += chunk;
           }
+
+          const catalogProducts = catalogRetrieval?.products ?? [];
+          const knownTitles = [
+            ...catalogProducts.map((product) => product.title),
+            ...parsed.data.cart.items.map((item) => item.productTitle ?? ""),
+            ...listRememberedCatalogTitles(parsed.data.shop, parsed.data.sessionKey),
+          ].filter(Boolean);
+          streamedText = findUngroundedProductMentions(llmText, knownTitles).length > 0
+            ? buildUngroundedProductFallback({
+                lang: detectMessageLocale(latestRawMessage) === "fr" ? "fr" : "en",
+                products: catalogProducts.slice(0, 4),
+                currencyCode: parsed.data.cart.currencyCode,
+              })
+            : llmText;
+          emit({ type: "text-delta", text: streamedText });
         } catch {
+          streamedText = replyText;
           emit({ type: "text-delta", text: replyText });
         }
       } else {
         emit({ type: "text-delta", text: replyText });
       }
+
 
       // Cards only for the catalog products the LLM actually named in its answer.
       const catalogCardEvents = shouldProposeCatalogCards

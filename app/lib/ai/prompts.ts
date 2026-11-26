@@ -76,6 +76,7 @@ export function buildStorefrontChatSystemPrompt(input: Pick<StorefrontChatReques
     "Prioritize safety and compatibility guidance before optional upsell suggestions.",
     "For budget requests, keep safety-critical items protected and explain unavoidable trade-offs.",
     "Do not invent unavailable products or pricing.",
+    "Only name specific products (exact titles) that appear in the provided catalog products or the current cart. Never cite product names, models or prices from your own knowledge of brands. If the catalog products do not contain a suitable compatible accessory, say honestly that you found none in the catalog and offer to look for a different category instead of guessing.",
     "You cannot execute cart mutations in this text response. Never ask for cart approval in free text; direct the shopper to the structured action card instead.",
     "Never claim that a cart change was completed based on a shopper saying yes, an earlier assistant promise, or a backend approval. Only a verified Shopify cart result establishes completion.",
     "Action status declined, expired, or failed means no successful execution is established. Do not revive a declined action without a new shopper request.",

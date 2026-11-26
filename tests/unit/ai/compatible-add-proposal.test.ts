@@ -26,7 +26,7 @@ vi.mock("../../../app/lib/db/queries", async (importOriginal) => {
 
 // ── Imports after mocks ────────────────────────────────────────────────────
 
-import { buildStorefrontChatReply, rememberCatalogActionCandidates, resolveCompatibleAddActionProposal, resolveCompatibleAddActionProposals } from "../../../app/lib/ai/storefront-chat";
+import { buildStorefrontChatReply, isCompatibleDiscoveryQuestion, rememberCatalogActionCandidates, resolveCompatibleAddActionProposal, resolveCompatibleAddActionProposals } from "../../../app/lib/ai/storefront-chat";
 import db from "../../../app/db.server";
 import { getActiveRelationshipsForProduct } from "../../../app/lib/db/queries";
 
@@ -990,5 +990,67 @@ describe("resolveCompatibleAddActionProposal", () => {
 
     const proposal = await resolveCompatibleAddActionProposal(request);
     expect(proposal).toBeNull();
+  });
+
+  it("proposes graph complements for an interrogative accessories question without an action verb", async () => {
+    vi.mocked(getActiveRelationshipsForProduct).mockResolvedValue(
+      [SHORT_COMPLEMENTS_GLOVES_RELATIONSHIP] as never,
+    );
+
+    const request = makeStorefrontChatRequest({
+      cart: {
+        cartId: "gid://shopify/Cart/123",
+        currencyCode: "EUR",
+        items: [makeShortInCart()],
+      },
+      messages: [{ role: "user", content: "Quels accessoires sont compatibles avec cet article?" }],
+    });
+
+    const proposals = await resolveCompatibleAddActionProposals(request);
+
+    expect(isCompatibleDiscoveryQuestion("Quels accessoires sont compatibles avec cet article?")).toBe(true);
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]?.preview?.after).toContain("Gants de boxe Venum Elite");
+  });
+
+  it("treats \"qu'est-ce qui va avec eux\" as a compatible discovery question", () => {
+    expect(isCompatibleDiscoveryQuestion("Qu'est-ce qui va avec eux?")).toBe(true);
+    expect(isCompatibleDiscoveryQuestion("Qu'est-ce que vous vendez?")).toBe(false);
+  });
+
+  it("resolves graph complements for \"Qu'est-ce qui va avec?\" ending right after the relation phrase", async () => {
+    vi.mocked(getActiveRelationshipsForProduct).mockResolvedValue(
+      [SHORT_COMPLEMENTS_GLOVES_RELATIONSHIP] as never,
+    );
+    vi.mocked(db.product.findMany).mockReset();
+    vi.mocked(db.product.findMany)
+      .mockResolvedValueOnce([
+        {
+          id: "internal-short-id",
+          shopifyProductId: "gid://shopify/Product/20",
+          title: "Fightshort Venum Gladiator 3.0 - Noir/Blanc",
+          status: "ACTIVE",
+          tags: ["mma", "short", "fightshort"],
+          disciplineTags: ["mma"],
+          categoryTags: ["shorts"],
+          variants: [],
+        },
+      ] as never)
+      .mockResolvedValueOnce([BOXING_GLOVES_PRODUCT] as never);
+
+    const request = makeStorefrontChatRequest({
+      cart: {
+        cartId: "gid://shopify/Cart/123",
+        currencyCode: "EUR",
+        items: [makeShortInCart()],
+      },
+      messages: [{ role: "user", content: "Qu'est-ce qui va avec?" }],
+    });
+
+    expect(isCompatibleDiscoveryQuestion("Qu'est-ce qui va avec?")).toBe(true);
+    const proposals = await resolveCompatibleAddActionProposals(request);
+
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]?.preview?.after).toContain("Gants de boxe Venum Elite");
   });
 });
